@@ -437,3 +437,7 @@ input[type='checkbox']:checked { animation: tick 220ms var(--ease-out); }
   @media (hover: hover) { .photo-tile:hover img { transform: scale(1.04); } }
   .pick-list label { transition: border-color 160ms ease, background-color 160ms ease; }
 }
+
+
+/* Property page: show the whole house, not a thin strip. */
+section[aria-labelledby='pd-h'] .prop-photo { height: auto; aspect-ratio: 4 / 3; border-radius: var(--r-ctl); }

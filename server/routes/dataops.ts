@@ -5,7 +5,7 @@ import { parseCsv } from '../csv.ts';
 import { type Db, one, pool, q, tx } from '../db.ts';
 import { audit, bad, forbidden, idParam, isoDate, LONDON_TODAY, notFound, parse, text, uuid } from '../http.ts';
 import { type Access, can, need } from '../perm.ts';
-import { deleteFile, removeStored } from '../storage.ts';
+import { deleteFile } from '../storage.ts';
 
 export const dataops = Router();
 
@@ -132,13 +132,12 @@ dataops.post('/people/:id/anonymise', async (req, res) => {
   const photoPath = await tx(async (db) => {
     const path = p.photo_path ? await deleteFile(db, p.photo_path) : null;
     await q(`update people set full_name = 'Former staff member ' || staff_ref, preferred_name = null, email = 'removed+' || id || '@invalid', work_phone = null, professional_summary = null,
-               skills = '{}', languages = '{}', work_history = '[]', development_goals = null, photo_path = null, auth_user_id = null, updated_at = now() where id = $1`, [id], db);
-    for (const t of ['person_restricted', 'messaging_preferences']) await q(`delete from ${t} where person_id = $1`, [id], db);
+               skills = '{}', languages = '{}', work_history = '[]', development_goals = null, photo_path = null, password_hash = null, totp_secret = null, totp_enabled_at = null, updated_at = now() where id = $1`, [id], db);
+    for (const t of ['person_restricted', 'messaging_preferences', 'sessions', 'auth_tokens']) await q(`delete from ${t} where person_id = $1`, [id], db);
     await q('delete from qualifications where person_id = $1', [id], db);
     await audit(db, req.person.id, null, 'person', id, 'anonymise', { staff_ref: p.staff_ref });
     return path;
   });
-  await removeStored(photoPath);
   res.json({ ok: true });
 });
 

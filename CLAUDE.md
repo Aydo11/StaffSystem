@@ -4,13 +4,13 @@ Workforce, property-operations and governance platform for Valor Housing Ltd, We
 The full specification is in the original prompt (42 sections). **Agreed scope for this phase: stages 1–3** (foundation, staff/appointments/clearance, properties/visits/tasks/timesheets). Stages 4–8 are tracked as outstanding.
 
 ## Stack
-- React + TypeScript + Vite (web/), Node + Express + TypeScript (server/), Postgres via Supabase, hosted on Render.
+- React + TypeScript + Vite (web/), Node + Express + TypeScript (server/), Render Postgres, hosted on Render (Supabase removed 20 Oct 2026 at the owner's request).
 - Single package: `npm run dev` runs API (tsx) + Vite. `npm run build` → `vite build` + `tsc -p tsconfig.server.json`.
-- Installed deps: express, pg, jose, zod, multer, helmet, express-rate-limit, @supabase/supabase-js, react, react-router-dom, @fontsource-variable/inter; dev: vite, vitest, supertest, playwright, @axe-core/playwright, tsx, concurrently.
+- Installed deps: express, pg, zod, multer, helmet, express-rate-limit, qrcode, @anthropic-ai/sdk, react, react-router-dom, @fontsource-variable/inter; dev: vite, vitest, supertest, playwright, @axe-core/playwright, tsx, concurrently.
 
 ## Done so far (stages 1–3 delivered 20 Oct 2026)
 - Schema: `db/migrations/001–003` (003 adds scheduled_visits, notifications, lone-worker ack, dev-only file_blobs). Seed: fictional data, 17 properties.
-- API (`server/`): auth.ts (Supabase JWT or dev token, MFA gate, leaver block), perm.ts (per-company perms), visibility.ts (row rules reused by lists/search/files), clearance.ts, storage.ts (Supabase bucket or Postgres blobs in dev), routes/{core,inbox,people,properties,visits,tasks,admin}.ts.
+- API (`server/`): auth.ts (opaque session tokens, MFA gate, leaver block), crypto.ts (scrypt, TOTP), routes/account.ts (login, links, MFA), perm.ts (per-company perms), visibility.ts (row rules reused by lists/search/files), clearance.ts, storage.ts (Postgres file_blobs), routes/{core,inbox,people,properties,visits,tasks,admin}.ts.
 - Web (`web/`): React app, pages per area, styles.css tokens, PWA (manifest, sw.js shell-only, PNG icons from scripts/icons.ts).
 - Tests: `tests/acceptance.test.ts`, 32 passing on real Postgres (`hub_test`). axe-core: 0 WCAG 2.2 A/AA violations on 16 pages + dialogs.
 - Docs: README.md, docs/ADMIN.md, docs/REQUIREMENTS.md (tracker — keep it updated), render.yaml, .env.example.
@@ -28,7 +28,7 @@ The full specification is in the original prompt (42 sections). **Agreed scope f
 
 ## Design decisions to keep
 - An active appointment implicitly grants the `staff` permission set in that company; explicit `role_grants` add more. Access = appointment OR grant.
-- Backend auth: verify Supabase JWT (HS256 via `SUPABASE_JWT_SECRET`, else JWKS from `SUPABASE_URL`). Link `people.auth_user_id` on first login by email. If person holds a privileged role and `aal !== 'aal2'` → 403 `mfa_required`.
+- Auth is the Hub's own (migration 010): sessions table stores sha256 of random tokens with aal1/aal2; invite/reset links are auth_tokens in the URL fragment; access emails bypass the outbox so links never sit in the delivery log. Privileged + aal1 → 403 `mfa_required` except /me and /auth/*. Only super admins issue links for privileged people or reset MFA. First admin: `npm run create-admin`.
 - `DEV_AUTH=true` (never in production; refuse to boot) enables a dev sign-in for seeded fictional users, for local demo and Playwright.
 - Visits: on approval create a single allocation for the full duration; splitting replaces allocations and must sum to the duration. Approved correction → visit back to `submitted`, allocations cleared.
 - No self-approval of visits, corrections, timesheets.

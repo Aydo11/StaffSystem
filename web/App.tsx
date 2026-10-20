@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { ApiError, get, serverNow, useApi } from './api.ts';
-import { type AuthConfig, initAuth, isSignedIn, onAuthChange, signOut, supabase } from './auth.ts';
+import { type AuthConfig, initAuth, isSignedIn, onAuthChange, signOut } from './auth.ts';
 import { fmtElapsed } from './format.ts';
 import { ADMIN_PERMS, HubCtx, makeHub, type Me, useHub } from './hub.tsx';
 import { Admin } from './pages/Admin.tsx';
@@ -34,7 +34,7 @@ export function App() {
     return onAuthChange(async () => setSignedIn(await isSignedIn()));
   }, []);
   if (signedIn === null) return <main className="content"><Skeleton /></main>;
-  if (location.pathname === '/reset-password' && supabase()) return <SetPassword />;
+  if (location.pathname === '/set-password') return <SetPassword />;
   if (!signedIn) return config ? <Login config={config} /> : <main className="content"><div className="notice bad" role="alert">The Hub could not reach its server. Please check your connection and reload.</div></main>;
   return <BrowserRouter><ToastProvider><Session /></ToastProvider></BrowserRouter>;
 }

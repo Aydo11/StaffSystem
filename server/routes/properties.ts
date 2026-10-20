@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, isoDate, localDateTime, notFound, parse, text, uuid, idParam } from '../http.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith, need } from '../perm.ts';
-import { deleteFile, readFile, removeStored, saveFile } from '../storage.ts';
+import { deleteFile, readFile, saveFile } from '../storage.ts';
 import { propertyVisible, taskVisible, visitVisible } from '../visibility.ts';
 import { upload } from './people.ts';
 
@@ -111,7 +111,6 @@ properties.post('/properties/:id/photo', upload.single('file'), async (req, res)
     await q('update properties set photo_path = $2 where id = $1', [id, f.id], db);
     return p.photo_path ? deleteFile(db, p.photo_path) : null;
   });
-  await removeStored(oldPath);
   res.status(201).json({ ok: true });
 });
 properties.get('/properties/:id/photo', async (req, res) => {

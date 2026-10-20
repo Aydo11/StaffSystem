@@ -1,49 +1,41 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+// The Hub's own sign-in: the server issues an opaque session token, kept in this browser until sign-out or expiry.
+export type AuthConfig = { devAuth: boolean; helpContact: string | null; selfServiceReset: boolean };
 
-export type AuthConfig = { supabaseUrl: string | null; supabaseAnonKey: string | null; devAuth: boolean; helpContact: string | null };
-
-let sb: SupabaseClient | null = null;
+const KEY = 'hub.session';
+let token: string | null = null;
+try { token = localStorage.getItem(KEY); } catch { /* storage blocked: session lasts this tab only */ }
 let config: AuthConfig | null = null;
-const DEV_KEY = 'hub.devToken';
-let devToken: string | null = null;
-try { devToken = sessionStorage.getItem(DEV_KEY); } catch { /* storage blocked */ }
 
 const listeners = new Set<() => void>();
 export const onAuthChange = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 const emit = () => listeners.forEach((f) => f());
 
 export async function initAuth(): Promise<AuthConfig> {
-  if (config) return config;
-  config = await (await fetch('/api/auth/config')).json();
-  if (config!.supabaseUrl && config!.supabaseAnonKey) {
-    sb = createClient(config!.supabaseUrl, config!.supabaseAnonKey);
-    sb.auth.onAuthStateChange(() => emit());
-  }
+  config ??= await (await fetch('/api/auth/config')).json();
   return config!;
 }
-export const supabase = () => sb;
+export async function getToken() { return token; }
+export async function isSignedIn() { return !!token; }
 
-export async function getToken(): Promise<string | null> {
-  if (devToken) return devToken;
-  if (!sb) return null;
-  return (await sb.auth.getSession()).data.session?.access_token ?? null;
+export function setToken(t: string) {
+  token = t;
+  try { localStorage.setItem(KEY, t); } catch { /* see above */ }
+  emit();
 }
-export async function isSignedIn() { return !!(await getToken()); }
-
-export function setDevToken(t: string) {
-  devToken = t;
-  try { sessionStorage.setItem(DEV_KEY, t); } catch { /* storage blocked: session lasts this tab only */ }
+function clear() {
+  token = null;
+  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
   emit();
 }
 export async function signOut() {
-  devToken = null;
-  try { sessionStorage.removeItem(DEV_KEY); } catch { /* ignore */ }
-  if (sb) await sb.auth.signOut();
-  emit();
+  const t = token;
+  clear();
+  if (t) await fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${t}` } }).catch(() => {}); // ends the session on the server too
 }
 let unauthHandled = false;
 export function onUnauthenticated() {
   if (unauthHandled) return;
   unauthHandled = true;
-  signOut().finally(() => { unauthHandled = false; });
+  clear(); // the server already rejected this token
+  unauthHandled = false;
 }

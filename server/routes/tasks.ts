@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, isoDate, LONDON_TODAY, notFound, notify, parse, text, uuid, idParam } from '../http.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith } from '../perm.ts';
-import { deleteFile, readFile, removeStored, saveFile } from '../storage.ts';
+import { deleteFile, readFile, saveFile } from '../storage.ts';
 import { taskVisible, visitVisible } from '../visibility.ts';
 import { caseRoleForFile } from './cases.ts';
 import { loadRepair } from './estates.ts';
@@ -203,7 +203,6 @@ tasks.delete('/files/:id', async (req, res) => {
   if (f.uploaded_by !== req.person.id && !can(req.access, 'tasks.manage', t.company_id)) throw forbidden();
   if (t.status === 'completed') throw conflict('Evidence on a completed task is kept as part of the record.');
   const path = await tx(async (db) => { const p = await deleteFile(db, f.id); await audit(db, req.person.id, t.company_id, 'file', f.id, 'delete', { task_id: t.id, name: f.original_name }); return p; });
-  await removeStored(path);
   res.json({ ok: true });
 });
 

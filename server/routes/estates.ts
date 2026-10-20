@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { type Db, one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, idParam, isoDate, LONDON_TODAY, notFound, notify, parse, text, uuid } from '../http.ts';
 import { type Access, can, companiesWith, need, scope } from '../perm.ts';
-import { saveFile, supabaseAdmin } from '../storage.ts';
+import { saveFile } from '../storage.ts';
+import { issueAccessLink, sendAccessEmail } from './account.ts';
 import { propertyVisible } from '../visibility.ts';
 import { upload } from './people.ts';
 
@@ -240,15 +241,16 @@ estates.post('/agents/:id/users', async (req, res) => {
       if (p) await q('delete from agent_users where agent_id = $1 and person_id = $2', [ag.id, p.id], db);
       return { removed: true };
     }
+    const isNew = !p;
     if (!p) {
       const ref = (await one<{ ref: string }>(`select 'AGT-' || lpad((count(*) + 1)::text, 4, '0') ref from people where staff_ref like 'AGT-%'`, [], db))!.ref;
       p = await one('insert into people (email, full_name, staff_ref, status) values ($1,$2,$3,$4) returning id', [b.email, b.full_name, ref, 'invited'], db);
     }
     await q('insert into agent_users (agent_id, person_id, granted_by, expires_at) values ($1,$2,$3,$4) on conflict (agent_id, person_id) do update set expires_at = excluded.expires_at', [ag.id, p!.id, req.person.id, b.expires_at ?? null], db);
     await audit(db, req.person.id, ag.company_id, 'agent', ag.id, 'grant_user', { person_id: p!.id, expires_at: b.expires_at ?? null });
-    return { person_id: p!.id };
+    return { person_id: p!.id, link: isNew ? await issueAccessLink(db, p!.id, 'invite') : null };
   });
-  if (!b.remove && supabaseAdmin) await supabaseAdmin.auth.admin.inviteUserByEmail(b.email, { redirectTo: process.env.APP_URL });
+  if ('link' in out && out.link) return res.status(201).json({ person_id: out.person_id, invitation: await sendAccessEmail(b.email, out.link, 'invite'), invite_link: (process.env.APP_URL ?? 'http://localhost:5173') + out.link });
   res.status(201).json(out);
 });
 estates.post('/agents/:id/reviews', async (req, res) => {

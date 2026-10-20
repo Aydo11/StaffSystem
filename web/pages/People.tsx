@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ApiError, api, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, label, londonToday, money } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { PersonDataActions } from './DataTools.tsx';
+import { AccessLinkNotice, PersonDataActions, SignInAccess } from './DataTools.tsx';
 import { Avatar, Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 export function People() {
@@ -77,9 +77,15 @@ function InviteDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () =
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
   const save = useSubmit(async () => {
     const r = await post('/people', { email: f.email, full_name: f.full_name, preferred_name: f.preferred_name || undefined, company_id: f.company_id, ...apptBody(f) });
-    toast(r.invitation === 'sent' ? `Invitation emailed. Staff reference ${r.staff_ref}.` : `Profile created (${r.staff_ref}). The invitation email was not sent — sign-in is not configured.`);
-    onSaved();
+    toast(`Profile created. Staff reference ${r.staff_ref}.`);
+    setCreated(r);
   });
+  const [created, setCreated] = useState<any>(null);
+  if (created) return (
+    <Dialog open onClose={onSaved} title="Person invited" footer={<Button onClick={onSaved}>Done</Button>}>
+      <AccessLinkNotice link={created.invite_link} email={created.invitation} purpose="invite" />
+    </Dialog>
+  );
   const e = save.error?.fields ?? {};
   return (
     <Dialog open onClose={onClose} title="Invite a person" footer={<Button busy={save.busy} onClick={() => save.run()}>Create and invite</Button>}>
@@ -117,7 +123,7 @@ export function PersonPage({ self }: { self?: boolean }) {
         <Avatar personId={p.id} name={p.full_name} hasPhoto={p.has_photo} size="lg" />
         <div><strong style={{ fontSize: '1.25rem' }}>{p.full_name}</strong>{p.preferred_name && <span className="muted"> (known as {p.preferred_name})</span>}<br /><span className="muted">{p.staff_ref} · {p.email}</span> {p.status !== 'active' && <Status s={p.status} />}</div>
       </div>
-      {(isMe || restricted) && <PersonDataActions person={p} />}
+      <div className="row no-print" style={{ marginBottom: 12 }}>{(isMe || restricted) && <PersonDataActions person={p} />}<SignInAccess person={p} isMe={isMe} /></div>
       <Tabs label="Profile sections" tabs={tabs} value={tab} onChange={setTab} />
       <div role="tabpanel">
         {tab === 'profile' && <ProfileTab d={d.data} isMe={isMe} reload={d.reload} />}

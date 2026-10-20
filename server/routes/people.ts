@@ -5,7 +5,8 @@ import { clearanceGate, currentClearance } from '../clearance.ts';
 import { one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, HttpError, isoDate, LONDON_TODAY, notFound, notify, parse, text, uuid, idParam } from '../http.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith, need } from '../perm.ts';
-import { deleteFile, readFile, removeStored, saveFile, supabaseAdmin } from '../storage.ts';
+import { deleteFile, readFile, saveFile } from '../storage.ts';
+import { issueAccessLink, sendAccessEmail } from './account.ts';
 import { personVisible } from '../visibility.ts';
 
 export const people = Router();
@@ -16,7 +17,9 @@ const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
 async function visiblePerson(a: Access, id: string) {
   const p = await one(`select p.* from people p where p.id = $1 and ${personVisible('p', 2, 3)}`, [id, a.personId, companiesWith(a, 'staff.view')]);
   if (!p) throw notFound();
-  return p;
+  // Sign-in secrets never leave the server; only whether they are set.
+  const { password_hash, totp_secret, totp_last_step: _s, failed_logins: _f, locked_until: _l, ...safe } = p;
+  return { ...safe, has_password: !!password_hash, mfa_enabled: !!p.totp_enabled_at };
 }
 // Companies where this person holds (or held) an appointment and the viewer has `perm`.
 async function sharedCompanies(a: Access, personId: string, perm: string) {
@@ -73,7 +76,7 @@ people.get('/people/:id', async (req, res) => {
   // Sensitive access is audited: someone else viewing restricted personal details or employment checks.
   if (!self && (restrictedCos.length || checkCos.length)) await audit(pool, a.personId, null, 'person_restricted', id, 'view', { personal: restrictedCos.length > 0, checks: checkCos.length > 0 });
   res.json({
-    person: { ...p, auth_user_id: undefined, has_photo: !!p.photo_path, photo_path: undefined },
+    person: { ...p, has_photo: !!p.photo_path, photo_path: undefined },
     appointments,
     qualifications: await q(`select qf.*, ${name('v')} as verified_by_name from qualifications qf left join people v on v.id = qf.verified_by where qf.person_id = $1 order by awarded_on desc nulls last`, [id]),
     restricted: self || restrictedCos.length ? (await one('select * from person_restricted where person_id = $1', [id])) ?? {} : null,
@@ -133,20 +136,15 @@ people.post('/people', async (req, res) => {
   need(req.access, 'appointments.manage', b.company_id);
   const existing = await one('select id from people where lower(email) = lower($1)', [b.email]);
   if (existing) throw conflict('Someone with this email already has a profile. Add an appointment to their existing profile instead of creating a second one.');
-  const result = await tx(async (db) => {
+  const { link, ...result } = await tx(async (db) => {
     const ref = (await one<{ ref: string }>(`select 'VWH-' || lpad((coalesce(max(substring(staff_ref from 5)::int), 0) + 1)::text, 4, '0') as ref from people where staff_ref ~ '^VWH-\\d+$'`, [], db))!.ref;
     const p = await one('insert into people (email, full_name, preferred_name, staff_ref, status) values ($1,$2,$3,$4,$5) returning id, staff_ref', [b.email, b.full_name, b.preferred_name ?? null, ref, 'invited'], db);
     await insertAppointment(db, p.id, b.company_id, b, req.person.id);
     await audit(db, req.person.id, b.company_id, 'person', p.id, 'invite', {});
-    return p;
+    return { ...p, link: await issueAccessLink(db, p.id, 'invite') };
   });
-  let invitation = 'not_sent';
-  if (supabaseAdmin) {
-    const { error } = await supabaseAdmin.auth.admin.inviteUserByEmail(b.email, { redirectTo: process.env.APP_URL });
-    invitation = error ? 'failed' : 'sent';
-    if (error) console.error(JSON.stringify({ level: 'warn', message: 'invite failed', code: error.code }));
-  }
-  res.status(201).json({ ...result, invitation });
+  // The link is also returned so the admin can pass it on when email is not set up.
+  res.status(201).json({ ...result, invitation: await sendAccessEmail(b.email, link, 'invite'), invite_link: (process.env.APP_URL ?? 'http://localhost:5173') + link });
 });
 
 const centralFields = z.object({
@@ -203,7 +201,6 @@ people.post('/people/:id/photo', upload.single('file'), async (req, res) => {
     await audit(db, req.person.id, null, 'person', id, 'photo_replace', {});
     return { ...saved, oldPath };
   });
-  await removeStored(f.oldPath);
   res.status(201).json({ id: f.id });
 });
 people.delete('/people/:id/photo', async (req, res) => {
@@ -217,7 +214,6 @@ people.delete('/people/:id/photo', async (req, res) => {
     await audit(db, req.person.id, null, 'person', id, 'photo_remove', {});
     return path;
   });
-  await removeStored(oldPath);
   res.json({ ok: true });
 });
 people.get('/people/:id/photo', async (req, res) => {

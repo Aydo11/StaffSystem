@@ -1,4 +1,4 @@
-# Render Blueprint. Create one service per environment (staging and production), each with its own Supabase project.
+# Render Blueprint: the web service plus its Postgres database (sign-in, data and uploaded files all live there).
 services:
   - type: web
     name: valor-wellbeing-hub
@@ -18,18 +18,23 @@ services:
       - key: DEV_AUTH
         value: "false"             # the server refuses to start if this is true in production
       - key: DATABASE_URL
-        sync: false                # Supabase Postgres connection string (session pooler)
-      - key: DATABASE_CA
-        sync: false                # Supabase CA certificate (Settings → Database → SSL). Required: production refuses to connect without it
-      - key: SUPABASE_URL
+        fromDatabase:
+          name: staffcrm-db
+          property: connectionString   # internal address: stays on Render's private network
+      - key: RESEND_API_KEY
+        sync: false                # optional: emails invitations, resets and reminders
+      - key: EMAIL_FROM
         sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false                # public key, sent to browsers for sign-in only
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false                # server-only: private storage and invitations
-      - key: SUPABASE_JWT_SECRET
-        sync: false                # optional; if blank the server verifies tokens with Supabase's JWKS
+      - key: ANTHROPIC_API_KEY
+        sync: false                # optional: AI assistant
       - key: APP_URL
         sync: false                # e.g. https://hub.example.org — used in invitation emails
       - key: HELP_CONTACT
         sync: false
+
+databases:
+  - name: staffcrm-db
+    plan: basic-256mb
+    region: frankfurt
+    postgresMajorVersion: "17"
+    ipAllowList: []                # no access from the internet

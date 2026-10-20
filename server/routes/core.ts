@@ -1,36 +1,12 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import { DEV_AUTH, devUsers, signDevToken } from '../auth.ts';
 import { one, pool, q } from '../db.ts';
 import { HttpError, LONDON_TODAY, notFound, parse, text, uuid, audit, idParam } from '../http.ts';
 import { ACTIVE_APPT, companiesWith, myCompanies, need } from '../perm.ts';
 import { personVisible, propertyVisible, taskVisible } from '../visibility.ts';
 import { inboxFor } from './inbox.ts';
 import { unreadMessages } from './messaging.ts';
-
-// ── Public (no sign-in) ──
-export const publicRoutes = Router();
-
-publicRoutes.get('/auth/config', (_req, res) => {
-  res.json({
-    supabaseUrl: process.env.SUPABASE_URL || null,
-    supabaseAnonKey: process.env.SUPABASE_ANON_KEY || null,
-    devAuth: DEV_AUTH,
-    helpContact: process.env.HELP_CONTACT || null,
-  });
-});
-
-if (DEV_AUTH) {
-  const devLimit = rateLimit({ windowMs: 60_000, limit: 30 });
-  publicRoutes.get('/dev/users', async (_req, res) => res.json(await devUsers()));
-  publicRoutes.post('/dev/login', devLimit, async (req, res) => {
-    const { email } = parse(z.object({ email: z.email() }), req.body);
-    const p = await one<{ id: string; email: string }>(`select id, email from people where lower(email) = lower($1) and is_fictional and status <> 'left'`, [email]);
-    if (!p) throw new HttpError(401, 'unauthenticated', 'That demo account does not exist.');
-    res.json({ token: await signDevToken(p) });
-  });
-}
 
 // ── Signed in ──
 export const core = Router();

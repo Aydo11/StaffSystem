@@ -13,6 +13,7 @@ export const prop = (n: number) => `00000000-0000-4000-8000-0000000001${String(n
 export const V = { d01: '00000000-0000-4000-8000-000000000d01', d02: '00000000-0000-4000-8000-000000000d02', d03: '00000000-0000-4000-8000-000000000d03' };
 
 export async function resetDb() {
+  tokens.clear(); // sessions live in the database, so a reset ends them
   await pool.query('drop schema public cascade; create schema public;');
   const dir = new URL('../db/migrations/', import.meta.url);
   for (const f of readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()) await pool.query(readFileSync(new URL(f, dir), 'utf8'));

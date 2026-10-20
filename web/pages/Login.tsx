@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ApiError, useSubmit } from '../api.ts';
-import { type AuthConfig, setDevToken, signOut, supabase } from '../auth.ts';
+import { ApiError, post, useSubmit } from '../api.ts';
+import { type AuthConfig, setToken, signOut } from '../auth.ts';
 import { Button, ErrorSummary, Field } from '../ui.tsx';
 
 function Frame({ children }: { children: React.ReactNode }) {
@@ -15,35 +15,53 @@ function Frame({ children }: { children: React.ReactNode }) {
     </main>
   );
 }
+const invalid = (fields: Record<string, string>) => new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields });
+const CodeField = ({ value, onChange, error }: { value: string; onChange: (v: string) => void; error?: string }) => (
+  <Field label="6-digit code" hint="From your authenticator app" error={error}>
+    <input name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={value} onChange={(e) => onChange(e.target.value.replace(/\s/g, ''))} />
+  </Field>
+);
 
 export function Login({ config }: { config: AuthConfig }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
+  const [ticket, setTicket] = useState<string | null>(null);
+  const [code, setCode] = useState('');
   const [mode, setMode] = useState<'signin' | 'forgot' | 'sent'>('signin');
-  const sb = supabase();
   useEffect(() => { document.title = 'Sign in · Valor & Wellbeing Hub'; }, []);
 
   const signIn = useSubmit(async () => {
     const fields: Record<string, string> = {};
     if (!/^\S+@\S+\.\S+$/.test(email)) fields.email = 'Enter your work email address';
     if (!password) fields.password = 'Enter your password';
-    if (Object.keys(fields).length) throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields });
-    const { error } = await sb!.auth.signInWithPassword({ email, password });
-    // One message for every failure, so the form does not reveal which emails have accounts.
-    if (error) throw new ApiError(401, 'auth', error.status === 429 ? 'Too many attempts. Please wait a few minutes and try again.' : 'The email or password is not right. Check them and try again, or reset your password.');
+    if (Object.keys(fields).length) throw invalid(fields);
+    const r = await post('/auth/login', { email, password });
+    if (r.mfa) setTicket(r.ticket); else setToken(r.token);
+  });
+  const second = useSubmit(async () => {
+    if (!/^\d{6}$/.test(code)) throw invalid({ code: 'Enter the 6-digit code from your authenticator app' });
+    try { setToken((await post('/auth/login/mfa', { ticket, code })).token); }
+    catch (e) { if (e instanceof ApiError && e.code === 'auth' && !e.fields.code) { setTicket(null); setCode(''); } throw e; } // ticket expired: start again
   });
   const forgot = useSubmit(async () => {
-    if (!/^\S+@\S+\.\S+$/.test(email)) throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields: { email: 'Enter your work email address' } });
-    await sb!.auth.resetPasswordForEmail(email, { redirectTo: `${location.origin}/reset-password` });
+    if (!/^\S+@\S+\.\S+$/.test(email)) throw invalid({ email: 'Enter your work email address' });
+    await post('/auth/forgot', { email });
     setMode('sent');
   });
 
   return (
     <Frame>
-      <h1 style={{ fontSize: '1.5rem' }}>{mode === 'signin' ? 'Sign in' : 'Reset your password'}</h1>
-      {!sb && !config.devAuth && <div className="notice bad">Sign-in is not set up yet. An administrator needs to configure Supabase (see the administrator guide).</div>}
-      {sb && mode === 'signin' && (
+      <h1 style={{ fontSize: '1.5rem' }}>{ticket ? 'Two-step verification' : mode === 'signin' ? 'Sign in' : 'Reset your password'}</h1>
+      {ticket ? (
+        <form noValidate onSubmit={(e) => { e.preventDefault(); second.run(); }}>
+          <ErrorSummary error={second.error} />
+          <p>Enter the current code from your authenticator app.</p>
+          <CodeField value={code} onChange={setCode} error={second.error?.fields.code} />
+          <div className="row"><Button type="submit" busy={second.busy} busyText="Checking…">Continue</Button><Button variant="secondary" onClick={() => { setTicket(null); setCode(''); }}>Back</Button></div>
+          <p className="muted small" style={{ marginTop: 16 }}>Lost your phone? Ask a super administrator to reset your two-step verification.</p>
+        </form>
+      ) : mode === 'signin' ? (
         <form noValidate onSubmit={(e) => { e.preventDefault(); signIn.run(); }}>
           <ErrorSummary error={signIn.error} />
           <Field label="Work email" error={signIn.error?.fields.email}>
@@ -56,17 +74,19 @@ export function Login({ config }: { config: AuthConfig }) {
           <Button type="submit" block big busy={signIn.busy} busyText="Signing in…">Sign in</Button>
           <p style={{ marginTop: 16 }}><button type="button" className="btn ghost" onClick={() => setMode('forgot')}>Forgot your password?</button></p>
         </form>
-      )}
-      {sb && mode === 'forgot' && (
-        <form noValidate onSubmit={(e) => { e.preventDefault(); forgot.run(); }}>
-          <ErrorSummary error={forgot.error} />
-          <p>We will email you a link to choose a new password.</p>
-          <Field label="Work email" error={forgot.error?.fields.email}><input name="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-          <div className="row"><Button type="submit" busy={forgot.busy} busyText="Sending…">Send reset link</Button><Button variant="secondary" onClick={() => setMode('signin')}>Back to sign in</Button></div>
-        </form>
-      )}
-      {mode === 'sent' && <div className="notice ok" role="status">If an account exists for {email}, a reset link is on its way. It may take a few minutes.</div>}
-      {config.devAuth && <DevSignIn />}
+      ) : mode === 'forgot' ? (
+        config.selfServiceReset ? (
+          <form noValidate onSubmit={(e) => { e.preventDefault(); forgot.run(); }}>
+            <ErrorSummary error={forgot.error} />
+            <p>We will email you a link to choose a new password.</p>
+            <Field label="Work email" error={forgot.error?.fields.email}><input name="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+            <div className="row"><Button type="submit" busy={forgot.busy} busyText="Sending…">Send reset link</Button><Button variant="secondary" onClick={() => setMode('signin')}>Back to sign in</Button></div>
+          </form>
+        ) : (
+          <><p>Ask your manager or administrator to send you a new sign-in link from your profile in the Hub.</p><Button variant="secondary" onClick={() => setMode('signin')}>Back to sign in</Button></>
+        )
+      ) : <div className="notice ok" role="status">If an account exists for {email}, a reset link is on its way. It works for 1 hour.</div>}
+      {config.devAuth && !ticket && <DevSignIn />}
       <p className="muted small" style={{ marginTop: 24 }}>Need help signing in? {config.helpContact ?? 'Contact your manager or administrator.'}</p>
     </Frame>
   );
@@ -76,12 +96,7 @@ export function Login({ config }: { config: AuthConfig }) {
 function DevSignIn() {
   const [users, setUsers] = useState<any[]>([]);
   useEffect(() => { fetch('/api/dev/users').then((r) => r.json()).then(setUsers).catch(() => {}); }, []);
-  const go = useSubmit(async (email: string) => {
-    const r = await fetch('/api/dev/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
-    const b = await r.json();
-    if (!r.ok) throw new ApiError(r.status, b.error, b.message);
-    setDevToken(b.token);
-  });
+  const go = useSubmit(async (email: string) => setToken((await post('/dev/login', { email })).token));
   return (
     <section aria-labelledby="dev-h" style={{ marginTop: 24, borderTop: '1px solid var(--line)', paddingTop: 16 }}>
       <h2 id="dev-h" style={{ fontSize: '1.125rem' }}>Demo sign-in (development only)</h2>
@@ -99,37 +114,32 @@ function DevSignIn() {
   );
 }
 
-// Privileged roles must complete MFA (TOTP via Supabase) before the API will serve them.
+// Privileged roles must set up (or confirm) an authenticator app before the API will serve them.
 export function MfaGate({ onDone }: { onDone: () => void }) {
-  const sb = supabase();
-  const [factor, setFactor] = useState<{ id: string; qr?: string; secret?: string } | null>(null);
+  const [setup, setSetup] = useState<{ enabled: boolean; qr?: string; secret?: string; uri?: string } | null>(null);
   const [code, setCode] = useState('');
-  const setup = useSubmit(async () => {
-    const { data } = await sb!.auth.mfa.listFactors();
-    const existing = data?.totp?.find((f) => f.status === 'verified');
-    if (existing) return setFactor({ id: existing.id });
-    const { data: en, error } = await sb!.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Hub authenticator' });
-    if (error) throw new ApiError(400, 'mfa', error.message);
-    setFactor({ id: en.id, qr: en.totp.qr_code, secret: en.totp.secret });
-  });
-  useEffect(() => { if (sb) setup.run(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const load = useSubmit(async () => setSetup(await post('/auth/mfa/setup', {})));
+  useEffect(() => { load.run(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const verify = useSubmit(async () => {
-    if (!/^\d{6}$/.test(code)) throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields: { code: 'Enter the 6-digit code from your authenticator app' } });
-    const { error } = await sb!.auth.mfa.challengeAndVerify({ factorId: factor!.id, code });
-    if (error) throw new ApiError(400, 'mfa', 'That code did not work. Codes change every 30 seconds — try the newest one.');
-    await sb!.auth.refreshSession();
+    if (!/^\d{6}$/.test(code)) throw invalid({ code: 'Enter the 6-digit code from your authenticator app' });
+    await post('/auth/mfa/verify', { code });
     onDone();
   });
   return (
     <Frame>
       <h1 style={{ fontSize: '1.5rem' }}>Two-step verification</h1>
       <p>Your role can see sensitive information, so you need a code from an authenticator app as well as your password.</p>
-      {!sb && <div className="notice bad">Two-step verification needs Supabase to be configured.</div>}
-      <ErrorSummary error={setup.error ?? verify.error} />
-      {factor?.qr && (<><p>Scan this code with an authenticator app (for example Microsoft Authenticator or Google Authenticator).</p><img src={factor.qr} alt="QR code for setting up your authenticator app" width={200} height={200} /><p className="small">Can’t scan? Enter this key instead: <code>{factor.secret}</code></p></>)}
-      {factor && (
+      <ErrorSummary error={load.error ?? verify.error} />
+      {setup && !setup.enabled && (
+        <>
+          <p>Scan this code with an authenticator app (for example Microsoft Authenticator or Google Authenticator), then enter the 6-digit code it shows.</p>
+          <img src={setup.qr} alt="QR code for setting up your authenticator app" width={200} height={200} />
+          <p className="small">Can’t scan? On this phone, <a href={setup.uri}>open it in your authenticator app</a>, or enter this key: <code style={{ wordBreak: 'break-all' }}>{setup.secret}</code></p>
+        </>
+      )}
+      {setup && (
         <form noValidate onSubmit={(e) => { e.preventDefault(); verify.run(); }}>
-          <Field label="6-digit code" error={verify.error?.fields.code}><input name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.trim())} /></Field>
+          <CodeField value={code} onChange={setCode} error={verify.error?.fields.code} />
           <Button type="submit" busy={verify.busy} busyText="Checking…">Verify</Button>
         </form>
       )}
@@ -138,26 +148,32 @@ export function MfaGate({ onDone }: { onDone: () => void }) {
   );
 }
 
-// Reached from a password-reset or invitation email: Supabase has already started a recovery session.
+// Reached from an invitation or reset link: /set-password#token=… (the token stays out of server logs).
 export function SetPassword() {
+  const token = new URLSearchParams(location.hash.slice(1)).get('token') ?? '';
   const [pw, setPw] = useState('');
-  const [done, setDone] = useState(false);
+  const [pw2, setPw2] = useState('');
   const save = useSubmit(async () => {
-    if (pw.length < 12) throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields: { password: 'Use at least 12 characters' } });
-    const { error } = await supabase()!.auth.updateUser({ password: pw });
-    if (error) throw new ApiError(400, 'auth', 'The link may have expired. Request a new one from the sign-in page.');
-    setDone(true);
+    if (pw.length < 12) throw invalid({ password: 'Use at least 12 characters' });
+    if (pw !== pw2) throw invalid({ confirm: 'The two passwords do not match' });
+    const r = await post('/auth/set-password', { token, password: pw });
+    history.replaceState(null, '', '/');
+    setToken(r.token);
   });
+  useEffect(() => { document.title = 'Choose your password · Valor & Wellbeing Hub'; }, []);
   return (
     <Frame>
       <h1 style={{ fontSize: '1.5rem' }}>Choose your password</h1>
-      {done ? <><div className="notice ok" role="status">Password saved.</div><a className="btn" href="/">Continue to the Hub</a></> : (
+      {!token ? <div className="notice bad">This link is incomplete. Open the link from your email again, or ask your administrator for a new one.</div> : (
         <form noValidate onSubmit={(e) => { e.preventDefault(); save.run(); }}>
           <ErrorSummary error={save.error} />
           <Field label="New password" hint="At least 12 characters. A short phrase is easier to remember." error={save.error?.fields.password}>
             <input name="password" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} />
           </Field>
-          <Button type="submit" busy={save.busy}>Save password</Button>
+          <Field label="Type it again" error={save.error?.fields.confirm}>
+            <input name="confirm" type="password" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} />
+          </Field>
+          <Button type="submit" busy={save.busy} busyText="Saving…">Save password and sign in</Button>
         </form>
       )}
     </Frame>

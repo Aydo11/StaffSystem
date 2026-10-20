@@ -12,9 +12,9 @@ Tenant and support case management is deliberately **not** part of this system (
 | --- | --- |
 | Web | React 19 + TypeScript, Vite, React Router. Inter font, no UI framework. |
 | API | Node 22 + Express 5 + TypeScript, Zod validation |
-| Data | PostgreSQL (Supabase in production). Plain SQL migrations in `db/migrations`. |
-| Auth | Supabase Auth (invitation, email + password, password reset, TOTP MFA). Backend verifies the JWT. |
-| Files | Supabase Storage private bucket `hub-private`, read only through the API |
+| Data | PostgreSQL (Render Postgres in production). Plain SQL migrations in `db/migrations`. |
+| Auth | The Hub's own: invitation links, email + password (scrypt), resets, TOTP two-step verification, server-side sessions. |
+| Files | Stored in Postgres (`file_blobs`), read only through the API |
 | Hosting | Render web service (`render.yaml`), single origin for web + API |
 
 All business data lives in Postgres. Every table has row-level security switched on with **no** policies, so browsers cannot query tables directly; the API enforces permissions.
@@ -44,7 +44,7 @@ Tests reset the `hub_test` database before each test. They refuse to run against
 
 ## Deploy
 
-See [docs/ADMIN.md](docs/ADMIN.md) for Supabase and Render setup, environments, backups and first administrator.
+See [docs/ADMIN.md](docs/ADMIN.md) for Render setup, sign-in, environments, backups and the first administrator.
 
 ## Project layout
 

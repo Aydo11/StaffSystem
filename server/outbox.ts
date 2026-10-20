@@ -5,7 +5,7 @@ import { type Db, one, q, tx } from './db.ts';
 import { LONDON_TODAY } from './http.ts';
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
-const emailReady = () => !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
+export const emailReady = () => !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
 const MAX_ATTEMPTS = 5;
 
 export async function enqueue(db: Db, m: { person_id: string; company_id: string | null; category: string; dedup: string; subject: string; body: string; link: string }) {
@@ -16,7 +16,7 @@ export async function enqueue(db: Db, m: { person_id: string; company_id: string
     [m.company_id, m.person_id, m.category, `${m.dedup}:email`, m.subject, m.body, m.link, emailReady() ? 'queued' : 'not_configured'], db);
 }
 
-async function sendEmail(to: string, subject: string, body: string, link: string) {
+export async function sendEmail(to: string, subject: string, body: string, link: string) {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST', headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ from: process.env.EMAIL_FROM, to, subject, text: `${body}\n\n${APP_URL}${link}\n\nThis email contains no personal details. Sign in to see them.` }),

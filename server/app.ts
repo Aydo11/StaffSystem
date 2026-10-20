@@ -7,7 +7,8 @@ import { authenticate } from './auth.ts';
 import { pool } from './db.ts';
 import { errorHandler, HttpError } from './http.ts';
 import { admin } from './routes/admin.ts';
-import { core, publicRoutes } from './routes/core.ts';
+import { core } from './routes/core.ts';
+import { account, authPublic } from './routes/account.ts';
 import { inbox } from './routes/inbox.ts';
 import { people } from './routes/people.ts';
 import { performance } from './routes/performance.ts';
@@ -28,12 +29,11 @@ export function createApp() {
   const app = express();
   app.set('trust proxy', 1); // Render terminates TLS in front of the app
   app.disable('x-powered-by');
-  const sb = process.env.SUPABASE_URL ?? '';
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        connectSrc: ["'self'", sb, sb.replace(/^https/, 'wss')].filter(Boolean),
+        connectSrc: ["'self'"],
         imgSrc: ["'self'", 'blob:', 'data:'],
         styleSrc: ["'self'", "'unsafe-inline'"],
         fontSrc: ["'self'", 'data:'],
@@ -56,9 +56,9 @@ export function createApp() {
   api.use(rateLimit({ windowMs: 60_000, limit: Number(process.env.RATE_LIMIT_PER_MIN ?? 600), standardHeaders: 'draft-8', legacyHeaders: false }));
   api.use(express.json({ limit: '200kb' }));
   api.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); }); // never cache personal data
-  api.use(publicRoutes);
+  api.use(authPublic);
   api.use(authenticate);
-  api.use(core, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, estates, finance, messaging, ai, dataops, admin);
+  api.use(account, core, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, estates, finance, messaging, ai, dataops, admin);
   api.use(() => { throw new HttpError(404, 'not_found', 'No such API endpoint.'); });
   app.use('/api', api);
 

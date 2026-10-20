@@ -90,7 +90,7 @@ export function PersonDataActions({ person }: { person: any }) {
   const exp = useSubmit(async () => { await download(`/people/${person.id}/export`, `hub-personal-data-${person.staff_ref}.json`); });
   const anon = useSubmit(async () => { await post(`/people/${person.id}/anonymise`, { confirm_name: name }); setOpen(false); toast('Anonymised.'); location.reload(); });
   return (
-    <div className="row no-print" style={{ marginBottom: 12 }}>
+    <>
       <Button variant="secondary" busy={exp.busy} onClick={() => exp.run()}>{person.id === hub.me.person.id ? 'Download my data' : 'Download their data'}</Button>
       {hub.me.superAdmin && person.status === 'left' && !person.email.startsWith('removed+') && <Button variant="danger" onClick={() => setOpen(true)}>Anonymise</Button>}
       <ErrorSummary error={exp.error} />
@@ -99,7 +99,7 @@ export function PersonDataActions({ person }: { person: any }) {
         <ErrorSummary error={anon.error} />
         <Field label={`Type “${person.full_name}” to confirm`} error={anon.error?.fields.confirm_name}><input name="confirm_name" value={name} onChange={(e) => setName(e.target.value)} /></Field>
       </Dialog>
-    </div>
+    </>
   );
 }
 
@@ -124,6 +124,60 @@ export function InstallPage() {
         <section className="card" aria-labelledby="pc-h"><h2 id="pc-h" style={{ fontSize: '1.25rem' }}>Computer (Chrome or Edge)</h2><p>Look for the install icon at the right of the address bar, or use the browser menu and choose <strong>Install Valor &amp; Wellbeing Hub</strong>.</p></section>
         <section className="card" aria-labelledby="up-h"><h2 id="up-h" style={{ fontSize: '1.25rem' }}>Updates and offline use</h2><p>The installed Hub updates itself. You need a connection to save anything; if you go offline, the Hub tells you and saves nothing until you are back online.</p></section>
       </div>
+    </>
+  );
+}
+
+// A one-time sign-in link, shown when it could not be emailed so the admin can pass it on privately.
+export function AccessLinkNotice({ link, email, purpose }: { link: string; email: string; purpose: string }) {
+  const [copied, setCopied] = useState(false);
+  if (email === 'sent') return <div className="notice ok" role="status">The {purpose === 'invite' ? 'invitation' : 'reset link'} has been emailed.</div>;
+  return (
+    <div className="notice" role="status">
+      <p>{email === 'failed' ? 'The email could not be sent.' : 'Email is not set up yet, so nothing was sent.'} Give this one-time link to the person privately (for example in person or by text). It works once and expires in {purpose === 'invite' ? '7 days' : '1 hour'}.</p>
+      <p><code style={{ wordBreak: 'break-all' }}>{link}</code></p>
+      <Button variant="secondary" onClick={async () => { try { await navigator.clipboard.writeText(link); setCopied(true); } catch { /* select and copy by hand */ } }}>{copied ? 'Copied' : 'Copy link'}</Button>
+    </div>
+  );
+}
+
+// On a profile: change your own password, or (admins) send someone a new sign-in link.
+export function SignInAccess({ person, isMe }: { person: any; isMe: boolean }) {
+  const hub = useHub();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState({ current: '', password: '', reset_mfa: false, reason: '' });
+  const [result, setResult] = useState<any>(null);
+  const change = useSubmit(async () => {
+    if (f.password.length < 12) throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields: { password: 'Use at least 12 characters' } });
+    await post('/auth/password', { current: f.current, password: f.password }); setOpen(false); toast('Password changed. Other devices have been signed out.');
+  });
+  const issue = useSubmit(async () => setResult(await post(`/people/${person.id}/access-link`, { reset_mfa: f.reset_mfa, reason: f.reason || undefined })));
+  const admin = !isMe && person.status !== 'left' && (hub.me.superAdmin || hub.me.companies.some((c) => c.perms.includes('staff.create')));
+  if (!isMe && !admin) return null;
+  const close = () => { setOpen(false); setResult(null); setF({ current: '', password: '', reset_mfa: false, reason: '' }); };
+  return (
+    <>
+      <Button variant="secondary" onClick={() => setOpen(true)}>{isMe ? 'Change password' : person.has_password ? 'Send new sign-in link' : 'Resend invitation'}</Button>
+      {isMe ? (
+        <Dialog open={open} onClose={close} title="Change password" footer={<Button busy={change.busy} onClick={() => change.run()}>Change password</Button>}>
+          <ErrorSummary error={change.error} />
+          <Field label="Current password" error={change.error?.fields.current}><input name="current" type="password" autoComplete="current-password" value={f.current} onChange={(e) => setF({ ...f, current: e.target.value })} /></Field>
+          <Field label="New password" hint="At least 12 characters" error={change.error?.fields.password}><input name="password" type="password" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>
+        </Dialog>
+      ) : (
+        <Dialog open={open} onClose={close} title={person.has_password ? 'Send a new sign-in link' : 'Resend invitation'} footer={!result && <Button busy={issue.busy} onClick={() => issue.run()}>Create link</Button>}>
+          {result ? <AccessLinkNotice link={result.link} email={result.email} purpose={result.purpose} /> : <>
+            <p>{person.has_password ? 'They choose a new password with the link. Their two-step verification stays as it is unless you reset it below.' : 'They have not chosen a password yet. Any earlier invitation link stops working.'}</p>
+            <p className="small muted">Two-step verification: {person.mfa_enabled ? 'set up' : 'not set up'}.</p>
+            <ErrorSummary error={issue.error} />
+            {hub.me.superAdmin && person.mfa_enabled && <>
+              <label className="check"><input type="checkbox" checked={f.reset_mfa} onChange={(e) => setF({ ...f, reset_mfa: e.target.checked })} /> Also reset two-step verification (lost or new phone)</label>
+              {f.reset_mfa && <Field label="Reason" error={issue.error?.fields.reason}><input name="reason" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} /></Field>}
+            </>}
+          </>}
+        </Dialog>
+      )}
     </>
   );
 }

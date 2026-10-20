@@ -4,54 +4,47 @@ This guide covers setting up, deploying and running the Hub. Items marked **Need
 
 ## 1. Environments
 
-Keep three separate environments. Never share a database or Supabase project between them.
+Keep separate environments. Never share a database between them.
 
 | Environment | Database | Sign-in | Data |
 | --- | --- | --- | --- |
 | Development | Local Postgres (`npm run db:local`) | Demo sign-in (`DEV_AUTH=true`) | Fictional seed only |
-| Staging | Its own Supabase project | Supabase | Fictional or anonymised only |
-| Production | Its own Supabase project | Supabase, invitation only | Real |
+| Staging (optional) | Its own Render Postgres | Hub sign-in | Fictional or anonymised only |
+| Production | Render Postgres `staffcrm-db` (Frankfurt) | Hub sign-in, invitation only | Real |
 
-## 2. Supabase (staging and production)
+Everything lives in Render: the web service and one Postgres database holding the data, sign-in records and uploaded files. There is no other provider to set up. Email (Resend) and the AI assistant (Anthropic) are optional.
 
-1. Create a project in the **London (eu-west-2)** region.
-2. **Authentication → Providers → Email**: enabled. Turn **off** "Allow new users to sign up" (invitation only).
-3. **Authentication → Multi-Factor**: enable **TOTP**. Privileged roles (super administrator, company administrator, HR administrator, finance administrator) cannot use the Hub until they complete two-step verification.
-4. **Authentication → URL configuration**: Site URL = your Hub address; add `https://<your-hub>/reset-password` to redirect URLs.
-5. **Authentication → Email templates**: set the invite and reset emails to send people to `https://<your-hub>/reset-password`, where they choose a password.
-6. **Settings → API**: copy the URL, the anon key and the service-role key. The service-role key is a secret: it goes only into Render's environment, never into the browser or the repository.
-7. **Settings → Database**: copy the session-pooler connection string for `DATABASE_URL`. Under **SSL Configuration**, download the certificate and paste its contents into `DATABASE_CA` on Render. Production refuses to connect without it, so the server always verifies it is talking to your database.
-8. Run migrations (Render does this automatically before each deploy). Migration 001 creates the private storage bucket `hub-private` with no storage policies, so only the server can read or write files.
+## 2. How sign-in works
+
+- **Invitation only.** An administrator creates a person (People → Invite a person). The Hub makes a one-time link valid for 7 days. With email set up (`RESEND_API_KEY` and `EMAIL_FROM`), it is emailed; without it, the administrator sees the link and passes it on privately.
+- **Passwords**: at least 12 characters, stored as scrypt hashes. Ten wrong attempts pause that account's sign-in for 15 minutes.
+- **Two-step verification** with an authenticator app (Microsoft Authenticator, Google Authenticator and similar) is required for privileged roles (super administrator, company administrator, HR administrator, finance administrator). They set it up at first sign-in and enter a code at every sign-in.
+- **Forgotten password**: with email set up, "Forgot your password?" sends a 1-hour link. Without email, an administrator opens the person's profile and uses **Send new sign-in link**. Only a super administrator can do this for someone with a privileged role, or reset a lost authenticator.
+- **Sessions** last up to 14 days and end after 3 days unused. Changing or resetting a password signs out other devices. Only hashes of session tokens and links are stored.
 
 ## 3. Render
 
 1. Push this folder to a **private** GitHub repository.
-2. In Render: **New → Blueprint**, choose the repository. It reads `render.yaml`.
-3. Fill in the secret environment variables (`DATABASE_URL`, `DATABASE_CA`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `APP_URL`, `HELP_CONTACT`).
-4. Deploy. Render runs `npm run migrate` before starting the new version and checks `/health`.
-5. Add your domain under **Settings → Custom domains**. Render provides HTTPS, which the PWA needs.
+2. Either **New → Blueprint** with this repository (it reads `render.yaml` and creates the web service and the database together), or set up by hand:
+   - Create **Postgres** (Frankfurt, Basic 256 MB or larger, no external access).
+   - Create a **Web Service** from the repository. Build command `npm ci --include=dev && npm run build`, pre-deploy command `npm run migrate`, start command `npm start`, health check path `/health`.
+   - In the web service's **Environment**, set `DATABASE_URL` to the database's **Internal Database URL** (database page → Connect → Internal). Set `NODE_ENV=production`, `APP_URL` (the Hub's address) and `HELP_CONTACT`.
+3. Deploy. Render runs `npm run migrate` before starting each new version and checks `/health`.
+4. Add your domain under **Settings → Custom domains**. Render provides HTTPS, which the PWA needs. Update `APP_URL` to match.
 
-The server refuses to start in production if demo sign-in is switched on or Supabase is not configured. The seed script refuses to load fictional data in production.
+The server refuses to start in production if demo sign-in is switched on. The seed script refuses to load fictional data in production. The internal database address only works inside Render; a database reached over the internet is always connected with verified TLS (`DATABASE_CA` if its certificate is not publicly trusted).
 
 ## 4. The first administrator
 
-There is no public administrator registration.
+There is no public registration. On a new database, open the web service's **Shell** tab in Render and run:
 
-1. In Supabase **Authentication → Users → Invite user**, invite the first administrator's work email.
-2. In the Supabase SQL editor, create their profile, an appointment and the super-administrator grant (replace the values):
-
-```sql
-insert into people (email, full_name, staff_ref, status) values ('name@yourorg.example', 'Full Name', 'VWH-0001', 'invited') returning id;
-insert into appointments (person_id, company_id, relationship, legal_employer_company_id, job_title, start_date)
-  select p.id, c.id, 'employee', c.id, 'Platform Administrator', current_date from people p, companies c where p.email = 'name@yourorg.example' and c.code = 'VH';
-insert into role_grants (person_id, role_key, company_id, reason)
-  select id, 'super_admin', null, 'First administrator' from people where email = 'name@yourorg.example';
+```
+npm run create-admin -- name@yourorg.example "Full Name"
 ```
 
-3. They accept the invitation, choose a password, then set up two-step verification at first sign-in.
-4. In production the three companies must exist first. Insert them once with their verified legal names only (`code`, `name`, `legal_name`); add company numbers and addresses in **Admin Centre → Companies** after checking them against Companies House.
+This creates the three companies (Valor Housing Ltd, Wellbeing Homes Ltd, Wellbeing Housing Ltd; names only, marked unverified), the person, and a super-administrator grant, and prints a one-time link. Open it, choose a password, then set up two-step verification. Add company numbers and addresses in **Admin Centre → Companies** after checking them against Companies House. Running the command again for the same email prints a fresh link.
 
-Everyone else is invited from **People → Invite a person**, which creates the profile, the first appointment and sends the Supabase invitation.
+Everyone else is invited from **People → Invite a person**, which creates the profile and the first appointment and gives the invitation link.
 
 ## 5. Day-to-day administration
 
@@ -62,17 +55,16 @@ Everyone else is invited from **People → Invite a person**, which creates the 
 
 ## 6. Backups and recovery
 
-- Supabase Pro includes daily backups; enable **Point-in-Time Recovery** for production.
-- **Test a restore at least quarterly**: restore into a scratch Supabase project, point a staging Render service at it, sign in and check recent records. Record the date and result. Recovery times are not guaranteed until you have tested them.
-- Storage files are backed up separately from the database; check Supabase's current storage backup terms.
+- Render's paid Postgres plans take daily backups with point-in-time recovery (check the retention period for your plan on the database's **Recovery** tab). Uploaded files are stored in the database, so they are included.
+- **Test a restore at least quarterly**: restore to a new database from the Recovery tab, point a staging web service at it, sign in and check recent records. Record the date and result. Recovery times are not guaranteed until you have tested them.
 
 ## 7. Privacy and compliance — needs professional review
 
 The software supports accountable practice. It does not make you compliant by itself.
 
 - **Data protection impact assessment** for the Hub, including attendance and lone-worker features. Location checks are not built; if added later, they need their own assessment.
-- **Processor agreements** with Supabase and Render (data processing addenda), and a record of where data is stored (UK/EU regions).
-- **Retention schedule** for HR records, employment checks, visits, timesheets and audit logs. Retention and deletion tooling is not built yet (see tracker).
+- **Processor agreements** with Render, and with Resend and Anthropic if you switch them on (data processing addenda), and a record of where data is stored (UK/EU regions).
+- **Retention schedule** for HR records, employment checks, visits, timesheets and audit logs. Admin Centre → Retention lists what is past your period; super administrators can anonymise leavers.
 - **Employment checks**: the Hub stores dates, statuses and references only — never criminal-record details or certificate images. Confirm this matches your DBS code of practice obligations.
 - **Lone working**: overdue check-ins appear in the named contact's review list. This is not a monitored emergency service; your lone-working policy must say who checks, how often, and when to call 999.
 - **Malware scanning** of uploads is not integrated. Uploads are restricted by content type (JPEG, PNG, WebP, PDF) and size (10 MB).

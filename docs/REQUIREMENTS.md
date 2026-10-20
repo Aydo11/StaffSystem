@@ -46,10 +46,10 @@ Other §41 checks: keyboard use and screen-reader labels — axe-core scan of 16
 | 2 | Exclusions | Verified | No tenant/resident features. Visit summaries reject resident narratives (simple guard + guidance) |
 | 3 | Multi-company architecture | Verified | `company_id` on every company record; per-company permissions; combined view keeps company badges |
 | 4 | One account, many appointments | Verified | Legal employer separate from assigned company; ending one keeps others; changes audited with before/after |
-| 5 | Architecture and hosting | Implemented / Pending external setup | Migrations, constraints, indexes, `.env.example`, `render.yaml`, health check, error logging, fictional seed, docs. Needs GitHub repo, Supabase projects and Render service. Background jobs: none needed yet |
+| 5 | Architecture and hosting | Implemented / Pending external setup | Migrations, constraints, indexes, `.env.example`, `render.yaml`, health check, error logging, fictional seed, docs. GitHub repo and Render service exist; Render Postgres `staffcrm-db` created 20 Oct 2026. Background jobs: none needed yet |
 | 6 | Branding and typography | Implemented | Provisional palette as tokens; Inter; type scale and spacing as specified. Teal used for accents only — white/teal text fails AA, so a darker teal `#0A6B61` is used for text. **Logos and verified palettes not supplied** |
 | 7 | Accessibility and plain English | Verified (automated) | See above. Captions/transcripts: no media yet. Charts have table alternatives |
-| 8 | Login and navigation | Implemented / Pending external setup | Invitation-only Supabase sign-in, show/hide password, reset, help contact, MFA gate for privileged roles. Desktop sidebar (collapsible), company selector, search, quick-create, notifications, profile photo, breadcrumbs, Admin Centre link. Mobile bottom nav, active-visit banner, safe areas. Supabase flows untested until a project exists. Passwordless: not built |
+| 8 | Login and navigation | Implemented / Pending external setup | Invitation-only sign-in built into the Hub (scrypt passwords, lockout, one-time links, TOTP two-step for privileged roles, server sessions; `tests/auth.test.ts`), show/hide password, reset, help contact. Desktop sidebar (collapsible), company selector, search, quick-create, notifications, profile photo, breadcrumbs, Admin Centre link. Mobile bottom nav, active-visit banner, safe areas. Passwordless: not built |
 | 9 | Company selector and My Work | Implemented | Company badge on every visit, task, timesheet; forms show and require the company |
 | 10 | Permissions | Verified (core) | 11 roles, 25 permissions, separate view/create/edit/approve. Restricted: rates, checks, personal details. Enforced in API, search, files, inbox. Delegation with expiry and access review. **Not yet**: per-permission export/delete (no exports or deletes exist yet); configurable role editor UI (roles are data, editable in SQL) |
 | 11 | Staff profiles and resume | Verified | Photo upload with crop, preview, replace, remove; initials fallback; proposed changes verified by HR; printable professional profile (browser "Save as PDF") |
@@ -86,7 +86,7 @@ Other §41 checks: keyboard use and screen-reader labels — axe-core scan of 16
 
 ## Known limitations in delivered stages
 
-- One JS bundle of ~655 kB (mostly the Supabase client). Fine on 4G; code-splitting is a later optimisation.
-- Supabase sign-in, invitation emails, MFA enrolment and private storage are written against Supabase's documented API but have only run in demo mode here. Verify on staging before production.
+- One JS bundle; code-splitting is a later optimisation.
+- Invitation and reset emails need RESEND_API_KEY and EMAIL_FROM; without them admins pass links on by hand.
 - Cross-company property links exist in the database but have no admin screen yet.
 - Profile and HR-record edits are audited without a company (they concern the central profile), so only super administrators see them in the audit screen.

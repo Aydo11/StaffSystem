@@ -5,14 +5,17 @@ pg.types.setTypeParser(20, (v) => Number(v));
 pg.types.setTypeParser(1082, (v) => v);
 
 const prod = process.env.NODE_ENV === 'production';
-const local = /@(localhost|127\.0\.0\.1)[:/]/.test(process.env.DATABASE_URL ?? '');
+const host = process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL).hostname : '';
+const local = host === 'localhost' || host === '127.0.0.1';
+// Render's internal address (a bare name like dpg-xxxx-a) only resolves on Render's private network, so traffic never leaves Render.
+const privateNetwork = !!host && !host.includes('.');
 const ca = process.env.DATABASE_CA?.replace(/\\n/g, '\n'); // accepts the certificate pasted as one line with \n
-if (prod && !local && !ca) throw new Error("Refusing to connect: set DATABASE_CA to the database provider's CA certificate so the server can verify it is the real database.");
 
 export const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
-  // shortcut: without DATABASE_CA a non-production remote database gets encrypted but unverified TLS; set DATABASE_CA on staging too.
-  ssl: local || (!prod && process.env.DATABASE_SSL === 'false') ? undefined : ca ? { ca } : { rejectUnauthorized: false },
+  // Any other address is verified: against DATABASE_CA if given, else the system's trusted certificates.
+  // shortcut: a non-production remote database without DATABASE_CA gets encrypted but unverified TLS; set DATABASE_CA on staging too.
+  ssl: local || privateNetwork || (!prod && process.env.DATABASE_SSL === 'false') ? undefined : ca ? { ca } : prod ? {} : { rejectUnauthorized: false },
   max: Number(process.env.DATABASE_POOL_MAX ?? 10),
 });
 

@@ -12,7 +12,7 @@ export const visits = Router();
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
 const MINUTES = (v: string) => `round(extract(epoch from (${v}.ended_at - ${v}.started_at)) / 60)::int`;
 const LDATE = (col: string) => `(${col} at time zone 'Europe/London')::date`;
-const workCategory = z.enum(['inspection', 'maintenance', 'cleaning', 'key_handover', 'property_check', 'administration', 'other']);
+const workCategory = z.enum(['inspection', 'maintenance', 'cleaning', 'key_handover', 'property_check', 'administration', 'support_work', 'other']);
 // Operational notes only. A short guard against resident narratives; the UI explains the rule too.
 const summary = text(500).min(3, 'Add a brief summary of the work').refine((s) => !/\b(resident|tenant|service user|client)\s+(said|told|disclosed|was upset|appeared)/i.test(s),
   'Keep this to property work only — record resident support matters in the support system.');
@@ -32,6 +32,17 @@ async function usableAppointment(db: Db, a: Access, appointmentId: string, prope
 const VISIT_PHOTOS = `select f.id, f.original_name, f.uploaded_at, f.uploaded_by, coalesce(u.preferred_name, u.full_name) as uploaded_by_name
   from files f join people u on u.id = f.uploaded_by where f.entity_type = 'visit' and f.entity_id = $1 order by f.uploaded_at`;
 const MAX_VISIT_PHOTOS = 20;
+
+// Support work is approved as soon as it is submitted (the owner's rule): one allocation for the full duration, as on approval.
+async function autoApproveSupportWork(db: Db, visitId: string) {
+  const v = await one<{ company_id: string; appointment_id: string; person_id: string; minutes: number }>(
+    `update visits set status = 'approved', decided_at = now(), decision_note = 'Support work: approved automatically'
+      where id = $1 and status = 'submitted' and work_category = 'support_work' returning company_id, appointment_id, person_id, ${MINUTES('visits')} as minutes`, [visitId], db);
+  if (!v) return false;
+  if (v.minutes > 0) await q('insert into visit_allocations (visit_id, company_id, appointment_id, minutes) values ($1,$2,$3,$4)', [visitId, v.company_id, v.appointment_id, v.minutes], db);
+  await audit(db, v.person_id, v.company_id, 'visit', visitId, 'auto_approve', { reason: 'support_work' });
+  return true;
+}
 
 async function loadVisit(a: Access, id: string, db: Db = pool) {
   const v = await one(`select v.*, ${MINUTES('v')} as minutes from visits v where v.id = $1 and ${visitVisible('v', 2, 3)}`, [id, a.personId, companiesWith(a, 'visits.view_all')], db);
@@ -97,6 +108,7 @@ visits.post('/visits/:id/finish', async (req, res) => {
     const row = await one(`update visits set ended_at = greatest(now(), started_at + interval '1 second'), status = 'submitted', submitted_at = now(), work_category = $2, summary = $3 where id = $1 returning *, ${MINUTES('visits')} as minutes`, [id, b.work_category, b.summary], db);
     if (cur.scheduled_visit_id) await q(`update scheduled_visits set status = 'completed', visit_id = $2 where id = $1 and status = 'scheduled'`, [cur.scheduled_visit_id, id], db);
     await audit(db, req.person.id, cur.company_id, 'visit', id, 'finish', {});
+    if (await autoApproveSupportWork(db, id)) row.status = 'approved';
     return row;
   });
   res.json(v);
@@ -160,6 +172,7 @@ visits.post('/visits/manual', async (req, res) => {
                          values ($1,$2,$3,$4,'manual','submitted',$5,$6,$7,$8, now(), $9) returning *`,
       [req.person.id, ap.id, ap.company_id, b.property_id, t.s, t.e, b.work_category, b.summary, b.client_request_id], db);
     await audit(db, req.person.id, ap.company_id, 'visit', v.id, 'manual_entry', { minutes: b.minutes });
+    if (await autoApproveSupportWork(db, v.id)) v.status = 'approved';
     return { visit: v, warnings };
   });
   res.status(201).json(out);
@@ -317,6 +330,7 @@ visits.post('/corrections/:id/decide', async (req, res) => {
       await q(`update visits set started_at = $2, ended_at = $3, status = 'submitted', submitted_at = coalesce(submitted_at, now()), decided_by = null, decided_at = null, decision_note = null where id = $1`,
         [c.visit_id, c.proposed.started_at, c.proposed.ended_at], db);
       await q('delete from visit_allocations where visit_id = $1', [c.visit_id], db);
+      await autoApproveSupportWork(db, c.visit_id);
     }
     await audit(db, req.person.id, c.company_id, 'visit_correction', id, b.approve ? 'approve' : 'reject', { visit_id: c.visit_id, original: c.original, proposed: c.proposed });
     await notify(db, c.requested_by, c.company_id, `Visit correction ${b.approve ? 'approved — visit returned for approval' : 'not approved'}`, `/visits/${c.visit_id}`, b.note);

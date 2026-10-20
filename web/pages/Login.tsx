@@ -5,13 +5,34 @@ import { Button, ErrorSummary, Field } from '../ui.tsx';
 
 function Frame({ children }: { children: React.ReactNode }) {
   return (
-    <main className="content" style={{ maxWidth: 480, paddingTop: 48 }}>
-      <div className="row" style={{ marginBottom: 24 }}>
-        <span className="brand-mark" style={{ color: '#fff' }} aria-hidden="true">VW</span>
-        <div><strong style={{ fontSize: '1.25rem' }}>Valor &amp; Wellbeing Hub</strong><div className="muted small">People · Performance · Properties · Governance</div></div>
-      </div>
-      <div className="card">{children}</div>
-      <p className="muted small" style={{ marginTop: 16 }}>For Valor Housing Ltd, Wellbeing Homes Ltd and Wellbeing Housing Ltd staff. Accounts are by invitation only.</p>
+    <main className="auth-shell">
+      <section className="auth-story" aria-label="About the Hub">
+        <div className="brand"><span className="brand-mark" aria-hidden="true">VW</span><span className="brand-text"><strong>Valor &amp; Wellbeing Hub</strong><span>Your people. Your purpose.</span></span></div>
+        <div>
+          <div className="auth-eyebrow">One connected workplace</div>
+          <h2>Great support starts with a connected team.</h2>
+          <p>Your working day, training, properties and company updates. Together in one place, so you can focus on the people who matter.</p>
+          <svg className="auth-art" viewBox="0 0 520 205" fill="none" aria-hidden="true">
+            <defs><linearGradient id="hub-card" x1="40" y1="30" x2="440" y2="200" gradientUnits="userSpaceOnUse"><stop stopColor="#ffffff" stopOpacity=".17"/><stop offset="1" stopColor="#ffffff" stopOpacity=".04"/></linearGradient></defs>
+            <path d="M20 173H500" stroke="#ffffff" strokeOpacity=".12"/>
+            <rect x="34" y="46" width="224" height="127" rx="16" fill="url(#hub-card)" stroke="#ffffff" strokeOpacity=".2"/>
+            <rect x="55" y="67" width="29" height="29" rx="9" fill="#60cdb4"/><path d="m63 81 5 5 9-11" stroke="#123d47" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <rect x="96" y="70" width="130" height="7" rx="3.5" fill="#ffffff" fillOpacity=".65"/><rect x="96" y="85" width="85" height="5" rx="2.5" fill="#ffffff" fillOpacity=".25"/>
+            <rect x="55" y="116" width="181" height="6" rx="3" fill="#ffffff" fillOpacity=".12"/><rect x="55" y="116" width="133" height="6" rx="3" fill="#60cdb4"/>
+            <rect x="55" y="138" width="100" height="5" rx="2.5" fill="#ffffff" fillOpacity=".3"/>
+            <rect x="279" y="20" width="201" height="153" rx="16" fill="url(#hub-card)" stroke="#ffffff" strokeOpacity=".2"/>
+            <rect x="300" y="41" width="91" height="6" rx="3" fill="#ffffff" fillOpacity=".6"/>
+            <rect x="301" y="114" width="22" height="37" rx="5" fill="#ffffff" fillOpacity=".22"/><rect x="335" y="95" width="22" height="56" rx="5" fill="#ffffff" fillOpacity=".32"/><rect x="369" y="77" width="22" height="74" rx="5" fill="#60cdb4" fillOpacity=".8"/><rect x="403" y="61" width="22" height="90" rx="5" fill="#60cdb4"/>
+            <circle cx="469" cy="29" r="15" fill="#60cdb4"/><path d="m462 29 5 5 9-11" stroke="#123d47" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </div>
+        <div className="auth-tags"><span>People &amp; performance</span><span>Properties &amp; visits</span><span>Training &amp; governance</span></div>
+      </section>
+      <section className="auth-form-side" aria-label="Account access"><div className="auth-form-inner">
+        <div className="auth-eyebrow" style={{ color: 'var(--teal-text)' }}>Welcome to your Hub</div>
+        <div className="card">{children}</div>
+        <p className="auth-footer">For Valor Housing Ltd, Wellbeing Homes Ltd and Wellbeing Housing Ltd staff. Accounts are by invitation only.</p>
+      </div></section>
     </main>
   );
 }

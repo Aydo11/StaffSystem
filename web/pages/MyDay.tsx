@@ -5,6 +5,7 @@ import { fmtDate, fmtDay, fmtMinutes, fmtTime, londonToday } from '../format.ts'
 import { useHub } from '../hub.tsx';
 import { Button, CompanyBadge, Empty, LoadError, PageHead, Skeleton, Status } from '../ui.tsx';
 import { RequestHelpDialog } from './Performance.tsx';
+import { DayOverview } from './Activity.tsx';
 import { StartVisitDialog } from './Visits.tsx';
 
 export function MyDay() {
@@ -26,6 +27,7 @@ export function MyDay() {
   return (
     <>
       <PageHead title={`${greet}, ${me.person.preferred_name ?? me.person.full_name.split(' ')[0]}`} intro={fmtDate(today)} actions={<Button variant="secondary" onClick={() => setHelp(true)}>Request Help</Button>} />
+      <DayOverview key={me.person.id} />
       {d.error && <LoadError error={d.error} retry={d.reload} />}
       {d.loading && !d.data ? <Skeleton lines={6} /> : d.data && (
         <>
@@ -103,3 +105,4 @@ export function MyDay() {
     </>
   );
 }
+

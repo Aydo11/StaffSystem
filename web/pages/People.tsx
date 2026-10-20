@@ -6,6 +6,7 @@ import { AllocateDialog } from '../allocate.tsx';
 import { useHub } from '../hub.tsx';
 import { AccessLinkNotice, PersonDataActions, SignInAccess } from './DataTools.tsx';
 import { DevelopmentTab } from './Development.tsx';
+import { ProfileOverview } from './ProfileOverview.tsx';
 import { Avatar, Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 export function People() {
@@ -126,6 +127,7 @@ export function PersonPage({ self }: { self?: boolean }) {
         <div><strong style={{ fontSize: '1.25rem' }}>{p.full_name}</strong>{p.preferred_name && <span className="muted"> (known as {p.preferred_name})</span>}<br /><span className="muted">{p.staff_ref} · {p.email}</span> {p.status !== 'active' && <Status s={p.status} />}</div>
       </div>
       <div className="row no-print" style={{ marginBottom: 12 }}>{(isMe || restricted) && <PersonDataActions person={p} />}<SignInAccess person={p} isMe={isMe} /></div>
+      <ProfileOverview personId={id} isMe={isMe} />
       <Tabs label="Profile sections" tabs={tabs} value={tab} onChange={setTab} />
       <div role="tabpanel">
         {tab === 'profile' && <ProfileTab d={d.data} isMe={isMe} reload={d.reload} />}

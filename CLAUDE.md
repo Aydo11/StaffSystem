@@ -46,3 +46,8 @@ Stage 5 done (migration 005, `routes/training.ts`, `routes/policies.ts`, `web/pa
 - Visit photos: `/visits/:id/photos` (images only, max 20, worker or approver; kept once approved). Shown on the visit and the property page (`photos`). Live finish and manual log both take photos, uploaded after the visit saves.
 - Allocation: `web/allocate.tsx` `AllocateDialog` ticks several at once from a person (properties) or a property (`/properties/:id/assignable`, staff). Clearance blocks are shown per row with one recorded exception reason.
 - Manual visit log remembers last property/type/duration on the device and has "I've just finished" to fill the times. Tests: `tests/uploads.test.ts`.
+
+## Profiles, CPD and navigation (20 Oct 2026)
+- Profile overview above the tabs (`web/pages/ProfileOverview.tsx`, `GET /people/:id/overview`): availability now (away from approved leave, without the kind; on a visit; within usual hours), weekly hours (`people.working_hours`, `PUT /people/:id/working-hours`, self or staff.edit) and the CPD roadmap (`CPD_STEPS` in routes/people.ts, matched to training records by title; ticked when course-passed or verified).
+- Support work (`support_work`, migration 014) is approved automatically on finish, manual log and after an approved correction (owner decision; overrides the review rule for this type only).
+- Sidebar grouped (NAV `group`): People high up; time/leave and learning/policies together. Tests: `tests/availability.test.ts`.

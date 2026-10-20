@@ -18,6 +18,8 @@ const wrong = () => new HttpError(401, 'auth', `The email or password is not rig
 // Per network address; offices share one, so this is generous. Per-account lockout (above) is the real brute-force guard.
 const limiter = rateLimit({ windowMs: 15 * 60_000, limit: 100, standardHeaders: true, legacyHeaders: false, message: { error: 'rate_limited', message: 'Too many attempts. Please wait a few minutes and try again.' } });
 
+const logFail = (reason: string, who?: string, attempt?: number) => console.log(JSON.stringify({ level: 'info', message: 'sign-in failed', reason, who: who ?? null, attempt: attempt ?? null }));
+
 async function failed(personId: string) {
   await q(`update people set failed_logins = case when failed_logins + 1 >= $2 then 0 else failed_logins + 1 end,
                              locked_until = case when failed_logins + 1 >= $2 then now() + make_interval(mins => $3) else locked_until end where id = $1`, [personId, MAX_FAILS, LOCK_MINUTES]);
@@ -53,10 +55,15 @@ authPublic.get('/auth/config', (_req, res) => {
 
 authPublic.post('/auth/login', limiter, async (req, res) => {
   const b = parse(z.object({ email: z.string().trim().max(254), password: z.string().max(200) }), req.body);
-  const p = await one<{ id: string; password_hash: string | null; totp_enabled_at: string | null; locked: boolean }>(
-    `select id, password_hash, totp_enabled_at, coalesce(locked_until > now(), false) as locked from people where lower(email) = lower($1) and status <> 'left'`, [b.email]);
+  const p = await one<{ id: string; staff_ref: string; password_hash: string | null; totp_enabled_at: string | null; locked: boolean; failed_logins: number }>(
+    `select id, staff_ref, password_hash, totp_enabled_at, coalesce(locked_until > now(), false) as locked, failed_logins from people where lower(email) = lower($1) and status <> 'left'`, [b.email]);
   const ok = await verifyPassword(b.password, p?.password_hash ?? null); // always runs, so timing does not reveal which emails exist
-  if (!p || p.locked || !ok) { if (p && !p.locked) await failed(p.id); throw wrong(); }
+  if (!p || p.locked || !ok) {
+    // The user sees one message for every case; the log says which, for support (no email or password logged).
+    logFail(!p ? 'no_account' : p.locked ? 'locked' : !p.password_hash ? 'no_password_set' : 'wrong_password', p?.staff_ref, p ? p.failed_logins + 1 : undefined);
+    if (p && !p.locked) await failed(p.id);
+    throw wrong();
+  }
   await q('update people set failed_logins = 0, locked_until = null where id = $1', [p.id]);
   if (p.totp_enabled_at) {
     const ticket = newToken();
@@ -73,7 +80,7 @@ authPublic.post('/auth/login/mfa', limiter, async (req, res) => {
       where t.token_hash = $1 and t.purpose = 'mfa' and t.used_at is null and t.expires_at > now() and p.status <> 'left' and p.totp_enabled_at is not null`, [sha256(b.ticket)]);
   if (!t) throw new HttpError(401, 'auth', 'Your sign-in timed out. Please enter your email and password again.');
   const step = t.locked ? null : checkTotp(t.totp_secret, b.code, t.totp_last_step);
-  if (step === null) { if (!t.locked) await failed(t.person_id); throw new HttpError(401, 'auth', 'That code did not work. Codes change every 30 seconds — try the newest one.', { fields: { code: 'Check the code' } }); }
+  if (step === null) { logFail(t.locked ? 'locked' : 'wrong_code', t.person_id); if (!t.locked) await failed(t.person_id); throw new HttpError(401, 'auth', 'That code did not work. Codes change every 30 seconds — try the newest one.', { fields: { code: 'Check the code' } }); }
   const token = await tx(async (db) => {
     await q(`update auth_tokens set used_at = now() where token_hash = $1`, [sha256(b.ticket)], db);
     await q('update people set totp_last_step = $2, failed_logins = 0 where id = $1', [t.person_id, step], db);

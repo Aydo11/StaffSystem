@@ -465,3 +465,83 @@ section[aria-labelledby='pd-h'] .prop-photo { height: auto; aspect-ratio: 4 / 3;
 .roadmap li.awaiting .dot { background: #fff4e5; border-color: #b26b00; color: #8a5300; }
 .hours-row { margin-bottom: var(--s2); min-height: 44px; }
 @media screen { .roadmap li.done .dot { animation: pop 300ms var(--ease-out); } }
+
+/* KPIs for each person: one row per person, coloured by status (with words for screen readers). */
+.kpi-table td { font-weight: 600; white-space: nowrap; }
+.kpi-table .kpi-met { color: #116b3a; background: #e8f6ee; }
+.kpi-table .kpi-below { color: var(--danger); background: var(--danger-50); }
+.kpi-table .kpi-insufficient, .kpi-table .kpi-info { color: var(--text-2); }
+.person-cell { justify-content: flex-start; text-align: left; white-space: normal; gap: var(--s2); font-weight: 600; min-width: 220px; height: auto; padding: var(--s1) var(--s2); }
+
+/* Chat: list beside the open conversation; on a phone, one at a time. */
+.chat { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: var(--s4); height: calc(100dvh - 260px); min-height: 480px; }
+.chat > .card { padding: 0; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+.chat-list { padding: var(--s3) !important; gap: var(--s2); overflow-y: auto !important; }
+.chat-nudge { background: var(--teal-50); border-radius: var(--r-ctl); padding: var(--s2) var(--s3); margin: 0; }
+.chat-nudge svg { vertical-align: -3px; }
+.chat-item-text .row > .truncate { flex: 1; }
+.chat-list > *, .thread > * { min-width: 0; }
+.chat-hits { list-style: none; margin: 4px 0 8px; padding: 0; display: grid; gap: 4px; }
+.chat-items { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.chat-item { display: flex; align-items: center; gap: var(--s3); padding: var(--s2); border-radius: var(--r-ctl); color: var(--text); text-decoration: none; min-height: 60px; }
+.chat-item:hover { background: var(--bg); }
+.chat-item[aria-current='page'] { background: var(--teal-50); box-shadow: inset 3px 0 0 var(--teal); }
+.chat-item-text { flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.unread { flex: none; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; background: var(--teal-text); color: #fff; font-size: 0.75rem; font-weight: 700; display: grid; place-items: center; }
+.group-avatar { background: var(--navy); color: #fff; font-size: 0.85rem; }
+.chat-empty { margin: auto; text-align: center; color: var(--text-2); padding: var(--s6); display: grid; justify-items: center; gap: var(--s3); }
+.thread { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.thread-head { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s4); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.thread-body { flex: 1; overflow-y: auto; padding: var(--s4); background: linear-gradient(var(--bg), var(--bg)) padding-box; position: relative; }
+.bubbles { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.bubble-row.run-start { margin-top: var(--s3); }
+.day-sep { text-align: center; margin: var(--s3) 0; }
+.day-sep span { font-size: 0.75rem; color: var(--text-2); background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+.bubble-line { display: flex; align-items: flex-end; gap: var(--s2); }
+.mine .bubble-line { flex-direction: row-reverse; }
+.bubble-avatar { width: 40px; flex: none; }
+.bubble-col { display: flex; flex-direction: column; max-width: min(72%, 560px); }
+.mine .bubble-col { align-items: flex-end; }
+.bubble-author { font-size: 0.75rem; color: var(--text-2); font-weight: 600; margin: 0 0 2px 10px; }
+.bubble { background: var(--card); border: 1px solid var(--line); border-radius: 16px 16px 16px 4px; padding: 8px 12px; position: relative; box-shadow: 0 1px 1px rgb(23 43 58 / 0.04); }
+.mine .bubble { background: var(--teal-text); border-color: var(--teal-text); color: #fff; border-radius: 16px 16px 4px 16px; }
+.bubble p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble-time { display: block; font-size: 0.7rem; opacity: 0.75; text-align: right; margin-top: 2px; }
+.bubble.photo-only { padding: 4px; }
+.bubble.photo-only .bubble-time { position: absolute; right: 10px; bottom: 8px; color: #fff; text-shadow: 0 1px 2px #0008; }
+.bubble-img { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 12px; overflow: hidden; margin-bottom: 4px; }
+.bubble-img img, .bubble-img .skeleton { display: block; max-width: min(320px, 100%); max-height: 320px; width: auto; height: auto; min-width: 120px; min-height: 90px; object-fit: cover; margin: 0; }
+.bubble-file { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-weight: 600; background: rgb(255 255 255 / 0.15); border: 1px solid currentColor; color: inherit; border-radius: 8px; padding: 6px 10px; margin-bottom: 4px; cursor: pointer; }
+.reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: -6px; padding: 0 6px; position: relative; z-index: 1; }
+.reaction { font: inherit; font-size: 0.8rem; border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 1px 8px; cursor: pointer; min-height: 26px; }
+.reaction.mine { border-color: var(--teal); background: var(--teal-50); }
+.bubble-tools { position: relative; opacity: 0; }
+.bubble-row:hover .bubble-tools, .bubble-tools:focus-within { opacity: 1; }
+@media (hover: none) { .bubble-tools { opacity: 1; } }
+.react-bar { position: absolute; bottom: 100%; z-index: 5; display: flex; gap: 2px; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 4px; box-shadow: var(--shadow-lg); }
+.mine .react-bar { right: 0; } .bubble-row:not(.mine) .react-bar { left: 0; }
+.react-bar button { font: inherit; font-size: 1.15rem; background: none; border: 0; border-radius: 50%; width: 36px; height: 36px; cursor: pointer; }
+.react-bar button.small { font-size: 0.8rem; width: auto; padding: 0 10px; border-radius: 999px; }
+.react-bar button:hover { background: var(--bg); }
+.composer { border-top: 1px solid var(--line); padding: var(--s3) var(--s4); background: var(--card); }
+.composer-row { display: flex; align-items: flex-end; gap: var(--s1); }
+.composer textarea { min-height: 44px; max-height: 160px; resize: none; border-radius: 22px; padding: 10px 16px; }
+.send-btn { border-radius: 50%; width: 44px; padding: 0; flex: none; background: var(--teal-text); border-color: var(--teal-text); }
+.attach-preview { display: flex; align-items: center; gap: var(--s3); padding: var(--s2); border: 1px solid var(--line); border-radius: var(--r-ctl); margin-bottom: var(--s2); }
+.attach-preview img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; }
+.emoji-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 2px; max-height: 180px; overflow-y: auto; padding: var(--s2); border: 1px solid var(--line); border-radius: var(--r-ctl); margin-bottom: var(--s2); }
+.emoji-grid button { font-size: 1.3rem; background: none; border: 0; border-radius: 8px; height: 40px; cursor: pointer; }
+.emoji-grid button:hover { background: var(--bg); }
+@media (max-width: 900px) {
+  .chat { grid-template-columns: 1fr; height: calc(100dvh - 230px); }
+  .chat.has-open .chat-list, .chat:not(.has-open) .chat-pane { display: none; }
+  .bubble-col { max-width: 82%; }
+}
+@media screen {
+  @keyframes bubble-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } }
+  .bubbles > li { animation: bubble-in 200ms var(--ease-out) both; }
+  .bubble-tools { transition: opacity 120ms ease; }
+  .reaction { transition: transform 120ms var(--ease-out); } .reaction:active { transform: scale(0.92); }
+  .react-bar button { transition: transform 120ms var(--ease-out); } .react-bar button:hover { transform: scale(1.2); }
+}

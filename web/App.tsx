@@ -87,6 +87,8 @@ function Shell() {
   const { me, company, setCompany } = hub;
   const loc = useLocation();
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem('hub.nav') === 'collapsed'; } catch { return false; } });
+  const [compact, setCompact] = useState(() => { try { return localStorage.getItem('hub.density') === 'compact'; } catch { return false; } });
+  const toggleDensity = () => setCompact((value) => { try { localStorage.setItem('hub.density', value ? 'comfortable' : 'compact'); } catch { /* optional preference */ } return !value; });
   const [palette, setPalette] = useState(false);
   const [more, setMore] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
@@ -114,7 +116,7 @@ function Shell() {
   const inboxCount = inbox.data?.length ?? 0;
 
   return (
-    <div className={`shell ${collapsed ? 'collapsed' : ''}`}>
+    <div className={`shell ${collapsed ? 'collapsed' : ''} ${compact ? 'compact' : ''}`}>
       <a className="skip-link" href="#main">Skip to main content</a>
       <aside className="sidebar" aria-label="Main navigation">
         <Link to="/" className="brand"><span className="brand-mark" aria-hidden="true">VW</span><span className="brand-text"><strong>Valor &amp; Wellbeing Hub</strong><span>People · Performance · Properties · Governance</span></span></Link>
@@ -142,6 +144,7 @@ function Shell() {
             {me.companies.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
           </select>
           <span className="grow" />
+          <Button variant="ghost" className="hide-mobile" onClick={toggleDensity} aria-pressed={compact} title="Switch between comfortable and compact layouts">{compact ? 'Comfortable view' : 'Compact view'}</Button>
           <Button variant="secondary" className="hide-mobile" onClick={() => setPalette(true)} aria-keyshortcuts="Control+K Meta+K"><Icon name="search" />Search <kbd className="muted small">Ctrl K</kbd></Button>
           <Button variant="ghost" className="icon-btn hide-desktop" onClick={() => setPalette(true)} aria-label="Search"><Icon name="search" /></Button>
           <QuickCreate />
@@ -294,6 +297,7 @@ function MoreSheet({ onClose, isAdmin, inboxCount }: { onClose: () => void; isAd
 
 // Ctrl/Cmd + K: actions and permission-aware search. Opened by keyboard, so it does not animate.
 function Palette({ onClose }: { onClose: () => void }) {
+  const hub = useHub();
   const nav = useNavigate();
   const ref = useRef<HTMLDialogElement>(null);
   const [term, setTerm] = useState('');
@@ -308,6 +312,7 @@ function Palette({ onClose }: { onClose: () => void }) {
   const actions: [string, string][] = [['Start a visit', '/properties?mine=true'], ['Log a completed visit', '/visits/new'], ['New task', '/tasks?new=1'], ['Log other working time', '/timesheets?log=1'], ['Needs Your Review', '/inbox'], ['My Profile / Resume', '/profile']];
   const items: { group: string; label: string; sub?: string; to: string }[] = [
     ...actions.filter(([l]) => l.toLowerCase().includes(term.toLowerCase())).map(([label, to]) => ({ group: 'Actions', label, to })),
+    ...NAV.filter((n) => (!n.show || n.show(hub)) && term.trim().length > 0 && n.label.toLowerCase().includes(term.trim().toLowerCase())).map((n) => ({ group: 'Workspace pages', label: n.label, to: n.to })),
     ...(res?.people ?? []).map((p: any) => ({ group: 'People', label: p.label, sub: p.sub, to: `/people/${p.id}` })),
     ...(res?.properties ?? []).map((p: any) => ({ group: 'Properties', label: p.label, sub: p.sub, to: `/properties/${p.id}` })),
     ...(res?.tasks ?? []).map((p: any) => ({ group: 'Tasks', label: p.label, sub: p.sub, to: `/tasks/${p.id}` })),

@@ -51,3 +51,8 @@ Stage 5 done (migration 005, `routes/training.ts`, `routes/policies.ts`, `web/pa
 - Profile overview above the tabs (`web/pages/ProfileOverview.tsx`, `GET /people/:id/overview`): availability now (away from approved leave, without the kind; on a visit; within usual hours), weekly hours (`people.working_hours`, `PUT /people/:id/working-hours`, self or staff.edit) and the CPD roadmap (`CPD_STEPS` in routes/people.ts, matched to training records by title; ticked when course-passed or verified).
 - Support work (`support_work`, migration 014) is approved automatically on finish, manual log and after an approved correction (owner decision; overrides the review rule for this type only).
 - Sidebar grouped (NAV `group`): People high up; time/leave and learning/policies together. Tests: `tests/availability.test.ts`.
+
+## Chat and team KPIs (20 Oct 2026)
+- Chat (`web/pages/Messages.tsx` `ChatShell`/`ChatThread`): list beside the open chat (one at a time on phones), bubbles with avatars, inline photos, emoji picker, paste-an-image, Enter to send, polling every 4 s (list 8 s). Groups are the existing `team` kind ("Group" in the UI).
+- Reactions: migration 015 `message_reactions`, `POST /messages/:id/reactions` toggles one of `REACTIONS` (members only). Photo-only messages allowed (body may be empty when a file is attached).
+- KPIs for each person: `GET /kpis/team?company&month` (performance.view_all), Performance → KPIs → "Each person" table; a name opens their full KPIs. Tests: `tests/chat.test.ts`.

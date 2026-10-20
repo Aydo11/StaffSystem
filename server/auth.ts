@@ -14,8 +14,8 @@ declare global {
 }
 
 export const DEV_AUTH = process.env.DEV_AUTH === 'true';
-const SESSION_DAYS = 14;   // absolute limit; a session unused for IDLE_HOURS also ends
-const IDLE_HOURS = 72;
+const SESSION_DAYS = 30;   // absolute limit; a session unused for IDLE_HOURS also ends
+const IDLE_HOURS = 30 * 24;
 
 // Sessions are opaque random tokens; only their SHA-256 is stored.
 export async function createSession(personId: string, aal: 'aal1' | 'aal2', db: Db = pool) {

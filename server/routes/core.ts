@@ -2,7 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { one, pool, q } from '../db.ts';
-import { HttpError, LONDON_TODAY, notFound, parse, text, uuid, audit, idParam } from '../http.ts';
+import { HttpError, isoDate, LONDON_TODAY, notFound, parse, text, uuid, audit, idParam } from '../http.ts';
 import { ACTIVE_APPT, companiesWith, myCompanies, need } from '../perm.ts';
 import { personVisible, propertyVisible, taskVisible } from '../visibility.ts';
 import { inboxFor } from './inbox.ts';
@@ -112,3 +112,32 @@ core.get('/my-day', async (req, res) => {
   ]);
   res.json({ scheduled, tasks, handover, inboxCount: inbox.length });
 });
+
+// Activity summaries intentionally exclude audit detail payloads, personal values and sensitive record titles.
+// Staff can read their own actions; company-wide activity requires the existing audit.view permission.
+core.get('/activity-log', async (req, res) => {
+  const a = req.access;
+  const from = parse(isoDate, req.query.from), to = parse(isoDate, req.query.to);
+  if (to < from) throw new HttpError(400, 'invalid', 'The end date is before the start date.');
+  if ((Date.parse(to) - Date.parse(from)) / 86400000 > 366) throw new HttpError(400, 'invalid', 'Choose a period of up to one year.');
+  const company = req.query.company ? parse(uuid, req.query.company) : null;
+  const before = req.query.before ? parse(z.string().regex(/^\d+$/).max(20), req.query.before) : null;
+  const mine = req.query.mine === 'true';
+  const cs = companiesWith(a, 'audit.view');
+  res.json(await q(`select l.id::text, l.at, l.entity, l.action, l.company_id, c.code as company_code,
+          coalesce(w.preferred_name, w.full_name) as actor_name, p.name as property_name
+       from audit_log l
+       left join people w on w.id = l.actor_person_id
+       left join companies c on c.id = l.company_id
+       left join visits v on l.entity = 'visit' and v.id::text = l.entity_id::text
+       left join properties p on (l.entity = 'property' and p.id::text = l.entity_id::text)
+                              or (l.entity = 'visit' and p.id = v.property_id)
+      where (l.actor_person_id = $1 or (not $2 and (l.company_id = any($3::uuid[]) or ($4 and l.company_id is null))))
+        and ($5::uuid is null or l.company_id = $5)
+        and l.at >= ($6::date::timestamp at time zone 'Europe/London')
+        and l.at < (($7::date + 1)::timestamp at time zone 'Europe/London')
+        and ($8::bigint is null or l.id < $8::bigint)
+      order by l.id desc limit 200`,
+    [a.personId, mine, cs, a.superAdmin, company, from, to, before]));
+});
+

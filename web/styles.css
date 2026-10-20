@@ -441,3 +441,27 @@ input[type='checkbox']:checked { animation: tick 220ms var(--ease-out); }
 
 /* Property page: show the whole house, not a thin strip. */
 section[aria-labelledby='pd-h'] .prop-photo { height: auto; aspect-ratio: 4 / 3; border-radius: var(--r-ctl); }
+
+/* Sidebar groups: a heading per area; collapsed, a thin rule separates them. */
+.nav-group + .nav-group { margin-top: var(--s2); }
+.nav-group .nav-section { margin: var(--s3) var(--s3) var(--s1); }
+.collapsed .nav-group + .nav-group { border-top: 1px solid #ffffff20; padding-top: var(--s2); }
+
+/* Profile overview: availability week and CPD roadmap. */
+.avail-now { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); margin: var(--s3) 0; }
+.week { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--s1); }
+.week li { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: var(--s2) 2px; border-radius: var(--r-ctl); background: var(--bg); font-size: 0.8rem; color: var(--text-2); text-align: center; }
+.week li.on { background: var(--teal-50); color: var(--teal-text); }
+.week li.today { box-shadow: inset 0 0 0 2px var(--navy); }
+.week li strong { color: var(--text); font-size: 0.85rem; }
+@media (max-width: 520px) { .week { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.roadmap { list-style: none; margin: 0; padding: 0; position: relative; }
+.roadmap li { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) 0; position: relative; flex-wrap: wrap; }
+.roadmap li .grow { flex: 1; min-width: 160px; }
+.roadmap li:not(:last-child)::after { content: ''; position: absolute; left: 13px; top: 38px; bottom: -10px; width: 2px; background: var(--line); }
+.roadmap li.done:not(:last-child)::after { background: var(--teal); }
+.roadmap .dot { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; flex: none; border: 2px solid var(--line-strong); background: var(--card); color: #fff; z-index: 1; }
+.roadmap li.done .dot { background: var(--teal-text); border-color: var(--teal-text); }
+.roadmap li.awaiting .dot { background: #fff4e5; border-color: #b26b00; color: #8a5300; }
+.hours-row { margin-bottom: var(--s2); min-height: 44px; }
+@media screen { .roadmap li.done .dot { animation: pop 300ms var(--ease-out); } }

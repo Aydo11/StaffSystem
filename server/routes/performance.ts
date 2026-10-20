@@ -33,6 +33,19 @@ performance.get('/kpis', async (req, res) => {
   res.json(out);
 });
 
+// Every current person in one company, with their own KPIs for the month (managers with performance.view_all).
+// shortcut: one KPI query per person; fine for teams of tens, cache or batch the SQL if a company reaches hundreds.
+performance.get('/kpis/team', async (req, res) => {
+  const company = parse(uuid, req.query.company);
+  need(req.access, 'performance.view_all', company);
+  const m = parse(month, req.query.month);
+  const people = await q(`select distinct on (p.id) p.id, coalesce(p.preferred_name, p.full_name) as name, p.photo_path is not null as has_photo, a.job_title
+                            from appointments a join people p on p.id = a.person_id where a.company_id = $1 and ${ACTIVE_APPT('a')} order by p.id, a.start_date desc`, [company]);
+  const rows: any[] = [];
+  for (const p of people) rows.push({ ...p, kpis: (await computeKpis(pool, company, p.id, `${m}-01`)).map(({ key, title, unit, value, status, numerator, denominator }) => ({ key, title, unit, value, status, numerator, denominator })) });
+  res.json(rows.sort((x, y) => x.name.localeCompare(y.name)));
+});
+
 performance.get('/kpis/series', async (req, res) => {
   const a = req.access;
   const company = parse(uuid, req.query.company);

@@ -24,6 +24,8 @@ const PATHS: Record<string, string> = {
   note: 'M4 4h16v12H8l-4 4z',
   link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
   shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
+  camera: 'M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+  upload: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12',
 };
 export function Icon({ name, size = 20 }: { name: keyof typeof PATHS | string; size?: number }) {
   return (
@@ -200,4 +202,89 @@ export function Tabs<T extends string>({ tabs, value, onChange, label: aria }: {
 
 export function Chips<T extends string>({ options, value, onChange, label: aria }: { options: [T, string][]; value: T; onChange: (v: T) => void; label: string }) {
   return <div className="chips" role="group" aria-label={aria}>{options.map(([k, t]) => <button key={k} type="button" className="chip" aria-pressed={value === k} onClick={() => onChange(k)}>{t}</button>)}</div>;
+}
+
+// ── File picker: a large drop/choose button; chosen files slide in as chips with a preview and a remove button ──
+const kb = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+type Picked = { file: File; url: string | null; key: string };
+export function FilePicker({ label: text, hint, accept, multiple, onChange, instant, busy, progress, error, buttonText, compact }: {
+  label: string; hint?: ReactNode; accept: string; multiple?: boolean; onChange: (files: File[]) => void;
+  /** Upload straight away (no chip kept): the parent shows the result. */ instant?: boolean;
+  busy?: boolean; progress?: number | null; error?: string; buttonText?: string; compact?: boolean;
+}) {
+  const id = useId();
+  const [items, setItems] = useState<Picked[]>([]);
+  const [over, setOver] = useState(false);
+  const live = useRef<Picked[]>([]);
+  live.current = items;
+  useEffect(() => () => live.current.forEach((p) => p.url && URL.revokeObjectURL(p.url)), []);
+  const update = (next: Picked[]) => { setItems(next); onChange(next.map((p) => p.file)); };
+  const add = (list: FileList | File[] | null) => {
+    const files = Array.from(list ?? []);
+    if (!files.length) return;
+    if (instant) { onChange(multiple ? files : files.slice(0, 1)); return; }
+    const fresh = files.map((file) => ({ file, url: file.type.startsWith('image/') ? URL.createObjectURL(file) : null, key: `${file.name}-${file.size}-${Math.random()}` }));
+    if (!multiple) items.forEach((p) => p.url && URL.revokeObjectURL(p.url));
+    update(multiple ? [...items, ...fresh] : fresh.slice(0, 1));
+  };
+  const remove = (k: string) => { const p = items.find((x) => x.key === k); if (p?.url) URL.revokeObjectURL(p.url); update(items.filter((x) => x.key !== k)); };
+  const images = !accept.includes('pdf') && !accept.includes('csv') && !accept.includes('word');
+  const cta = buttonText ?? (items.length && multiple ? 'Add more' : images ? (multiple ? 'Choose photos' : 'Choose a photo') : (multiple ? 'Choose files' : 'Choose a file'));
+  return (
+    <div className={`field picker-field${compact ? ' compact' : ''}`}>
+      <label htmlFor={id}>{text}</label>
+      {hint && <span className="hint" id={`${id}-hint`}>{hint}</span>}
+      {error && <span className="err" id={`${id}-err`}>Error: {error}</span>}
+      <input id={id} className="picker-input" type="file" accept={accept} multiple={multiple} disabled={busy}
+        aria-describedby={[hint && `${id}-hint`, error && `${id}-err`].filter(Boolean).join(' ') || undefined}
+        onChange={(e) => { add(e.target.files); e.target.value = ''; }} />
+      <label htmlFor={id} className={`picker${over ? ' over' : ''}${busy ? ' busy' : ''}`} aria-hidden="true"
+        onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
+        onDrop={(e) => { e.preventDefault(); setOver(false); if (!busy) add(e.dataTransfer.files); }}>
+        <span className="picker-icon">{busy ? <span className="spinner" /> : <Icon name={images ? 'camera' : 'upload'} size={22} />}</span>
+        <span><strong>{busy ? 'Uploading…' : cta}</strong>{!compact && !busy && <span className="small muted"> or drop {multiple ? 'them' : 'it'} here</span>}</span>
+      </label>
+      {busy && progress != null && <div className="bar picker-bar" role="progressbar" aria-label="Upload progress" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${progress}%` }} /></div>}
+      {items.length > 0 && (
+        <ul className="picked" aria-label="Chosen files">
+          {items.map((p) => (
+            <li key={p.key}>
+              {p.url ? <img src={p.url} alt="" /> : <span className="picked-icon"><Icon name="file" /></span>}
+              <span className="picked-name">{p.file.name}<span className="small muted">{kb(p.file.size)}</span></span>
+              <button type="button" className="btn ghost icon-btn" disabled={busy} onClick={() => remove(p.key)} aria-label={`Remove ${p.file.name}`}><Icon name="x" size={18} /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Authenticated image (files need the bearer token, so a plain <img src> cannot be used).
+export function AuthImage({ url, alt, className }: { url: string; alt: string; className?: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => { let u: string | null = null; blobUrl(url).then((x) => { u = x; setSrc(x); }); return () => { if (u) URL.revokeObjectURL(u); }; }, [url]);
+  return src ? <img src={src} alt={alt} className={className} /> : <span className={`skeleton ${className ?? ''}`} role="img" aria-label={alt} />;
+}
+
+// Photo grid; each tile opens the full image in a dialog.
+export function PhotoGrid({ photos, caption, onRemove, canRemove = () => true }: { photos: { id: string; original_name: string }[]; caption?: (p: any) => ReactNode; onRemove?: (p: any) => void; canRemove?: (p: any) => boolean }) {
+  const [open, setOpen] = useState<any>(null);
+  return (
+    <>
+      <ul className="photo-grid">
+        {photos.map((p) => (
+          <li key={p.id}>
+            <button type="button" className="photo-tile" onClick={() => setOpen(p)} aria-label={`Open photo ${p.original_name}`}><AuthImage url={`/files/${p.id}`} alt="" /></button>
+            {caption && <span className="small muted">{caption(p)}</span>}
+            {onRemove && canRemove(p) && <button type="button" className="btn ghost small" onClick={() => onRemove(p)} aria-label={`Remove photo ${p.original_name}`}>Remove</button>}
+          </li>
+        ))}
+      </ul>
+      <Dialog open={!!open} onClose={() => setOpen(null)} title={open?.original_name ?? 'Photo'} variant="modal">
+        {open && <AuthImage url={`/files/${open.id}`} alt={open.original_name} className="photo-full" />}
+        {open && caption && <p className="small muted">{caption(open)}</p>}
+      </Dialog>
+    </>
+  );
 }

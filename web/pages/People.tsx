@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ApiError, api, patch, post, upload, useApi, useSubmit } from '../api.ts';
+import { ApiError, api, download, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, label, londonToday, money } from '../format.ts';
+import { AllocateDialog } from '../allocate.tsx';
 import { useHub } from '../hub.tsx';
 import { AccessLinkNotice, PersonDataActions, SignInAccess } from './DataTools.tsx';
 import { DevelopmentTab } from './Development.tsx';
-import { Avatar, Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { Avatar, Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 export function People() {
   const hub = useHub();
@@ -191,6 +192,7 @@ function ProfileTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: () => 
         ))}</ul>}
         <ErrorSummary error={verify.error ?? decide.error} />
       </section>
+      {d.documents && <DocumentsCard personId={p.id} docs={d.documents} isMe={isMe} canManage={can.edit} reload={reload} />}
       <Dialog open={edit} onClose={() => setEdit(false)} title="Edit professional profile" footer={<Button busy={save.busy} onClick={() => save.run()}>Save Changes</Button>}>
         <ErrorSummary error={save.error} />
         <Field label="Preferred name" optional><input name="preferred_name" value={f.preferred_name ?? ''} onChange={(e) => setF({ ...f, preferred_name: e.target.value })} /></Field>
@@ -214,6 +216,40 @@ function ProfileTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: () => 
       </Dialog>
       {photo && <PhotoDialog personId={p.id} onClose={() => setPhoto(false)} onSaved={() => { setPhoto(false); reload(); if (isMe) reloadMe(); }} />}
     </div>
+  );
+}
+
+// CVs, certificates and references. Visible to the person and to people who can edit their profile.
+function DocumentsCard({ personId, docs, isMe, canManage, reload }: { personId: string; docs: any[]; isMe: boolean; canManage: boolean; reload: () => void }) {
+  const toast = useToast();
+  const { me } = useHub();
+  const [progress, setProgress] = useState<number | null>(null);
+  const add = useSubmit(async (files: File[]) => {
+    for (const [i, f] of files.entries()) {
+      setProgress(0);
+      try { await upload(`/people/${personId}/documents`, f, f.name, (pct) => setProgress(Math.round(((i + pct / 100) / files.length) * 100))); }
+      finally { setProgress(null); }
+    }
+    toast(files.length === 1 ? 'Document added.' : `${files.length} documents added.`);
+    reload();
+  });
+  const remove = useSubmit(async (doc: any) => { await api('DELETE', `/people/${personId}/documents/${doc.id}`); toast('Document removed.'); reload(); });
+  const open = useSubmit(async (doc: any) => { await download(`/files/${doc.id}`, doc.original_name); });
+  return (
+    <section className="card" aria-labelledby="docs-h" style={{ marginTop: 16 }}>
+      <h2 id="docs-h">Documents</h2>
+      <p className="small muted">{isMe ? 'Your CV, certificates and references. Only you and HR can see these.' : 'CV, certificates and references. Only this person and people who can edit their profile can see these.'}</p>
+      {docs.length === 0 ? <Empty>No documents yet.</Empty> : (
+        <ul className="list">{docs.map((doc) => (
+          <li key={doc.id}>
+            <span><button type="button" className="btn ghost" onClick={() => open.run(doc)}><Icon name="file" size={18} />{doc.original_name}</button><br /><span className="muted small">Added by {doc.uploaded_by_name}, {fmtDate(doc.uploaded_at)}</span></span>
+            {(doc.uploaded_by === me.person.id || canManage) && <Button variant="ghost" busy={remove.busy} onClick={() => remove.run(doc)} aria-label={`Remove ${doc.original_name}`}>Remove</Button>}
+          </li>
+        ))}</ul>
+      )}
+      <ErrorSummary error={add.error ?? remove.error ?? open.error} />
+      <FilePicker label="Add documents" hint="PDF, Word (.docx) or a photo, up to 10 MB each." accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,image/jpeg,image/png,image/webp" multiple instant busy={progress !== null} progress={progress} buttonText="Choose documents" onChange={(fs) => add.run(fs)} />
+    </section>
   );
 }
 
@@ -250,7 +286,7 @@ function PhotoDialog({ personId, onClose, onSaved }: { personId: string; onClose
   return (
     <Dialog open onClose={onClose} title="Profile photo" footer={<Button busy={save.busy} disabled={!img} onClick={() => save.run()}>Save photo</Button>}>
       <ErrorSummary error={save.error} />
-      <div className="field"><label htmlFor="photo-file">Choose a photo</label><span className="hint">A clear, recent photo of your face. JPEG, PNG or WebP.</span><input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => pick(e.target.files?.[0])} /></div>
+      <FilePicker label="Choose a photo" hint="A clear, recent photo of your face. JPEG, PNG or WebP." accept="image/jpeg,image/png,image/webp" instant buttonText={img ? 'Choose a different photo' : undefined} onChange={(fs) => pick(fs[0])} />
       {img && (
         <>
           <canvas ref={canvas} width={320} height={320} role="img" aria-label="Preview of the cropped photo" style={{ borderRadius: '50%', width: 200, height: 200, display: 'block', margin: '0 auto 16px', border: '1px solid var(--line)' }} />
@@ -281,14 +317,9 @@ function AppointmentsTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: (
     close(`Appointment ended.${r.keysStillHeld.length ? ` ${r.keysStillHeld.length} key(s) still need returning.` : ''}${r.leaver ? ' This was their last appointment, so their sign-in has ended.' : r.accessEndsOn ? ` This company’s roles end after ${fmtDate(r.accessEndsOn)}. Other appointments are unchanged.` : ' Their other appointments are unchanged.'}`);
   });
   const rate = useSubmit(async () => { await post(`/appointments/${dlg!.appt.id}/rates`, { rate_type: f.rate_type, amount: f.amount, effective_from: f.effective_from }); close('Rate added. Earlier rates are kept.'); });
-  const alloc = useSubmit(async () => {
-    const r = await post(`/appointments/${dlg!.appt.id}/properties`, { property_id: f.property_id, override_reason: f.override_reason || undefined });
-    close(r.warnings.length ? `Allocated. Note: ${r.warnings.join(' ')}` : 'Property allocated.');
-  });
   const endAlloc = useSubmit(async (aid: string) => { await post(`/appointment-properties/${aid}/end`); toast('Allocation ended.'); reload(); });
   const manageable = (cid: string) => can.manageAppointments.includes(cid);
   const addable = hub.me.companies.filter((c) => manageable(c.id));
-  const clearanceErr = alloc.error?.code === 'clearance_required';
 
   return (
     <>
@@ -312,7 +343,7 @@ function AppointmentsTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: (
           </dl>
           <h4 style={{ marginTop: 16 }}>Properties</h4>
           {a.properties.length === 0 ? <p className="muted">None allocated.</p> : <ul className="list">{a.properties.map((x: any) => <li key={x.id}><span><Link to={`/properties/${x.property_id}`}>{x.name}</Link> <span className="muted small">{x.ref} · {fmtDate(x.from_date)} – {x.to_date ? fmtDate(x.to_date) : 'now'}</span></span>{!x.to_date && manageable(a.company_id) && <Button variant="ghost" busy={endAlloc.busy} onClick={() => endAlloc.run(x.id)}>End allocation</Button>}</li>)}</ul>}
-          {manageable(a.company_id) && a.status !== 'ended' && <Button variant="secondary" onClick={() => { setF({ property_id: '', override_reason: '' }); alloc.setError(null); setDlg({ kind: 'property', appt: a }); }}>Allocate a property</Button>}
+          {manageable(a.company_id) && a.status !== 'ended' && <Button variant="secondary" onClick={() => setDlg({ kind: 'property', appt: a })}>Allocate properties</Button>}
           {a.rates && (
             <>
               <h4 style={{ marginTop: 16 }}>Rates <span className="muted small">(restricted)</span></h4>
@@ -348,13 +379,12 @@ function AppointmentsTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: (
         <Field label="Amount (£)" error={rate.error?.fields.amount}><input name="amount" inputMode="decimal" value={f.amount ?? ''} onChange={set('amount')} /></Field>
         <Field label="Effective from" error={rate.error?.fields.effective_from}><input name="effective_from" type="date" value={f.effective_from ?? ''} onChange={set('effective_from')} /></Field>
       </Dialog>
-      <Dialog open={dlg?.kind === 'property'} onClose={() => setDlg(null)} title="Allocate a property" footer={<Button busy={alloc.busy} onClick={() => alloc.run()}>{clearanceErr && f.override_reason ? 'Authorise exception and allocate' : 'Allocate'}</Button>}>
-        <ErrorSummary error={alloc.error} />
-        <Field label="Property"><select name="property_id" value={f.property_id ?? ''} onChange={set('property_id')}><option value="">Choose…</option>{props.data?.map((x) => <option key={x.id} value={x.id}>{x.name} ({x.ref})</option>)}</select></Field>
-        {clearanceErr && alloc.error?.details?.canOverride && (
-          <Field label="Reason for authorising an exception" hint="This is recorded with your name. Only use it where you have the authority to do so." error={alloc.error?.fields.override_reason}><textarea name="override_reason" value={f.override_reason ?? ''} onChange={set('override_reason')} /></Field>
-        )}
-      </Dialog>
+      {dlg?.kind === 'property' && (
+        <AllocateDialog title={`Allocate properties to ${p.preferred_name ?? p.full_name}`} searchLabel="Search properties" loading={props.loading}
+          options={props.data ? props.data.filter((x) => !dlg.appt.properties.some((y: any) => y.property_id === x.id && !y.to_date))
+            .map((x) => ({ key: x.id, appointmentId: dlg.appt.id, propertyId: x.id, title: x.name, sub: `${x.ref} · ${x.address_line1}, ${x.postcode}`, companyCode: x.company_code })) : null}
+          onClose={() => setDlg(null)} onDone={() => { setDlg(null); reload(); }} />
+      )}
     </>
   );
 }

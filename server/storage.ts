@@ -12,14 +12,18 @@ const SIGNATURES: [string, (b: Buffer) => boolean][] = [
   ['image/webp', (b) => b.subarray(0, 4).toString() === 'RIFF' && b.subarray(8, 12).toString() === 'WEBP'],
   ['application/pdf', (b) => b.subarray(0, 5).toString() === '%PDF-'],
 ];
-export function sniff(buf: Buffer, imagesOnly = false): string {
+// Word (.docx) is a zip whose entries live under word/. Only allowed where a caller opts in (staff documents such as CVs).
+const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const isDocx = (b: Buffer) => b.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) && b.includes('word/');
+export function sniff(buf: Buffer, imagesOnly = false, allowWord = false): string {
+  if (allowWord && isDocx(buf)) return DOCX;
   const hit = SIGNATURES.find(([type, test]) => test(buf) && (!imagesOnly || type.startsWith('image/')));
-  if (!hit) throw bad(imagesOnly ? 'Please upload a JPEG, PNG or WebP image.' : 'Please upload a JPEG, PNG, WebP image or a PDF.');
+  if (!hit) throw bad(imagesOnly ? 'Please upload a JPEG, PNG or WebP image.' : allowWord ? 'Please upload a PDF, Word (.docx) document or a JPEG, PNG or WebP image.' : 'Please upload a JPEG, PNG, WebP image or a PDF.');
   return hit[0];
 }
 
-export async function saveFile(db: Db, f: { companyId: string | null; entityType: string; entityId: string; name: string; buf: Buffer; uploadedBy: string; imagesOnly?: boolean }) {
-  const mime = sniff(f.buf, f.imagesOnly);
+export async function saveFile(db: Db, f: { companyId: string | null; entityType: string; entityId: string; name: string; buf: Buffer; uploadedBy: string; imagesOnly?: boolean; allowWord?: boolean }) {
+  const mime = sniff(f.buf, f.imagesOnly, f.allowWord);
   const path = `${f.companyId ?? 'shared'}/${f.entityType}/${f.entityId}/${randomUUID()}`;
   const safeName = f.name.replace(/[^\w.\- ()]/g, '_').slice(0, 120) || 'file';
   const row = await one('insert into files (company_id, entity_type, entity_id, storage_path, original_name, mime_type, size_bytes, uploaded_by) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id, original_name, mime_type, size_bytes, uploaded_at',

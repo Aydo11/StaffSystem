@@ -56,7 +56,7 @@ properties.get('/properties/:id', async (req, res) => {
   const p = await visibleProperty(a, id);
   const manage = can(a, 'properties.manage', p.company_id);
   const seeAlloc = manage || can(a, 'appointments.view', p.company_id);
-  const [links, keys, allocations, tasks, visits, scheduled, mine] = await Promise.all([
+  const [links, keys, allocations, tasks, visits, scheduled, mine, photos] = await Promise.all([
     q('select l.*, c.name as company_name, c.code as company_code from property_company_links l join companies c on c.id = l.company_id where l.property_id = $1', [id]),
     can(a, 'properties.view', p.company_id) ? q(`select k.*, ${name('h')} as holder_name from property_keys k left join people h on h.id = k.holder_person_id where k.property_id = $1 order by k.label`, [id]) : [],
     seeAlloc ? q(`select x.id, x.from_date, x.to_date, ap.job_title, ap.company_id, c.code as company_code, ${name('pp')} as person_name, pp.id as person_id
@@ -68,8 +68,25 @@ properties.get('/properties/:id', async (req, res) => {
     q(`select s.*, ${name('w')} as person_name, c.code as company_code from scheduled_visits s join people w on w.id = s.person_id join companies c on c.id = s.company_id
         where s.property_id = $1 and s.status = 'scheduled' and (s.person_id = $2 or s.company_id = any($3::uuid[])) order by s.planned_start limit 30`, [id, a.personId, companiesWith(a, 'visits.view_all')]),
     one(`select ${MY_APPTS} as my_appointments from properties p where p.id = $2`, [a.personId, id, companiesWith(a, 'visits.approve').concat(companiesWith(a, 'properties.manage'))]),
+    // Latest photos taken on visits here, newest first, from visits the viewer may see.
+    q(`select f.id, f.original_name, f.uploaded_at, v.id as visit_id, v.started_at, ${name('w')} as person_name from files f join visits v on v.id = f.entity_id join people w on w.id = v.person_id
+        where f.entity_type = 'visit' and v.property_id = $1 and v.status <> 'cancelled' and ${visitVisible('v', 2, 3)} order by f.uploaded_at desc limit 24`, [id, a.personId, companiesWith(a, 'visits.view_all')]),
   ]);
-  res.json({ property: { ...p, has_photo: !!p.photo_path, photo_path: undefined }, links, keys, allocations, tasks, visits, scheduled, my_appointments: mine?.my_appointments ?? [], can: { manage } });
+  res.json({ property: { ...p, has_photo: !!p.photo_path, photo_path: undefined }, links, keys, allocations, tasks, visits, scheduled, photos, my_appointments: mine?.my_appointments ?? [], can: { manage, assign: companiesWith(a, 'appointments.manage').length > 0 } });
+});
+
+// Current or planned appointments a manager could allocate to this property (its company or an authorised linked one), not already allocated.
+properties.get('/properties/:id/assignable', async (req, res) => {
+  const a = req.access;
+  const id = idParam(req.params.id);
+  await visibleProperty(a, id);
+  res.json(await q(`
+    select ap.id, ap.job_title, ap.person_id, ${name('pp')} as person_name, pp.photo_path is not null as has_photo, c.code as company_code, c.name as company_name
+      from appointments ap join people pp on pp.id = ap.person_id join companies c on c.id = ap.company_id join properties p on p.id = $1
+     where (${ACTIVE_APPT('ap')} or ap.status = 'planned') and ap.company_id = any($2::uuid[])
+       and (ap.company_id = p.company_id or exists (select 1 from property_company_links l where l.property_id = p.id and l.company_id = ap.company_id))
+       and not exists (select 1 from appointment_properties x where x.appointment_id = ap.id and x.property_id = p.id and x.to_date is null)
+     order by person_name, c.code`, [id, companiesWith(a, 'appointments.manage')]));
 });
 
 const propBody = z.object({

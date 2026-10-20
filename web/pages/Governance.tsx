@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ApiError, download, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtDateTime, label, londonToday } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 type Tab = 'pack' | 'leads' | 'meetings' | 'decisions' | 'risks' | 'audits' | 'actions' | 'quality' | 'framework';
 const PACK_STATUS: Record<string, [string, string]> = { evidence_missing: ['evidence_missing', 'Evidence Missing'], awaiting_review: ['review', 'Awaiting Review'], action_required: ['action', 'Action Required'], verified: ['verified', 'Verified'], not_applicable: ['not_required', 'Not Applicable'] };
@@ -158,7 +158,7 @@ function MeetingPanel({ id, onClose }: { id: string; onClose: () => void }) {
       <ErrorSummary error={save.error ?? approve.error ?? addDecision.error ?? paper.error} />
       <fieldset disabled={!manage} style={{ border: 0, padding: 0, margin: 0 }}>
         <h3>Agenda and papers</h3>
-        <ol>{mm.agenda.map((a: any, i: number) => <li key={i}>{a.item}{a.paper_file_id ? <> — <button type="button" className="btn ghost" onClick={() => download(`/files/${a.paper_file_id}`, a.paper_name ?? 'paper')}>paper</button></> : manage && <> — <label className="small">attach paper <input type="file" accept="application/pdf,image/*" onChange={(e) => e.target.files?.[0] && paper.run(i, e.target.files[0])} /></label></>}</li>)}</ol>
+        <ol>{mm.agenda.map((a: any, i: number) => <li key={i}>{a.item}{a.paper_file_id ? <> — <button type="button" className="btn ghost" onClick={() => download(`/files/${a.paper_file_id}`, a.paper_name ?? 'paper')}>paper</button></> : manage && <> — <FilePicker label={`Paper for ${a.item}`} accept="application/pdf,image/*" instant compact busy={paper.busy} buttonText="Attach paper" onChange={(fs) => paper.run(i, fs[0])} /></>}</li>)}</ol>
         {progress !== null && <progress max={100} value={progress} aria-label="Upload progress" />}
         <h3>Attendance</h3>
         {mm.attendance.map((x: any, i: number) => <div key={i} className="row" style={{ marginBottom: 4 }}><span style={{ minWidth: 160 }}>{x.name}</span><select aria-label={`Attendance for ${x.name}`} value={x.status} onChange={(e) => set({ attendance: mm.attendance.map((y: any, j: number) => (j === i ? { ...y, status: e.target.value } : y)) })} style={{ width: 'auto' }}><option value="present">Present</option><option value="apologies">Apologies</option><option value="absent">Absent</option></select></div>)}
@@ -384,7 +384,7 @@ export function ActionPage() {
         <section className="card" aria-labelledby="ev-h"><h2 id="ev-h">Add evidence</h2>
           <p className="small muted">Uploading evidence does not close the action: someone else checks it.</p>
           <Field label="What was done?" error={evidence.error?.fields.note}><textarea name="note" value={ev.note} onChange={(e) => setEv({ ...ev, note: e.target.value })} /></Field>
-          <div className="field"><label htmlFor="ev-file">Supporting file</label><input id="ev-file" type="file" accept="application/pdf,image/*" onChange={(e) => setEv({ ...ev, file: e.target.files?.[0] ?? null })} /></div>
+          <FilePicker label="Supporting file" accept="application/pdf,image/*" onChange={(fs) => setEv({ ...ev, file: fs[0] ?? null })} />
           <Button busy={evidence.busy} onClick={() => evidence.run()}>Submit evidence</Button></section>
       )}
       {can.manage && x.status === 'evidence_submitted' && (

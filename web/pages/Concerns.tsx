@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { download, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtDateTime, label } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 const KINDS: [string, string, string][] = [
   ['grievance', 'Grievance', 'A complaint about how you have been treated at work.'],
@@ -130,7 +130,7 @@ export function CasePage() {
             {c.appeal_outcome && <><dt>Appeal outcome</dt><dd>{c.appeal_outcome}</dd></>}
           </dl>
           {files.length > 0 && <p>Files: {files.map((f: any) => <button key={f.id} type="button" className="btn ghost" onClick={() => download(`/files/${f.id}`, f.original_name)}>{f.original_name}</button>)}</p>}
-          <div className="field"><label htmlFor="case-file">Add a document</label><input id="case-file" type="file" accept="application/pdf,image/*" onChange={(e) => e.target.files?.[0] && file.run(e.target.files[0])} /></div>
+          <FilePicker label="Add a document" accept="application/pdf,image/*" instant busy={file.busy} onChange={(fs) => file.run(fs[0])} />
         </section>
         <section className="card" aria-labelledby="upd-h">
           <h2 id="upd-h">Updates</h2>

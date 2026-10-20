@@ -82,6 +82,7 @@ people.get('/people/:id', async (req, res) => {
     restricted: self || restrictedCos.length ? (await one('select * from person_restricted where person_id = $1', [id])) ?? {} : null,
     clearance: clearanceCos.length ? await currentClearance(pool, id, clearanceCos) : null,
     checks: checkCos.length ? await q(`select e.*, c.name as company_name, c.code as company_code, ${name('r')} as reviewer_name from employment_checks e join companies c on c.id = e.company_id left join people r on r.id = e.reviewer_id where e.person_id = $1 and e.company_id = any($2::uuid[]) order by e.check_type`, [id, checkCos]) : null,
+    documents: self || editCos.length ? await q(PERSON_DOCS, [id]) : null,
     changeRequests: self || editCos.length ? await q('select * from profile_change_requests where person_id = $1 order by requested_at desc limit 20', [id]) : [],
     can: {
       edit: editCos.length > 0,
@@ -223,6 +224,36 @@ people.get('/people/:id/photo', async (req, res) => {
   const f = await one<{ storage_path: string; mime_type: string }>('select storage_path, mime_type from files where id = $1', [p.photo_path]);
   if (!f) throw notFound();
   res.set({ 'Content-Type': f.mime_type, 'Cache-Control': 'private, max-age=300', 'X-Content-Type-Options': 'nosniff' }).send(await readFile(f.storage_path));
+});
+
+// ── Documents (CVs, certificates, references): the person themself and anyone who can edit their profile ──
+async function canSeeDocs(a: Access, id: string) {
+  return id === a.personId || (await sharedCompanies(a, id, 'staff.edit')).length > 0;
+}
+const PERSON_DOCS = `select f.id, f.original_name, f.mime_type, f.size_bytes, f.uploaded_at, f.uploaded_by, coalesce(u.preferred_name, u.full_name) as uploaded_by_name
+  from files f join people u on u.id = f.uploaded_by where f.entity_type = 'person_doc' and f.entity_id = $1 order by f.uploaded_at desc`;
+people.post('/people/:id/documents', upload.single('file'), async (req, res) => {
+  const id = idParam(req.params.id);
+  await visiblePerson(req.access, id);
+  if (!(await canSeeDocs(req.access, id))) throw forbidden();
+  if (!req.file) throw bad('Choose a document to upload.');
+  const f = await tx(async (db) => {
+    const saved = await saveFile(db, { companyId: null, entityType: 'person_doc', entityId: id, name: req.file!.originalname, buf: req.file!.buffer, uploadedBy: req.person.id, allowWord: true });
+    await audit(db, req.person.id, null, 'person', id, 'document_add', { file_id: saved.id, name: saved.original_name });
+    return saved;
+  });
+  res.status(201).json({ ...f, storage_path: undefined });
+});
+people.delete('/people/:id/documents/:fileId', async (req, res) => {
+  const id = idParam(req.params.id);
+  const fileId = idParam(req.params.fileId);
+  await visiblePerson(req.access, id);
+  const f = await one('select * from files where id = $1 and entity_type = $2 and entity_id = $3', [fileId, 'person_doc', id]);
+  if (!f) throw notFound();
+  // Uploaders may remove their own; otherwise only profile editors (not the person on someone else's upload).
+  if (f.uploaded_by !== req.person.id && !(await sharedCompanies(req.access, id, 'staff.edit')).length) throw forbidden();
+  await tx(async (db) => { await deleteFile(db, f.id); await audit(db, req.person.id, null, 'person', id, 'document_remove', { file_id: f.id, name: f.original_name }); });
+  res.json({ ok: true });
 });
 
 // ── Proposed profile changes (staff propose; HR verifies) ──

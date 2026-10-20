@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { download, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtDateTime, label, londonToday } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 import { NewAction } from './Governance.tsx';
 
 const REPAIR_STATUS: Record<string, [string, string]> = { reported: ['info', 'Reported'], triaged: ['info', 'Triaged'], assigned: ['planned', 'Assigned'], in_progress: ['review', 'In Progress'], awaiting_verification: ['submitted', 'Awaiting Verification'], closed: ['completed', 'Closed'] };
@@ -71,11 +71,12 @@ export function RepairPage() {
   const [move, setMove] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [upd, setUpd] = useState({ body: '', file: null as File | null });
+  const [pickerKey, setPickerKey] = useState(0); // remounts the picker to clear it after an update
   const [assign, setAssign] = useState<any>(null);
   const people = useApi<any[]>(assign && d.data ? `/people?company=${d.data.repair.company_id}` : null);
   const agents = useApi<any[]>(assign && d.data ? `/agents?company=${d.data.repair.company_id}` : null);
   const status = useSubmit(async () => { await post(`/repairs/${id}/status`, { status: move, note }); setMove(null); setNote(''); toast('Repair updated.'); d.reload(); });
-  const addUpd = useSubmit(async () => { await upload(`/repairs/${id}/updates`, upd.file, upd.file?.name ?? '', undefined, { body: upd.body }); setUpd({ body: '', file: null }); d.reload(); });
+  const addUpd = useSubmit(async () => { await upload(`/repairs/${id}/updates`, upd.file, upd.file?.name ?? '', undefined, { body: upd.body }); setUpd({ body: '', file: null }); setPickerKey((k) => k + 1); d.reload(); });
   const saveAssign = useSubmit(async () => { await patch(`/repairs/${id}`, { assignee_id: assign.assignee_id || null, agent_id: assign.agent_id || null, contractor: assign.contractor || null, due_on: assign.due_on || null, urgency: assign.urgency }); setAssign(null); toast('Saved.'); d.reload(); });
   if (d.error) return <LoadError error={d.error} />;
   if (!d.data) return <Skeleton lines={8} />;
@@ -98,7 +99,7 @@ export function RepairPage() {
           {updates.length === 0 ? <p className="muted">No updates.</p> : <ul className="list">{updates.map((u: any) => <li key={u.id}><div><strong>{u.author_name}</strong> <span className="muted small">{fmtDateTime(u.created_at)}</span>{u.status_to && <span className="small"> · {REPAIR_STATUS[u.status_from]?.[1]} → {REPAIR_STATUS[u.status_to][1]}</span>}<p style={{ margin: '4px 0 0' }}>{u.body}</p></div></li>)}</ul>}
           {files.length > 0 && <p>Photos and documents: {files.map((f: any) => <button key={f.id} type="button" className="btn ghost" onClick={() => download(`/files/${f.id}`, f.original_name)}>{f.original_name}</button>)}</p>}
           {can.work && r.status !== 'closed' && <><Field label="Add an update"><textarea name="body" value={upd.body} onChange={(e) => setUpd({ ...upd, body: e.target.value })} /></Field>
-            <div className="field"><label htmlFor="rep-file">Photo or document</label><input id="rep-file" type="file" accept="image/*,application/pdf" onChange={(e) => setUpd({ ...upd, file: e.target.files?.[0] ?? null })} /></div>
+            <FilePicker key={pickerKey} label="Photo or document" accept="image/*,application/pdf" onChange={(fs) => setUpd({ ...upd, file: fs[0] ?? null })} />
             <Button variant="secondary" busy={addUpd.busy} disabled={upd.body.trim().length < 2} onClick={() => addUpd.run()}>Add update</Button></>}
         </section>
       </div>
@@ -141,7 +142,7 @@ export function RecordCheck({ req, onClose, onSaved }: { req: any; onClose: () =
       <Field label="Done by" optional><input name="done_by_text" value={f.done_by_text} onChange={(e) => setF({ ...f, done_by_text: e.target.value })} /></Field>
       <Field label="Result"><select name="result" value={f.result} onChange={(e) => setF({ ...f, result: e.target.value })}><option value="pass">Pass</option><option value="advisory">Pass with advice</option><option value="fail">Fail</option></select></Field>
       <Field label="Findings" optional={f.result === 'pass'} hint="Property details only." error={save.error?.fields.findings}><textarea name="findings" value={f.findings} onChange={(e) => setF({ ...f, findings: e.target.value })} /></Field>
-      <div className="field"><label htmlFor="chk-file">Certificate or photo</label><input id="chk-file" type="file" accept="application/pdf,image/*" onChange={(e) => setF({ ...f, file: e.target.files?.[0] ?? null })} /></div>
+      <FilePicker label="Certificate or photo" accept="application/pdf,image/*" onChange={(fs) => setF({ ...f, file: fs[0] ?? null })} />
     </Dialog>
   );
 }

@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, blobUrl, download, get, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtDateTime, label } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 const ADMIN_NOTE = 'Administrators cannot read your conversations. If someone reports a message, a company administrator sees that message only, and that access is recorded.';
 
@@ -68,6 +68,7 @@ export function Conversation() {
   const d = useApi<any>(`/conversations/${id}/messages`);
   const [body, setBody] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [pickerKey, setPickerKey] = useState(0); // remounts the picker to clear it after sending
   const [report, setReport] = useState<any>(null);
   const [adding, setAdding] = useState(false);
   const requestId = useRef(crypto.randomUUID());
@@ -77,7 +78,7 @@ export function Conversation() {
   useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [d.data?.messages.length]);
   const send = useSubmit(async () => {
     await upload(`/conversations/${id}/messages`, file, file?.name ?? '', undefined, { body, client_request_id: requestId.current });
-    requestId.current = crypto.randomUUID(); setBody(''); setFile(null); d.reload(); hub.reloadMe();
+    requestId.current = crypto.randomUUID(); setBody(''); setFile(null); setPickerKey((k) => k + 1); d.reload(); hub.reloadMe();
   });
   const doReport = useSubmit(async () => { await post(`/messages/${report.id}/report`, { reason: report.reason }); setReport(null); toast('Reported. A company administrator will look at this message.'); });
   const leave = useSubmit(async () => { await post(`/conversations/${id}/leave`); location.assign('/messages'); });
@@ -101,7 +102,7 @@ export function Conversation() {
       <form className="card" noValidate onSubmit={(e) => { e.preventDefault(); if (body.trim()) send.run(); }}>
         <ErrorSummary error={send.error} />
         <Field label="Message" hint="Do not share resident details here; use the support system for those."><textarea name="body" value={body} onChange={(e) => setBody(e.target.value)} /></Field>
-        <div className="row"><label className="small">Attach a file <input type="file" accept="image/*,application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label><Button type="submit" busy={send.busy} busyText="Sending…" disabled={!body.trim()}>Send</Button></div>
+        <FilePicker key={pickerKey} label="Attach a file" accept="image/*,application/pdf" compact onChange={(fs) => setFile(fs[0] ?? null)} /><div className="row"><Button type="submit" busy={send.busy} busyText="Sending…" disabled={!body.trim()}>Send</Button></div>
       </form>
       <Dialog open={!!report} onClose={() => setReport(null)} title="Report this message" variant="modal" footer={<Button busy={doReport.busy} onClick={() => doReport.run()}>Report</Button>}>
         <p>A company administrator will see this message (and only this message) and decide what to do.</p>
@@ -173,7 +174,7 @@ export function News() {
           <Field label="Category"><select name="category" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{['announcement', 'policy', 'training', 'celebration', 'operations', 'other'].map((k) => <option key={k} value={k}>{label(k)}</option>)}</select></Field>
           <Field label="Title" error={save.error?.fields.title}><input name="title" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></Field>
           <Field label="Text" error={save.error?.fields.body}><textarea name="body" rows={6} value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} /></Field>
-          <div className="field"><label htmlFor="news-img">Image</label><input id="news-img" type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => setF({ ...f, image: e.target.files?.[0] ?? null })} /></div>
+          <FilePicker label="Image" accept="image/jpeg,image/png,image/webp" onChange={(fs) => setF({ ...f, image: fs[0] ?? null })} />
           {f.image && <Field label="Describe the image" error={save.error?.fields._}><input name="image_alt" value={f.image_alt ?? ''} onChange={(e) => setF({ ...f, image_alt: e.target.value })} /></Field>}
           <label className="check"><input type="checkbox" checked={f.pinned} onChange={(e) => setF({ ...f, pinned: e.target.checked })} /> Pin to the top</label></>}
       </Dialog>

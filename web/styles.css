@@ -401,3 +401,39 @@ input[type='checkbox']:checked { animation: tick 220ms var(--ease-out); }
 .progress { display: flex; align-items: center; gap: var(--s3); margin-bottom: var(--s3); }
 .progress .bar { flex: 1; max-width: 320px; }
 }
+
+/* File picker: a large, friendly drop target; chosen files slide in as chips. */
+.picker-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.picker-field { position: relative; }
+.picker { display: flex; align-items: center; gap: var(--s3); min-height: 64px; padding: var(--s3) var(--s4); border: 2px dashed var(--line-strong); border-radius: var(--r-card); background: var(--card); color: var(--navy); cursor: pointer; }
+.picker-field.compact .picker { min-height: 44px; padding: var(--s2) var(--s3); border-width: 1px; }
+.picker-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--teal-50); color: var(--teal-text); flex: none; }
+.picker-field.compact .picker-icon { width: 28px; height: 28px; }
+.picker.over, .picker:hover { border-color: var(--teal); background: var(--teal-50); }
+.picker.busy { cursor: progress; opacity: 0.8; }
+.picker-input:focus-visible + .picker { outline: 3px solid var(--teal); outline-offset: 2px; }
+.picker-bar { margin-top: var(--s2); }
+.picked { list-style: none; margin: var(--s2) 0 0; padding: 0; display: grid; gap: var(--s2); }
+.picked li { display: flex; align-items: center; gap: var(--s3); padding: var(--s2); border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--card); }
+.picked img, .picked-icon { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; flex: none; display: grid; place-items: center; background: var(--bg); color: var(--text-2); }
+.picked-name { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.photo-grid { list-style: none; margin: 0 0 var(--s3); padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--s3); }
+.photo-grid li { display: flex; flex-direction: column; gap: 4px; }
+.photo-tile { padding: 0; border: 1px solid var(--line); border-radius: var(--r-ctl); overflow: hidden; aspect-ratio: 1; background: var(--bg); cursor: zoom-in; }
+.photo-tile img, .photo-tile .skeleton { width: 100%; height: 100%; object-fit: cover; display: block; margin: 0; }
+.photo-full { max-width: 100%; max-height: 70dvh; display: block; margin: 0 auto var(--s3); border-radius: var(--r-ctl); }
+.pick-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s2); max-height: 50dvh; overflow-y: auto; position: relative; }
+.pick-list label { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s3); min-height: 52px; border: 1px solid var(--line); border-radius: var(--r-ctl); cursor: pointer; background: var(--card); }
+.pick-list input { width: 20px; height: 20px; min-height: 0; flex: none; accent-color: var(--teal-text); }
+.pick-list label:has(input:checked) { border-color: var(--navy); background: var(--teal-50); }
+.pick-list .grow { flex: 1; min-width: 0; }
+@media screen {
+  .picker { transition: border-color 160ms ease, background-color 160ms ease, transform 160ms var(--ease-out); }
+  .picker:active { transform: scale(0.98); }
+  .picker.over { transform: scale(1.01); }
+  @keyframes chip-in { from { opacity: 0; transform: translateX(-16px); } }
+  .picked li { animation: chip-in 240ms var(--ease-out) both; }
+  .photo-tile img { transition: transform 200ms var(--ease-out); }
+  @media (hover: hover) { .photo-tile:hover img { transform: scale(1.04); } }
+  .pick-list label { transition: border-color 160ms ease, background-color 160ms ease; }
+}

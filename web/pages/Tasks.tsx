@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ApiError, download, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { addDays, fmtDate, fmtDateTime, label, londonToday, weekStart } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, useToast } from '../ui.tsx';
+import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, useToast } from '../ui.tsx';
 
 const STATUSES: [string, string][] = [['not_started', 'Not Started'], ['in_progress', 'In Progress'], ['submitted', 'Submitted'], ['changes_requested', 'Changes Requested'], ['completed', 'Completed']];
 type View = 'list' | 'board' | 'calendar' | 'property';
@@ -198,11 +198,8 @@ export function TaskPage() {
           <h3 style={{ marginTop: 24 }}>Evidence</h3>
           {files.length === 0 ? <p className="muted">No files yet.</p> : <ul className="list">{files.map((f: any) => <li key={f.id}><button type="button" className="btn ghost" onClick={() => download(`/files/${f.id}`, f.original_name)}>{f.original_name}</button><span className="muted small">{f.uploaded_by_name}, {fmtDate(f.uploaded_at)}</span></li>)}</ul>}
           {(can.work || can.manage) && t.status !== 'completed' && (
-            <div className="field" style={{ marginTop: 12 }}>
-              <label htmlFor="evidence">Add a photo or PDF</label>
-              <span className="hint" id="evidence-hint">JPEG, PNG, WebP or PDF, up to 10 MB. Do not photograph residents or their belongings.</span>
-              <input id="evidence" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" aria-describedby="evidence-hint" disabled={progress !== null} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) addFile.run(f); }} />
-              {progress !== null && <><progress max={100} value={progress} aria-label="Upload progress" /> <span className="small">{progress}%</span></>}
+            <div style={{ marginTop: 12 }}>
+              <FilePicker label="Add photos or PDFs" hint="JPEG, PNG, WebP or PDF, up to 10 MB each. Do not photograph residents or their belongings." accept="image/jpeg,image/png,image/webp,application/pdf" multiple instant busy={progress !== null} progress={progress} buttonText="Choose photos or files" onChange={async (fs) => { for (const f of fs) await addFile.run(f); }} />
               <ErrorSummary error={addFile.error} />
             </div>
           )}

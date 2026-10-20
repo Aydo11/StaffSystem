@@ -3,7 +3,8 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ApiError, blobUrl, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtDateTime, fmtDay, fmtMinutes, fmtTime, label, londonLocal } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, useToast } from '../ui.tsx';
+import { AllocateDialog } from '../allocate.tsx';
+import { Avatar, Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, LoadError, PageHead, PhotoGrid, Skeleton, Status, useToast } from '../ui.tsx';
 import { StartVisitDialog } from './Visits.tsx';
 
 function Photo({ id, has, name }: { id: string; has: boolean; name: string }) {
@@ -121,7 +122,7 @@ export function PropertyPage() {
   const hub = useHub();
   const d = useApi<any>(`/properties/${id}`);
   const toast = useToast();
-  const [dlg, setDlg] = useState<null | 'start' | 'edit' | 'key' | 'issue' | 'schedule'>(null);
+  const [dlg, setDlg] = useState<null | 'start' | 'edit' | 'key' | 'issue' | 'schedule' | 'assign'>(null);
   const [keyId, setKeyId] = useState('');
   const [form, setForm] = useState<any>({});
   const [progress, setProgress] = useState<number | null>(null);
@@ -132,10 +133,13 @@ export function PropertyPage() {
   const schedule = useSubmit(async () => { await post('/scheduled-visits', { property_id: id, appointment_id: form.appointment_id, planned_start: form.planned_start, planned_minutes: Number(form.planned_minutes || 60), notes: form.notes || undefined }); setDlg(null); toast('Visit planned.'); d.reload(); });
   const photo = useSubmit(async (file: File) => { setProgress(0); try { await upload(`/properties/${id}/photo`, file, file.name, setProgress); toast('Photo updated.'); d.reload(); } finally { setProgress(null); } });
   const staff = useApi<any[]>(dlg === 'schedule' && d.data ? `/people?company=${d.data.property.company_id}` : null);
+  const assignable = useApi<any[]>(dlg === 'assign' ? `/properties/${id}/assignable` : null);
+  const endAlloc = useSubmit(async (aid: string) => { await post(`/appointment-properties/${aid}/end`); toast('Allocation ended.'); d.reload(); });
 
   if (d.error) return <LoadError error={d.error} retry={d.reload} />;
   if (!d.data) return <Skeleton lines={8} />;
-  const { property: p, keys, allocations, tasks, visits, scheduled, links, my_appointments, can } = d.data;
+  const { property: p, keys, allocations, tasks, visits, scheduled, links, my_appointments, can, photos } = d.data;
+  const current = allocations.filter((a: any) => !a.to_date);
   const canPlan = hub.can('visits.approve', p.company_id);
 
   return (
@@ -150,10 +154,8 @@ export function PropertyPage() {
           <h2 id="pd-h">Details</h2>
           <Photo id={p.id} has={p.has_photo} name={p.name} />
           {can.manage && (
-            <div className="field" style={{ marginTop: 12 }}>
-              <label htmlFor="prop-photo">Replace photo</label>
-              <input id="prop-photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => e.target.files?.[0] && photo.run(e.target.files[0])} />
-              {progress !== null && <progress max={100} value={progress} aria-label="Upload progress">{progress}%</progress>}
+            <div style={{ marginTop: 12 }}>
+              <FilePicker label="Property photo" accept="image/jpeg,image/png,image/webp" instant busy={photo.busy} progress={progress} buttonText={p.has_photo ? 'Replace photo' : 'Add a photo'} onChange={(fs) => photo.run(fs[0])} />
               <ErrorSummary error={photo.error} />
             </div>
           )}
@@ -200,14 +202,40 @@ export function PropertyPage() {
           </section>
         ) : null}
 
-        {allocations.length > 0 && (
+        {(allocations.length > 0 || can.assign) && (
           <section className="card" aria-labelledby="pa-h">
-            <h2 id="pa-h">Staff allocation history</h2>
-            <ul className="list">{allocations.map((a: any) => <li key={a.id}><span><Link to={`/people/${a.person_id}`}>{a.person_name}</Link> <CompanyBadge code={a.company_code} /><br /><span className="muted small">{a.job_title}</span></span><span className="small">{fmtDate(a.from_date)} – {a.to_date ? fmtDate(a.to_date) : 'now'}</span></li>)}</ul>
+            <div className="row between"><h2 id="pa-h">Staff</h2>{can.assign && <Button variant="secondary" onClick={() => setDlg('assign')}><Icon name="plus" size={18} />Assign staff</Button>}</div>
+            {current.length === 0 ? <Empty>No one is allocated to this property.</Empty> : (
+              <ul className="list">{current.map((a: any) => (
+                <li key={a.id}>
+                  <span className="row"><Avatar personId={a.person_id} name={a.person_name} /><span><Link to={`/people/${a.person_id}`}>{a.person_name}</Link> <CompanyBadge code={a.company_code} /><br /><span className="muted small">{a.job_title} · since {fmtDate(a.from_date)}</span></span></span>
+                  {hub.can('appointments.manage', a.company_id) && <Button variant="ghost" busy={endAlloc.busy} onClick={() => endAlloc.run(a.id)}>End allocation</Button>}
+                </li>
+              ))}</ul>
+            )}
+            <ErrorSummary error={endAlloc.error} />
+            {allocations.length > current.length && (
+              <details style={{ marginTop: 12 }}><summary>Earlier allocations ({allocations.length - current.length})</summary>
+                <ul className="list">{allocations.filter((a: any) => a.to_date).map((a: any) => <li key={a.id}><span><Link to={`/people/${a.person_id}`}>{a.person_name}</Link> <CompanyBadge code={a.company_code} /><br /><span className="muted small">{a.job_title}</span></span><span className="small">{fmtDate(a.from_date)} – {fmtDate(a.to_date)}</span></li>)}</ul>
+              </details>
+            )}
+          </section>
+        )}
+
+        {photos.length > 0 && (
+          <section className="card" aria-labelledby="pp-h">
+            <h2 id="pp-h">Visit photos</h2>
+            <p className="small muted">The latest photos taken on visits, newest first. Open a photo to see it full size.</p>
+            <PhotoGrid photos={photos} caption={(ph) => <>{ph.person_name}, {fmtDate(ph.started_at)} · <Link to={`/visits/${ph.visit_id}`}>visit</Link></>} />
           </section>
         )}
       </div>
 
+      {dlg === 'assign' && (
+        <AllocateDialog title={`Assign staff to ${p.name}`} searchLabel="Search staff" loading={assignable.loading}
+          options={assignable.data?.map((x) => ({ key: x.id, appointmentId: x.id, propertyId: p.id, title: x.person_name, sub: x.job_title, companyCode: x.company_code, personId: x.person_id, hasPhoto: x.has_photo })) ?? null}
+          onClose={() => setDlg(null)} onDone={() => { setDlg(null); d.reload(); }} />
+      )}
       {dlg === 'start' && <StartVisitDialog property={{ ...p, my_appointments }} onClose={() => setDlg(null)} />}
       {dlg === 'edit' && <PropertyForm existing={p} onClose={() => setDlg(null)} onSaved={() => { setDlg(null); d.reload(); }} />}
       <Dialog open={dlg === 'key'} onClose={() => setDlg(null)} title="Add a key or item" variant="modal" footer={<Button busy={addKey.busy} onClick={() => addKey.run()}>Add</Button>}>

@@ -4,7 +4,9 @@ import { clearanceGate } from '../clearance.ts';
 import { type Db, one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, HttpError, isoDate, LONDON_TODAY, localDateTime, notFound, notify, parse, text, uuid, idParam } from '../http.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith, need, scope } from '../perm.ts';
+import { deleteFile, saveFile } from '../storage.ts';
 import { visitVisible } from '../visibility.ts';
+import { upload } from './people.ts';
 
 export const visits = Router();
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
@@ -26,6 +28,10 @@ async function usableAppointment(db: Db, a: Access, appointmentId: string, prope
   if (!ok) throw bad('This property is not allocated to that appointment. Ask your manager to allocate it.', { fields: { property_id: 'Not allocated' } });
   return ap;
 }
+
+const VISIT_PHOTOS = `select f.id, f.original_name, f.uploaded_at, f.uploaded_by, coalesce(u.preferred_name, u.full_name) as uploaded_by_name
+  from files f join people u on u.id = f.uploaded_by where f.entity_type = 'visit' and f.entity_id = $1 order by f.uploaded_at`;
+const MAX_VISIT_PHOTOS = 20;
 
 async function loadVisit(a: Access, id: string, db: Db = pool) {
   const v = await one(`select v.*, ${MINUTES('v')} as minutes from visits v where v.id = $1 and ${visitVisible('v', 2, 3)}`, [id, a.personId, companiesWith(a, 'visits.view_all')], db);
@@ -180,7 +186,7 @@ visits.get('/visits', async (req, res) => {
 visits.get('/visits/:id', async (req, res) => {
   const a = req.access;
   const v = await loadVisit(a, idParam(req.params.id));
-  const [detail, corrections, allocations, appts] = await Promise.all([
+  const [detail, corrections, allocations, appts, photos] = await Promise.all([
     one(`select ${name('w')} as person_name, c.name as company_name, c.code as company_code, p.name as property_name, p.ref as property_ref, ${name('d')} as decided_by_name, ap.job_title
            from visits v join people w on w.id = v.person_id join companies c on c.id = v.company_id join properties p on p.id = v.property_id
            join appointments ap on ap.id = v.appointment_id left join people d on d.id = v.decided_by where v.id = $1`, [v.id]),
@@ -188,17 +194,45 @@ visits.get('/visits/:id', async (req, res) => {
     q(`select va.*, c.name as company_name, c.code as company_code, ap.job_title from visit_allocations va join companies c on c.id = va.company_id join appointments ap on ap.id = va.appointment_id where va.visit_id = $1`, [v.id]),
     // For splitting: the worker's other appointments in companies where the viewer may approve.
     q(`select a.id, a.company_id, a.job_title, c.name as company_name, c.code as company_code from appointments a join companies c on c.id = a.company_id where a.person_id = $1 and a.company_id = any($2::uuid[])`, [v.person_id, companiesWith(a, 'visits.approve')]),
+    q(VISIT_PHOTOS, [v.id]),
   ]);
   const own = v.person_id === a.personId;
   res.json({
-    visit: { ...v, ...detail }, corrections, allocations, splitAppointments: appts,
+    visit: { ...v, ...detail }, corrections, allocations, splitAppointments: appts, photos,
     can: {
       decide: !own && v.status === 'submitted' && can(a, 'visits.approve', v.company_id),
       split: !own && v.status === 'approved' && can(a, 'visits.approve', v.company_id),
       correct: (own || can(a, 'visits.approve', v.company_id)) && v.status !== 'cancelled' && !corrections.some((c) => c.status === 'pending'),
       decideCorrections: !own && can(a, 'visits.approve', v.company_id),
+      addPhotos: v.status !== 'cancelled' && (own || can(a, 'visits.approve', v.company_id)),
     },
   });
+});
+
+// ── Photos of the property taken on a visit (for tracking condition and work done) ──
+visits.post('/visits/:id/photos', upload.single('file'), async (req, res) => {
+  const v = await loadVisit(req.access, idParam(req.params.id));
+  if (v.status === 'cancelled') throw conflict('Photos cannot be added to a cancelled visit.');
+  if (v.person_id !== req.person.id) need(req.access, 'visits.approve', v.company_id);
+  if (!req.file) throw bad('Choose a photo to upload.');
+  const f = await tx(async (db) => {
+    await q('select 1 from visits where id = $1 for update', [v.id], db); // serialise the count check
+    const n = await one<{ n: number }>(`select count(*)::int as n from files where entity_type = 'visit' and entity_id = $1`, [v.id], db);
+    if (n!.n >= MAX_VISIT_PHOTOS) throw conflict(`A visit can have up to ${MAX_VISIT_PHOTOS} photos.`);
+    const saved = await saveFile(db, { companyId: v.company_id, entityType: 'visit', entityId: v.id, name: req.file!.originalname, buf: req.file!.buffer, uploadedBy: req.person.id, imagesOnly: true });
+    await audit(db, req.person.id, v.company_id, 'visit', v.id, 'photo_add', { file_id: saved.id });
+    return saved;
+  });
+  res.status(201).json({ ...f, storage_path: undefined });
+});
+visits.delete('/visits/:id/photos/:fileId', async (req, res) => {
+  const v = await loadVisit(req.access, idParam(req.params.id));
+  const f = await one(`select * from files where id = $1 and entity_type = 'visit' and entity_id = $2`, [idParam(req.params.fileId), v.id]);
+  if (!f) throw notFound();
+  if (f.uploaded_by !== req.person.id) throw forbidden();
+  if (v.status === 'approved') throw conflict('Photos on an approved visit are kept as part of the record.');
+  await tx(async (db) => { await deleteFile(db, f.id); await audit(db, req.person.id, v.company_id, 'visit', v.id, 'photo_remove', { file_id: f.id }); });
+  res.json({ ok: true });
 });
 
 // ── Approval, splitting and corrections ──

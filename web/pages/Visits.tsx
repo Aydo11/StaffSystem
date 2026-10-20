@@ -1,12 +1,36 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ApiError, post, serverNow, useApi, useSubmit } from '../api.ts';
+import { ApiError, api, post, serverNow, upload, useApi, useSubmit } from '../api.ts';
 import { addDays, fmtDate, fmtDateTime, fmtDay, fmtElapsed, fmtMinutes, fmtTime, label, londonLocal, londonToday, weekStart } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, useToast } from '../ui.tsx';
+import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, PhotoGrid, Skeleton, Status, useToast } from '../ui.tsx';
 
 export const CATEGORIES: [string, string][] = [['inspection', 'Inspection'], ['maintenance', 'Maintenance'], ['cleaning', 'Cleaning'], ['key_handover', 'Key handover'], ['property_check', 'Property check'], ['administration', 'Administration'], ['other', 'Other']];
 const SUMMARY_HINT = 'Property work only, in a sentence or two. Do not record resident names or support matters here — those belong in the support system.';
+
+const PHOTO_HINT = 'Optional. Photos of the property and the work only — never of residents or their belongings. JPEG, PNG or WebP, up to 10 MB each.';
+// Remembered on this device to save taps next time (a convenience only).
+const remember = (k: string, v?: string) => { try { if (v === undefined) return localStorage.getItem(`hub.${k}`) ?? ''; localStorage.setItem(`hub.${k}`, v); } catch { /* storage may be blocked */ } return ''; };
+
+function WorkType({ value, onChange, error }: { value: string; onChange: (v: string) => void; error?: string }) {
+  return (
+    <fieldset className="field" id="f-work_category" tabIndex={-1} style={{ border: 0, padding: 0 }} aria-describedby={error ? 'wt-err' : undefined}>
+      <legend>Type of work</legend>
+      {error && <span className="err" id="wt-err">Error: {error}</span>}
+      <Chips label="Type of work" value={value} onChange={onChange} options={CATEGORIES as [string, string][]} />
+    </fieldset>
+  );
+}
+
+// Uploads chosen photos one by one after the visit is saved; returns how many failed (the visit itself is already safe).
+async function uploadPhotos(visitId: string, files: File[], onProgress: (n: number | null) => void) {
+  let failed = 0;
+  for (const [i, f] of files.entries()) {
+    try { await upload(`/visits/${visitId}/photos`, f, f.name, (pct) => onProgress(Math.round(((i + pct / 100) / files.length) * 100))); } catch { failed++; }
+  }
+  onProgress(null);
+  return failed;
+}
 
 function ApptChoice({ appts, value, onChange, error }: { appts: any[]; value: string; onChange: (v: string) => void; error?: string }) {
   if (!appts.length) return <div className="notice warn">You have no current appointment that covers this property. Ask your manager to allocate it to you.</div>;
@@ -67,6 +91,8 @@ export function ActiveVisit() {
   const [cancel, setCancel] = useState(false);
   const [reason, setReason] = useState('');
   const [done, setDone] = useState<any>(null);
+  const [photos, setPhotos] = useState<File[]>([]);
+  const [progress, setProgress] = useState<number | null>(null);
   useEffect(() => { const t = setInterval(() => setNow(serverNow()), 1000); return () => clearInterval(t); }, []);
   useEffect(() => { if (draftKey) try { localStorage.setItem(draftKey, JSON.stringify(draft)); } catch { /* drafts are a convenience */ } }, [draft, draftKey]);
 
@@ -78,7 +104,8 @@ export function ActiveVisit() {
     const r = await post(`/visits/${v!.id}/finish`, draft);
     try { localStorage.removeItem(draftKey); } catch { /* ignore */ }
     setReview(false);
-    setDone(r);
+    const failed = photos.length ? await uploadPhotos(r.id, photos, setProgress) : 0;
+    setDone({ ...r, photos: photos.length - failed, failed });
     await reloadMe();
   });
   const extend = useSubmit(async (minutes: number) => { await post(`/visits/${v!.id}/extend`, { minutes }); await reloadMe(); toast(`Check-in recorded. Next check-in in ${minutes} minutes.`); });
@@ -88,7 +115,8 @@ export function ActiveVisit() {
     <div className="card" style={{ maxWidth: 560, margin: '0 auto', textAlign: 'center' }}>
       <span className="done-check" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M4 12l5 5L20 6" /></svg></span>
       <h1 id="page-title" tabIndex={-1} style={{ marginTop: 16 }}>Visit saved</h1>
-      <p>{fmtMinutes(done.minutes)} recorded ({fmtTime(done.started_at)}–{fmtTime(done.ended_at)}). It is now waiting for your manager’s review.</p>
+      <p>{fmtMinutes(done.minutes)} recorded ({fmtTime(done.started_at)}–{fmtTime(done.ended_at)}){done.photos > 0 && <> with {done.photos} photo{done.photos === 1 ? '' : 's'}</>}. It is now waiting for your manager’s review.</p>
+      {done.failed > 0 && <p className="notice warn">{done.failed} photo{done.failed === 1 ? '' : 's'} did not upload. Open the visit to add {done.failed === 1 ? 'it' : 'them'} again.</p>}
       <div className="row" style={{ justifyContent: 'center' }}><Link className="btn" to="/">Back to My Day</Link><Link className="btn secondary" to={`/visits/${done.id}`}>View visit</Link></div>
     </div>
   );
@@ -117,24 +145,22 @@ export function ActiveVisit() {
           <h2 id="w-h">Work details</h2>
           <p className="small muted">Saved on this device as you type, so you won’t lose it if the page reloads.</p>
           <ErrorSummary error={finish.error} />
-          <Field label="Type of work" error={finish.error?.fields.work_category}>
-            <select name="work_category" value={draft.work_category} onChange={(e) => setDraft({ ...draft, work_category: e.target.value })}>
-              <option value="">Choose…</option>{CATEGORIES.map(([k, t]) => <option key={k} value={k}>{t}</option>)}
-            </select>
-          </Field>
+          <WorkType value={draft.work_category} onChange={(v) => setDraft({ ...draft, work_category: v })} error={finish.error?.fields.work_category} />
           <Field label="What did you do?" hint={SUMMARY_HINT} error={finish.error?.fields.summary}>
             <textarea name="summary" maxLength={500} value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} />
           </Field>
+          <FilePicker label="Photos of the property" hint={PHOTO_HINT} accept="image/jpeg,image/png,image/webp" multiple busy={progress !== null} progress={progress} onChange={setPhotos} />
         </section>
       </div>
       <Dialog open={review} onClose={() => setReview(false)} title="Check your visit" variant="modal"
-        footer={<><Button variant="go" busy={finish.busy} onClick={() => finish.run()}>Save Visit</Button><Button variant="secondary" onClick={() => setReview(false)}>Keep working</Button></>}>
+        footer={<><Button variant="go" busy={finish.busy} busyText={progress !== null ? `Uploading photos… ${progress}%` : 'Saving…'} onClick={() => finish.run()}>Save Visit</Button><Button variant="secondary" onClick={() => setReview(false)}>Keep working</Button></>}>
         <dl className="facts">
           <dt>Property</dt><dd>{v.property_name}</dd>
           <dt>Company</dt><dd>{v.company_name}</dd>
           <dt>Started</dt><dd>{fmtDateTime(v.started_at)}</dd>
           <dt>Duration so far</dt><dd><strong>{fmtMinutes(Math.floor(elapsed / 60000))}</strong></dd>
           <dt>Type</dt><dd>{label(draft.work_category) || 'Not chosen'}</dd>
+          <dt>Photos</dt><dd>{photos.length || 'None'}</dd>
         </dl>
         <p className="small muted" style={{ marginTop: 16 }}>The finish time is recorded by the server when you press Save Visit. If the times are wrong later, you can request a correction.</p>
       </Dialog>
@@ -155,12 +181,20 @@ export function ManualVisit() {
   const nav = useNavigate();
   const toast = useToast();
   const nowLocal = londonLocal();
-  const [f, setF] = useState({ property_id: params.get('property') ?? '', appointment_id: '', date: nowLocal.slice(0, 10), time: '', preset: '60', custom: '', work_category: '', summary: '' });
+  const [f, setF] = useState({ property_id: params.get('property') ?? remember('lastProperty'), appointment_id: '', date: nowLocal.slice(0, 10), time: '', preset: remember('lastDuration') || '60', custom: '', work_category: remember('lastWorkType'), summary: '' });
   const [confirmUnusual, setConfirmUnusual] = useState(false);
+  const [photos, setPhotos] = useState<File[]>([]);
+  const [progress, setProgress] = useState<number | null>(null);
   const requestId = useRef(crypto.randomUUID());
   const prop = props.data?.find((p) => p.id === f.property_id);
   const appts = prop?.my_appointments ?? [];
   useEffect(() => { if (appts.length === 1) setF((x) => ({ ...x, appointment_id: appts[0].id })); }, [f.property_id, props.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  // One property: choose it. A remembered property that is no longer yours: clear it.
+  useEffect(() => {
+    if (!props.data) return;
+    if (props.data.length === 1 && !f.property_id) setF((x) => ({ ...x, property_id: props.data![0].id }));
+    else if (f.property_id && !props.data.some((p) => p.id === f.property_id)) setF((x) => ({ ...x, property_id: '' }));
+  }, [props.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const minutes = f.preset === 'custom' ? Number(f.custom) : Number(f.preset);
   const endLabel = useMemo(() => {
     if (!f.time || !minutes) return null;
@@ -169,6 +203,12 @@ export function ManualVisit() {
     return `${String(Math.floor(t / 60) % 24).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}${t >= 1440 ? ' (next day)' : ''}`;
   }, [f.time, minutes]);
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.value });
+  // "I've just finished": start = now minus the chosen duration (UK time).
+  const justFinished = () => {
+    if (!minutes) return;
+    const start = londonLocal(new Date(Date.now() - minutes * 60000));
+    setF({ ...f, date: start.slice(0, 10), time: start.slice(11, 16) });
+  };
 
   const save = useSubmit(async () => {
     const fields: Record<string, string> = {};
@@ -181,7 +221,9 @@ export function ManualVisit() {
     if (Object.keys(fields).length) throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields });
     try {
       const r = await post('/visits/manual', { property_id: f.property_id, appointment_id: f.appointment_id, start_local: `${f.date}T${f.time}`, minutes, work_category: f.work_category, summary: f.summary, client_request_id: requestId.current, confirm_unusual: confirmUnusual || undefined });
-      toast(r.duplicate ? 'This visit was already saved.' : 'Visit saved and sent for review.');
+      remember('lastProperty', f.property_id); remember('lastWorkType', f.work_category); remember('lastDuration', f.preset);
+      const failed = photos.length && !r.duplicate ? await uploadPhotos(r.visit.id, photos, setProgress) : 0;
+      toast(r.duplicate ? 'This visit was already saved.' : failed ? `Visit saved. ${failed} photo${failed === 1 ? '' : 's'} did not upload — add ${failed === 1 ? 'it' : 'them'} again on the visit.` : `Visit saved${photos.length ? ` with ${photos.length} photo${photos.length === 1 ? '' : 's'}` : ''} and sent for review.`);
       nav(`/visits/${r.visit.id}`);
     } catch (e) {
       if (e instanceof ApiError && e.code === 'unusual_duration') setConfirmUnusual(false);
@@ -213,19 +255,19 @@ export function ManualVisit() {
           <legend>How long did it take?</legend>
           <Chips label="Duration" value={f.preset} onChange={(v) => setF({ ...f, preset: v })} options={[['15', '15 min'], ['30', '30 min'], ['45', '45 min'], ['60', '1 h'], ['90', '1 h 30'], ['120', '2 h'], ['custom', 'Custom']]} />
         </fieldset>
+        {minutes > 0 && <p><Button variant="secondary" onClick={justFinished}>I’ve just finished — fill in the times</Button></p>}
         {f.preset === 'custom' && <Field label="Minutes" error={errs.custom}><input name="custom" type="number" inputMode="numeric" min={1} max={720} value={f.custom} onChange={set('custom')} style={{ maxWidth: 160 }} /></Field>}
         {endLabel && <p className="notice" aria-live="polite">Finish time will be <strong>{endLabel}</strong> ({fmtMinutes(minutes)}).</p>}
-        <Field label="Type of work" error={errs.work_category}>
-          <select name="work_category" value={f.work_category} onChange={set('work_category')}><option value="">Choose…</option>{CATEGORIES.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select>
-        </Field>
+        <WorkType value={f.work_category} onChange={(v) => setF({ ...f, work_category: v })} error={errs.work_category} />
         <Field label="What did you do?" hint={SUMMARY_HINT} error={errs.summary}><textarea name="summary" maxLength={500} value={f.summary} onChange={set('summary')} /></Field>
+        <FilePicker label="Photos of the property" hint={PHOTO_HINT} accept="image/jpeg,image/png,image/webp" multiple busy={progress !== null} progress={progress} onChange={setPhotos} />
         {unusual && (
           <div className="notice warn" role="alert">
             <p><strong>{save.error!.message}</strong></p>
             <label className="check"><input type="checkbox" checked={confirmUnusual} onChange={(e) => setConfirmUnusual(e.target.checked)} /> Yes, this duration is correct</label>
           </div>
         )}
-        <Button type="submit" variant="go" busy={save.busy} disabled={unusual && !confirmUnusual}>Save for review</Button>
+        <Button type="submit" variant="go" big busy={save.busy} busyText={progress !== null ? `Uploading photos… ${progress}%` : 'Saving…'} disabled={unusual && !confirmUnusual}>Save for review</Button>
       </form>
     </>
   );
@@ -236,7 +278,7 @@ export function VisitDetail() {
   const { id } = useParams();
   const d = useApi<any>(`/visits/${id}`);
   const toast = useToast();
-  const { reloadMe } = useHub();
+  const { reloadMe, me } = useHub();
   const [mode, setMode] = useState<null | 'reject' | 'correct' | 'split' | 'ack' | { decideCorrection: any }>(null);
   const [note, setNote] = useState('');
   const [corr, setCorr] = useState({ start: '', end: '', reason: '' });
@@ -252,10 +294,18 @@ export function VisitDetail() {
     await done('Time split between companies.');
   });
   const ack = useSubmit(async () => { await post(`/visits/${id}/ack-checkin`, { note }); await done('Check recorded.'); });
+  const [photoProgress, setPhotoProgress] = useState<number | null>(null);
+  const addPhotos = useSubmit(async (files: File[]) => {
+    const failed = await uploadPhotos(id!, files, setPhotoProgress);
+    await d.reload();
+    if (failed) throw new ApiError(0, 'error', `${failed} photo${failed === 1 ? '' : 's'} did not upload. Check they are JPEG, PNG or WebP under 10 MB and try again.`);
+    toast(`${files.length} photo${files.length === 1 ? '' : 's'} added.`);
+  });
+  const removePhoto = useSubmit(async (ph: any) => { await api('DELETE', `/visits/${id}/photos/${ph.id}`); toast('Photo removed.'); await d.reload(); });
 
   if (d.error) return <LoadError error={d.error} retry={d.reload} />;
   if (!d.data) return <Skeleton lines={8} />;
-  const { visit: v, corrections, allocations, can, splitAppointments } = d.data;
+  const { visit: v, corrections, allocations, can, splitAppointments, photos } = d.data;
   const pending = corrections.find((c: any) => c.status === 'pending');
   const toLocal = (iso: string) => (iso ? londonLocal(new Date(iso)) : '');
   const splitTotal = Object.values(split).reduce((s, m) => s + (Number(m) || 0), 0);
@@ -301,6 +351,18 @@ export function VisitDetail() {
           )}
         </section>
       </div>
+
+      {(photos.length > 0 || can.addPhotos) && (
+        <section className="card" aria-labelledby="ph-h" style={{ marginTop: 16 }}>
+          <h2 id="ph-h">Photos</h2>
+          {photos.length === 0 ? <p className="muted">No photos yet.</p> : (
+            <PhotoGrid photos={photos} caption={(ph) => `${ph.uploaded_by_name}, ${fmtDateTime(ph.uploaded_at)}`}
+              canRemove={(ph) => v.status !== 'approved' && ph.uploaded_by === me.person.id} onRemove={(ph) => removePhoto.run(ph)} />
+          )}
+          <ErrorSummary error={addPhotos.error ?? removePhoto.error} />
+          {can.addPhotos && <FilePicker label="Add photos" hint={PHOTO_HINT} accept="image/jpeg,image/png,image/webp" multiple instant busy={photoProgress !== null} progress={photoProgress} onChange={(fs) => addPhotos.run(fs)} />}
+        </section>
+      )}
 
       {corrections.length > 0 && (
         <section className="card" aria-labelledby="corr-h" style={{ marginTop: 16 }}>

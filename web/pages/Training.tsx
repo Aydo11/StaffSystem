@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, blobUrl, download, patch, post, serverNow, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtElapsed, label, londonToday } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 const MATRIX_STATUS: Record<string, [string, string]> = { current: ['verified', 'Up to date'], expiring: ['submitted', 'Renew soon'], due: ['info', 'Due'], overdue: ['action', 'Overdue'] };
 
@@ -71,7 +71,7 @@ function MyTraining() {
           <Field label="Course or qualification title" error={addExt.error?.fields.title}><input name="title" value={ext.title} onChange={(e) => setExt({ ...ext, title: e.target.value })} /></Field>
           <Field label="Provider" optional><input name="provider" value={ext.provider} onChange={(e) => setExt({ ...ext, provider: e.target.value })} /></Field>
           <Field label="Completed on" error={addExt.error?.fields.completed_on}><input name="completed_on" type="date" max={londonToday()} value={ext.completed_on} onChange={(e) => setExt({ ...ext, completed_on: e.target.value })} /></Field>
-          <div className="field"><label htmlFor="cert-file">Certificate (PDF or photo)</label><input id="cert-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(e) => setExt({ ...ext, file: e.target.files?.[0] ?? null })} /></div>
+          <FilePicker label="Certificate (PDF or photo)" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(fs) => setExt({ ...ext, file: fs[0] ?? null })} />
           {progress !== null && <progress max={100} value={progress} aria-label="Upload progress" />}
         </>}
       </Dialog>
@@ -289,7 +289,7 @@ export function CourseEditor() {
               <summary><strong>{i + 1}. {l.title}</strong></summary>
               <Field label="Lesson title" error={err?.fields[`lessons.${i}.title`]}><input name={`lesson-${i}-title`} value={l.title} onChange={(e) => setL(i, 'title', e.target.value)} /></Field>
               <Field label="Text" hint="Leave a blank line between paragraphs."><textarea name={`lesson-${i}-body`} rows={6} value={l.body ?? ''} onChange={(e) => setL(i, 'body', e.target.value)} /></Field>
-              <div className="field"><label htmlFor={`lesson-${i}-img`}>Image</label><input id={`lesson-${i}-img`} type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => e.target.files?.[0] && img.run('lessons', i, e.target.files[0])} /></div>
+              <FilePicker label="Image" accept="image/jpeg,image/png,image/webp" instant compact busy={img.busy} buttonText={l.image_file_id ? 'Replace image' : undefined} onChange={(fs) => img.run('lessons', i, fs[0])} />
               {l.image_file_id && <><FileImage id={l.image_file_id} alt={l.image_alt || 'Lesson image'} /><Field label="Describe the image (alternative text)" error={err?.fields[`lessons.${i}.image_alt`]}><input name={`lesson-${i}-alt`} value={l.image_alt ?? ''} onChange={(e) => setL(i, 'image_alt', e.target.value)} /></Field></>}
               <Field label="Video link" optional hint="https link. A transcript or captions text is required."><input name={`lesson-${i}-video`} value={l.video_url ?? ''} onChange={(e) => setL(i, 'video_url', e.target.value || null)} /></Field>
               {l.video_url && <Field label="Transcript" error={err?.fields[`lessons.${i}.transcript`]}><textarea name={`lesson-${i}-transcript`} value={l.transcript ?? ''} onChange={(e) => setL(i, 'transcript', e.target.value)} /></Field>}
@@ -313,7 +313,7 @@ export function CourseEditor() {
               <summary><strong>Question {i + 1}</strong> — {label(qn.type)} · {qn.marks} mark{qn.marks > 1 ? 's' : ''}</summary>
               <Field label="Question" error={err?.fields[`questions.${i}.prompt`]}><textarea name={`q-${i}-prompt`} value={qn.prompt} onChange={(e) => setQ(i, 'prompt', e.target.value)} /></Field>
               <Field label="Marks"><input name={`q-${i}-marks`} type="number" min={1} max={20} value={qn.marks} onChange={(e) => setQ(i, 'marks', Number(e.target.value))} style={{ maxWidth: 120 }} /></Field>
-              <div className="field"><label htmlFor={`q-${i}-img`}>Image</label><input id={`q-${i}-img`} type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => e.target.files?.[0] && img.run('questions', i, e.target.files[0])} /></div>
+              <FilePicker label="Image" accept="image/jpeg,image/png,image/webp" instant compact busy={img.busy} buttonText={qn.image_file_id ? 'Replace image' : undefined} onChange={(fs) => img.run('questions', i, fs[0])} />
               {qn.image_file_id && <Field label="Describe the image (alternative text)" error={err?.fields[`questions.${i}.image_alt`]}><input name={`q-${i}-alt`} value={qn.image_alt ?? ''} onChange={(e) => setQ(i, 'image_alt', e.target.value)} /></Field>}
               {qn.type !== 'written' && (
                 <fieldset style={{ border: 0, padding: 0 }} aria-describedby={err?.fields[`questions.${i}.options`] ? `q-${i}-opt-err` : undefined}>

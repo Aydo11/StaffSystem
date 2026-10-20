@@ -90,3 +90,13 @@ Other §41 checks: keyboard use and screen-reader labels — axe-core scan of 16
 - Invitation and reset emails need RESEND_API_KEY and EMAIL_FROM; without them admins pass links on by hand.
 - Cross-company property links exist in the database but have no admin screen yet.
 - Profile and HR-record edits are audited without a company (they concern the central profile), so only super administrators see them in the audit screen.
+
+## Owner requests, 20 Oct 2026
+
+| Request | Status | Evidence |
+| --- | --- | --- |
+| Easier visit logging (remembered property/type/duration, one-tap work type, "I've just finished") | Implemented | Browser walk-through: log completed visit on a 420 px screen |
+| Property photos on visits, for tracking | Verified | `uploads.test.ts`: worker/approver only, images only, kept once approved, shown on visit and property |
+| Friendlier upload button with animation, used everywhere | Implemented | `FilePicker` in `web/ui.tsx`; axe-core: 0 violations on the changed pages |
+| Assign several properties / staff at once, from either side | Verified | `uploads.test.ts`: assignable list excludes current allocations; clearance rule unchanged |
+| Attach documents such as CVs to staff profiles | Verified | `uploads.test.ts`: person and `staff.edit` only, PDF/Word/image by content |

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { ApiError, download, post, useApi, useSubmit } from '../api.ts';
 import { fmtDate, label } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, Chips, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, useToast } from '../ui.tsx';
+import { Button, Chips, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, useToast } from '../ui.tsx';
 
 const FIELDS: Record<string, [string, boolean][]> = {
   people: [['email', true], ['full_name', true], ['preferred_name', false], ['job_title', true], ['relationship', true], ['start_date', true], ['legal_employer_name', false], ['contracted_hours_per_week', false]],
@@ -40,7 +40,7 @@ export function ImportPage() {
         <Chips label="What to import" value={entity} onChange={setEntity} options={[['people', 'People with an appointment'], ['properties', 'Properties']]} />
         <div className="form-grid" style={{ marginTop: 12 }}>
           <Field label="Company"><select name="company" value={company} onChange={(e) => setCompany(e.target.value)}>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
-          <div className="field"><label htmlFor="csv-file">CSV file</label><input id="csv-file" type="file" accept=".csv,text/csv" onChange={(e) => pick(e.target.files?.[0])} /></div>
+          <FilePicker label="CSV file" accept=".csv,text/csv" onChange={(fs) => pick(fs[0])} />
         </div>
         {header.length > 0 && (
           <fieldset style={{ border: 0, padding: 0 }}><legend style={{ fontWeight: 600 }}>Match columns</legend>

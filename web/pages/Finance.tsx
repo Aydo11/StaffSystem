@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, download, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, label, londonToday, money } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 const KIND: Record<string, string> = { sales_invoice: 'Invoice', contractor_invoice: 'Contractor invoice', payment_statement: 'Payment statement', expense_claim: 'Expense claim', credit_note: 'Credit note' };
 const DOC_STATUS: Record<string, [string, string]> = { draft: ['planned', 'Draft'], submitted: ['review', 'Submitted'], awaiting_approval: ['review', 'Awaiting approval'], approved: ['info', 'Approved'], issued: ['info', 'Issued'], part_paid: ['review', 'Part paid'], paid: ['verified', 'Paid'], rejected: ['action', 'Rejected'], credited: ['ended', 'Credited'], void: ['ended', 'Void'] };
@@ -124,7 +124,7 @@ function Mine() {
           <Field label="Company" hint={f.kind === 'contractor_invoice' ? 'The company you are invoicing.' : 'The company the cost was for.'}><select name="company_id" value={f.company_id} onChange={(e) => setF({ ...f, company_id: e.target.value })}>{(f.kind === 'contractor_invoice' ? contractorCos.map((a) => ({ id: a.company_id, name: a.company_name })) : hub.me.companies).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
           <Field label={f.kind === 'contractor_invoice' ? 'Your invoice number' : 'Reference'} optional><input name="reference" value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} /></Field>
           <LinesEditor lines={f.lines} onChange={(lines) => setF({ ...f, lines })} errors={submit.error?.fields ?? {}} />
-          <div className="field"><label htmlFor="fin-file">{f.kind === 'expense_claim' ? 'Receipt' : 'Your invoice document'}</label><input id="fin-file" type="file" accept="application/pdf,image/*" onChange={(e) => setF({ ...f, file: e.target.files?.[0] ?? null })} /></div></>}
+          <FilePicker label={f.kind === 'expense_claim' ? 'Receipt' : 'Your invoice document'} accept="application/pdf,image/*" onChange={(fs) => setF({ ...f, file: fs[0] ?? null })} /></>}
       </Dialog>
     </>
   );

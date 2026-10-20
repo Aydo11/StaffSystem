@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { download, get, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtDateTime, label } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 import { Paragraphs } from './Training.tsx';
 
 const receiptStatus = (r: any): [string, string] => !r ? ['not_required', 'Not supplied yet'] : r.acknowledged_at ? ['verified', 'Acknowledged'] : r.opened_at ? ['submitted', 'Opened, not acknowledged'] : ['info', 'New — please read'];
@@ -171,7 +171,7 @@ function PolicyEditor({ p, reload }: { p: any; reload: () => void }) {
         <Field label="Review by" error={save.error?.fields.review_on}><input name="review_on" type="date" value={f.review_on} onChange={(e) => setF({ ...f, review_on: e.target.value })} /></Field>
       </div>
       <Field label="What changed in this version" optional><textarea name="revision_summary" value={f.revision_summary} onChange={(e) => setF({ ...f, revision_summary: e.target.value })} /></Field>
-      <div className="field"><label htmlFor="pol-pdf">Attach a PDF version</label><span className="hint">Optional. Readable chapters below are better for search and screen readers.</span><input id="pol-pdf" type="file" accept="application/pdf" onChange={(e) => e.target.files?.[0] && pdf.run(e.target.files[0])} />{progress !== null && <progress max={100} value={progress} aria-label="Upload progress" />}</div>
+      <FilePicker label="Attach a PDF version" hint="Optional. Readable chapters below are better for search and screen readers." accept="application/pdf" instant busy={pdf.busy} progress={progress} onChange={(fs) => pdf.run(fs[0])} />
       <h2 style={{ fontSize: '1.25rem' }}>Chapters</h2>
       {f.chapters.map((c: any, i: number) => (
         <details key={i} className="card" open={f.chapters.length < 4}>

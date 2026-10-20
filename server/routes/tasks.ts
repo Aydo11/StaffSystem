@@ -193,6 +193,10 @@ tasks.get('/files/:id', async (req, res) => {
   } else if (f.entity_type === 'finance') {
     const d = await one('select company_id, submitted_by, recipient_person_id, kind from finance_documents where id = $1', [f.entity_id]);
     if (!d || !(can(a, 'finance.view', d.company_id) || d.submitted_by === a.personId || d.recipient_person_id === a.personId || (d.kind === 'expense_claim' && can(a, 'expenses.approve', d.company_id)))) throw notFound();
+  } else if (f.entity_type === 'person_doc') {
+    // Staff documents: the person themself, or someone who can edit their profile in a company they work for.
+    const cos = (await q<{ company_id: string }>('select distinct company_id from appointments where person_id = $1', [f.entity_id])).map((x) => x.company_id);
+    if (f.entity_id !== a.personId && !cos.some((c) => can(a, 'staff.edit', c))) throw notFound();
   } else throw notFound(); // photos have their own endpoints
   await audit(pool, a.personId, f.company_id, 'file', f.id, 'download', {});
   res.set({ 'Content-Type': f.mime_type, 'Content-Disposition': `attachment; filename="${f.original_name.replace(/"/g, '')}"`, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' })

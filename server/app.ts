@@ -8,6 +8,8 @@ import { pool } from './db.ts';
 import { errorHandler, HttpError } from './http.ts';
 import { admin } from './routes/admin.ts';
 import { core } from './routes/core.ts';
+import { development } from './routes/development.ts';
+import { leave } from './routes/leave.ts';
 import { account, authPublic } from './routes/account.ts';
 import { inbox } from './routes/inbox.ts';
 import { people } from './routes/people.ts';
@@ -58,7 +60,7 @@ export function createApp() {
   api.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); }); // never cache personal data
   api.use(authPublic);
   api.use(authenticate);
-  api.use(account, core, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, estates, finance, messaging, ai, dataops, admin);
+  api.use(account, core, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, estates, finance, messaging, ai, dataops, leave, development, admin);
   api.use(() => { throw new HttpError(404, 'not_found', 'No such API endpoint.'); });
   app.use('/api', api);
 

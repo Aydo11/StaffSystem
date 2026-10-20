@@ -5,6 +5,7 @@ import { fmtDateTime, label } from '../format.ts';
 import { useHub } from '../hub.tsx';
 import { AiSettings } from './Assistant.tsx';
 import { ImportPage, RetentionPage } from './DataTools.tsx';
+import { TemplatesAdmin } from './Development.tsx';
 import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, useToast } from '../ui.tsx';
 
 // Cards are honest about scope: built modules link through; later stages say so plainly.
@@ -16,7 +17,7 @@ const CARDS: { title: string; help: string; to?: string; perm?: string; stage?: 
   { title: 'Properties', help: 'Add and edit properties, keys and visit plans.', to: '/properties', perm: 'properties.manage' },
   { title: 'Audit', help: 'Who changed what, and when.', to: 'audit', perm: 'audit.view' },
   { title: 'KPI definitions', help: 'Targets, minimum data and wording, kept as dated versions.', to: '/performance?tab=definitions', perm: 'performance.manage' },
-  { title: 'Templates', help: 'Onboarding templates and job descriptions.', stage: 2, note: 'Onboarding templates and versioned job descriptions are not built yet.' },
+  { title: 'Templates', help: 'Versioned job descriptions, competencies with rubrics, and onboarding checklists.', to: 'templates', perm: 'jobs.manage' },
   { title: 'Training', help: 'Training matrix, requirements, courses and quizzes.', to: '/training?tab=manage', perm: 'training.manage' },
   { title: 'Policies', help: 'Policies and staff handbooks: drafting, approval, adoption and who has read them.', to: '/policies', perm: 'policies.manage' },
   { title: 'Governance', help: 'Leads, meetings, decisions, risks, audits, actions, quality summaries and framework mapping.', to: '/governance', perm: 'governance.manage' },
@@ -38,6 +39,7 @@ export function Admin() {
       <Route path="ai" element={<AiSettings />} />
       <Route path="import" element={<ImportPage />} />
       <Route path="retention" element={<RetentionPage />} />
+      <Route path="templates" element={<TemplatesAdmin />} />
     </Routes>
   );
 }

@@ -39,4 +39,4 @@ export function makeHub(me: Me, company: string, setCompany: (c: string) => void
   return { me, reloadMe, company, setCompany, can, co, q };
 }
 // Admin Centre is shown to anyone holding at least one administrative permission.
-export const ADMIN_PERMS = ['company.manage', 'access.manage', 'audit.view', 'staff.create', 'properties.manage', 'appointments.manage', 'training.manage', 'policies.manage', 'performance.manage', 'governance.manage', 'agents.manage', 'finance.manage', 'messaging.configure', 'ai.configure'];
+export const ADMIN_PERMS = ['company.manage', 'access.manage', 'audit.view', 'staff.create', 'properties.manage', 'appointments.manage', 'training.manage', 'policies.manage', 'performance.manage', 'governance.manage', 'agents.manage', 'finance.manage', 'messaging.configure', 'ai.configure', 'jobs.manage'];

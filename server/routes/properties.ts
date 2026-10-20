@@ -4,6 +4,7 @@ import { one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, isoDate, localDateTime, notFound, parse, text, uuid, idParam } from '../http.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith, need } from '../perm.ts';
 import { deleteFile, readFile, saveFile } from '../storage.ts';
+import { onLeave } from './leave.ts';
 import { propertyVisible, taskVisible, visitVisible } from '../visibility.ts';
 import { upload } from './people.ts';
 
@@ -165,6 +166,7 @@ properties.post('/scheduled-visits', async (req, res) => {
   if (ap.person_id !== req.person.id) need(req.access, 'visits.approve', ap.company_id);
   const pr = await one(`select 1 from properties p where p.id = $1 and (p.company_id = $2 or exists (select 1 from property_company_links l where l.property_id = p.id and l.company_id = $2))`, [b.property_id, ap.company_id]);
   if (!pr) throw bad('This property is not part of the appointment’s company.', { fields: { property_id: 'Wrong company' } });
+  if (await onLeave(ap.person_id, b.planned_start.slice(0, 10))) throw conflict('They are on approved leave that day. Plan the visit for someone else or another day.');
   const row = await one(`insert into scheduled_visits (company_id, property_id, person_id, appointment_id, planned_start, planned_minutes, notes, created_by)
                          values ($1,$2,$3,$4,($5::timestamp at time zone 'Europe/London'),$6,$7,$8) returning *`,
     [ap.company_id, b.property_id, ap.person_id, ap.id, b.planned_start, b.planned_minutes, b.notes ?? null, req.person.id]);

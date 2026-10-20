@@ -176,17 +176,21 @@ export function Workload() {
       {d.loading && !d.data ? <Skeleton /> : (d.data ?? []).length === 0 ? <Empty>No current appointments in view.</Empty> : (
         <div className="table-wrap"><table>
           <caption className="sr-only">Hours by appointment</caption>
-          <thead><tr><th>Person</th><th>Company</th><th className="num">Contracted</th><th className="num">Planned</th><th className="num">Recorded</th><th className="num">Approved</th><th>Planned vs contracted</th></tr></thead>
+          <thead><tr><th>Person</th><th>Company</th><th className="num">Contracted</th><th className="num">Leave</th><th className="num">Available</th><th className="num">Planned</th><th className="num">Recorded</th><th className="num">Approved</th><th>Planned vs available</th></tr></thead>
           <tbody>{d.data!.map((r) => {
             const contracted = r.contracted_hours_per_week ? Number(r.contracted_hours_per_week) * 60 : null;
-            const pct = contracted ? Math.round((r.scheduled_minutes / contracted) * 100) : null;
+            // Approved leave on weekdays, assuming contracted hours are spread over five days.
+            const available = contracted === null ? null : Math.round((contracted * Math.max(0, 5 - r.leave_days)) / 5);
+            const pct = available ? Math.round((r.scheduled_minutes / available) * 100) : null;
             return (
               <tr key={r.appointment_id}>
                 <td><Link to={`/people/${r.person_id}`}>{r.person_name}</Link><div className="muted small">{r.job_title}</div></td>
                 <td><CompanyBadge code={r.company_code} name={r.company_name} /></td>
                 <td className="num">{contracted === null ? 'Not set' : fmtHours(contracted)}</td>
+                <td className="num">{r.leave_days ? `${r.leave_days} day${r.leave_days === 1 ? '' : 's'}` : '—'}</td>
+                <td className="num">{available === null ? '—' : fmtHours(available)}</td>
                 <td className="num">{fmtHours(r.scheduled_minutes)}</td><td className="num">{fmtHours(r.recorded_minutes)}</td><td className="num">{fmtHours(r.approved_minutes)}</td>
-                <td style={{ minWidth: 160 }}>{pct === null ? <span className="muted">Insufficient data</span> : <><div className="bar" aria-hidden="true"><span style={{ width: `${Math.min(pct, 100)}%` }} /></div><span className="small">{pct}% planned{pct > 100 && ' — over contracted hours'}</span></>}</td>
+                <td style={{ minWidth: 160 }}>{pct === null ? <span className="muted">{available === 0 ? 'On leave all week' : 'Insufficient data'}</span> : <><div className="bar" aria-hidden="true"><span style={{ width: `${Math.min(pct, 100)}%` }} /></div><span className="small">{pct}% planned{pct > 100 && ' — over available hours'}</span></>}</td>
               </tr>
             );
           })}</tbody>

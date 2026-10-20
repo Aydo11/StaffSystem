@@ -314,6 +314,8 @@ visits.get('/workload', async (req, res) => {
   res.json(await q(`
     with w as (select ($1::date::timestamp at time zone 'Europe/London') s, (($1::date + 7)::timestamp at time zone 'Europe/London') e)
     select ap.id as appointment_id, ${name('p')} as person_name, p.id as person_id, ap.job_title, c.name as company_name, c.code as company_code, ap.contracted_hours_per_week,
+           (select count(*) from generate_series($1::date, $1::date + 6, interval '1 day') d
+             where extract(isodow from d) < 6 and exists (select 1 from leave_requests l where l.person_id = p.id and l.status = 'approved' and d::date between l.start_date and l.end_date))::int as leave_days,
            (select coalesce(sum(s.planned_minutes), 0) from scheduled_visits s, w where s.appointment_id = ap.id and s.status <> 'cancelled' and s.planned_start >= w.s and s.planned_start < w.e)::int as scheduled_minutes,
            ((select coalesce(sum(${MINUTES('v')}), 0) from visits v, w where v.appointment_id = ap.id and v.status in ('submitted','approved') and v.started_at >= w.s and v.started_at < w.e)
             + (select coalesce(sum(t.minutes), 0) from time_entries t where t.appointment_id = ap.id and t.status <> 'rejected' and t.work_date >= $1::date and t.work_date < $1::date + 7))::int as recorded_minutes,

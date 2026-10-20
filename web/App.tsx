@@ -20,6 +20,8 @@ import { Finance, FinanceDocument } from './pages/Finance.tsx';
 import { Conversation, Messages, News } from './pages/Messages.tsx';
 import { Assistant } from './pages/Assistant.tsx';
 import { InstallPage } from './pages/DataTools.tsx';
+import { JobDescriptionPage } from './pages/Development.tsx';
+import { LeavePage } from './pages/Leave.tsx';
 import { CourseEditor, CoursePlayer, Training } from './pages/Training.tsx';
 import { Properties, PropertyPage } from './pages/Properties.tsx';
 import { TaskPage, Tasks } from './pages/Tasks.tsx';
@@ -68,6 +70,7 @@ const NAV: { to: string; label: string; icon: string; show?: (h: ReturnType<type
   { to: '/attendance', label: 'Visits & attendance', icon: 'clock' },
   { to: '/tasks', label: 'Tasks', icon: 'tasks' },
   { to: '/timesheets', label: 'Timesheets', icon: 'calendar' },
+  { to: '/leave', label: 'Leave', icon: 'calendar' },
   { to: '/handover', label: 'Handover', icon: 'note' },
   { to: '/performance', label: 'Performance', icon: 'check' },
   { to: '/training', label: 'Training', icon: 'file' },
@@ -170,6 +173,8 @@ function Shell() {
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/tasks/:id" element={<TaskPage />} />
             <Route path="/timesheets" element={<Timesheets />} />
+            <Route path="/leave" element={<LeavePage />} />
+            <Route path="/job-descriptions/:id" element={<JobDescriptionPage />} />
             <Route path="/workload" element={<Workload />} />
             <Route path="/handover" element={<Handover />} />
             <Route path="/performance" element={<Performance />} />

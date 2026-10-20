@@ -4,6 +4,7 @@ import { ApiError, api, patch, post, upload, useApi, useSubmit } from '../api.ts
 import { fmtDate, label, londonToday, money } from '../format.ts';
 import { useHub } from '../hub.tsx';
 import { AccessLinkNotice, PersonDataActions, SignInAccess } from './DataTools.tsx';
+import { DevelopmentTab } from './Development.tsx';
 import { Avatar, Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 export function People() {
@@ -103,18 +104,18 @@ function InviteDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () =
 }
 
 // ── Person page / My Profile ──
-type PTab = 'profile' | 'appointments' | 'clearance' | 'personal';
+type PTab = 'profile' | 'appointments' | 'development' | 'clearance' | 'personal';
 export function PersonPage({ self }: { self?: boolean }) {
   const hub = useHub();
   const params = useParams();
   const id = self ? hub.me.person.id : params.id!;
   const d = useApi<any>(`/people/${id}`);
-  const [tab, setTab] = useState<PTab>('profile');
+  const [tab, setTab] = useState<PTab>(() => (new URLSearchParams(location.search).get('tab') as PTab) || 'profile');
   if (d.error) return <LoadError error={d.error} retry={d.reload} />;
   if (!d.data) return <Skeleton lines={8} />;
   const { person: p, can, clearance, restricted, checks } = d.data;
   const isMe = id === hub.me.person.id;
-  const tabs: [PTab, string][] = [['profile', 'Profile'], ['appointments', 'Appointments'], ...(clearance ? [['clearance', checks ? 'Clearance & checks' : 'Clearance'] as [PTab, string]] : []), ...(restricted ? [['personal', 'Personal details'] as [PTab, string]] : [])];
+  const tabs: [PTab, string][] = [['profile', 'Profile'], ['appointments', 'Appointments'], ['development', 'Development'], ...(clearance ? [['clearance', checks ? 'Clearance & checks' : 'Clearance'] as [PTab, string]] : []), ...(restricted ? [['personal', 'Personal details'] as [PTab, string]] : [])];
   return (
     <>
       <PageHead title={isMe ? 'My Profile' : p.full_name} crumbs={isMe ? undefined : [['People', '/people'], [p.full_name]]}
@@ -128,6 +129,7 @@ export function PersonPage({ self }: { self?: boolean }) {
       <div role="tabpanel">
         {tab === 'profile' && <ProfileTab d={d.data} isMe={isMe} reload={d.reload} />}
         {tab === 'appointments' && <AppointmentsTab d={d.data} isMe={isMe} reload={d.reload} />}
+        {tab === 'development' && <DevelopmentTab personId={id} isMe={isMe} />}
         {tab === 'clearance' && <ClearanceTab d={d.data} reload={d.reload} />}
         {tab === 'personal' && <PersonalTab d={d.data} reload={d.reload} editable={can.editRestricted} />}
       </div>

@@ -40,6 +40,7 @@ export async function api<T = any>(method: string, url: string, body?: unknown):
 export const get = <T = any>(url: string) => api<T>('GET', url);
 export const post = <T = any>(url: string, body: unknown = {}) => api<T>('POST', url, body);
 export const patch = <T = any>(url: string, body: unknown) => api<T>('PATCH', url, body);
+export const put = <T = any>(url: string, body: unknown) => api<T>('PUT', url, body);
 
 // Upload with real progress (fetch cannot report upload progress).
 export async function upload<T = any>(url: string, file: Blob | null, name: string, onProgress?: (pct: number) => void, fields: Record<string, string> = {}): Promise<T> {

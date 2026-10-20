@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { q } from '../db.ts';
 import { LONDON_TODAY } from '../http.ts';
-import { type Access, scope } from '../perm.ts';
+import { ACTIVE_APPT, type Access, scope } from '../perm.ts';
 
 export type InboxItem = { kind: string; title: string; company_id: string; company_name: string; company_code: string; due: string | null; owner: string; next_step: string; link: string; severity: 'action' | 'review' | 'info' };
 
@@ -127,6 +127,25 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
               'Check their email address. They still have the in-app notification.' next_step, '/people/' || p.id link, 'review' severity
          from outbound_messages o join people p on p.id = o.person_id join companies c on c.id = o.company_id
         where o.status = 'failed' and o.updated_at > now() - interval '14 days' and o.company_id = any($1::uuid[])`, [scope(a, 'messaging.configure', company)]),
+    q(`select 'leave_review' kind, ${name('p')} || ' asked for ' || replace(l.kind, '_', ' ') || ' leave, ' || to_char(l.start_date, 'DD Mon') || '–' || to_char(l.end_date, 'DD Mon') title, ${C}, l.start_date::text due,
+              'You (approver)' owner, 'Check cover for their planned visits, then approve or reject' next_step, '/leave' link, case when l.start_date <= ${LONDON_TODAY} + 7 then 'action' else 'review' end severity
+         from leave_requests l join companies c on c.id = l.company_id join people p on p.id = l.person_id
+        where l.status = 'requested' and l.company_id = any($1::uuid[]) and l.person_id <> $2`, [scope(a, 'leave.approve', company), me]),
+    q(`select 'jd_acknowledge' kind, 'Read and acknowledge your job description: ' || j.title || ' (v' || j.version || ')' title, ${C}, (j.published_at at time zone 'Europe/London')::date::text due,
+              'You' owner, 'Read it, then press Acknowledge' next_step, '/job-descriptions/' || j.id link, 'action' severity
+         from appointments ap join job_descriptions j on j.root_id = ap.job_description_root_id and j.status = 'published' join companies c on c.id = ap.company_id
+        where ap.person_id = $1 and ${ACTIVE_APPT('ap')} and ap.company_id = any($2::uuid[])
+          and not exists (select 1 from jd_acknowledgements k where k.job_description_id = j.id and k.person_id = $1)`, [me, mine]),
+    q(`select 'probation_due' kind, initcap(r.kind) || ' probation review: ' || ${name('p')} title, ${C}, r.due_on::text due, 'You (manager or HR)' owner,
+              'Meet them, then record the outcome on their profile' next_step, '/people/' || p.id || '?tab=development' link, case when r.due_on < ${LONDON_TODAY} then 'action' else 'review' end severity
+         from probation_reviews r join appointments ap on ap.id = r.appointment_id join people p on p.id = ap.person_id join companies c on c.id = ap.company_id
+        where r.outcome = 'pending' and r.due_on <= ${LONDON_TODAY} + 14 and ap.company_id = any($1::uuid[]) and ap.person_id <> $2 and ${ACTIVE_APPT('ap')}`, [scope(a, 'onboarding.manage', company), me]),
+    q(`select distinct on (x.person_id, x.competency_id) 'competence_review' kind, 'Competence review due: ' || k.name || ' (' || ${name('p')} || ')' title, ${C}, x.review_due::text due, 'You (assessor)' owner,
+              'Observe their practice and record a new assessment' next_step, '/people/' || p.id || '?tab=development' link, 'review' severity
+         from competency_assessments x join competencies k on k.id = x.competency_id join people p on p.id = x.person_id join companies c on c.id = k.company_id
+        where k.company_id = any($1::uuid[]) and x.person_id <> $2
+          and x.review_due <= ${LONDON_TODAY} + 14 and not exists (select 1 from competency_assessments y where y.person_id = x.person_id and y.competency_id = x.competency_id and y.assessed_on > x.assessed_on)
+        order by x.person_id, x.competency_id`, [scope(a, 'competence.assess', company), me]),
   ]);
   return sets.flat() as InboxItem[];
 }

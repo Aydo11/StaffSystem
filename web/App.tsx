@@ -9,6 +9,7 @@ import { Attendance, VisitDetail, ActiveVisit, ManualVisit } from './pages/Visit
 import { Handover } from './pages/Handover.tsx';
 import { Inbox, Notifications } from './pages/Inbox.tsx';
 import { Login, MfaGate, SetPassword } from './pages/Login.tsx';
+import { ActivityPage } from './pages/Activity.tsx';
 import { MyDay } from './pages/MyDay.tsx';
 import { People, PersonPage, Resume } from './pages/People.tsx';
 import { Performance } from './pages/Performance.tsx';
@@ -67,6 +68,7 @@ const NAV: { to: string; label: string; icon: string; show?: (h: ReturnType<type
   { to: '/', label: 'My Day', icon: 'home' },
   { to: '/news', label: 'News', icon: 'note' },
   { to: '/properties', label: 'Properties', icon: 'building' },
+  { to: '/activity', label: 'Activity & Calendar', icon: 'calendar' },
   { to: '/attendance', label: 'Visits & attendance', icon: 'clock' },
   { to: '/tasks', label: 'Tasks', icon: 'tasks' },
   { to: '/timesheets', label: 'Timesheets', icon: 'calendar' },
@@ -169,6 +171,7 @@ function Shell() {
             <Route path="/visit" element={<ActiveVisit />} />
             <Route path="/visits/new" element={<ManualVisit />} />
             <Route path="/visits/:id" element={<VisitDetail />} />
+            <Route path="/activity" element={<ActivityPage />} />
             <Route path="/attendance" element={<Attendance />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/tasks/:id" element={<TaskPage />} />
@@ -363,3 +366,4 @@ function ToastAgentShell() {
     </div>
   );
 }
+

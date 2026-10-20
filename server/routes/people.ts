@@ -256,6 +256,75 @@ people.delete('/people/:id/documents/:fileId', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Overview at the top of a profile: availability, usual hours and the CPD roadmap ──
+// Core learning everyone in supported housing is expected to hold, in roadmap order. A training record counts towards a step
+// when its title contains one of the step's words; it is ticked once it is evidenced (a passed Hub course or a verified certificate).
+// shortcut: matching is by title words, so a record must be named sensibly; link records to steps if titles prove unreliable.
+export const CPD_STEPS = [
+  { key: 'safeguarding', title: 'Safeguarding adults', words: ['safeguard'] },
+  { key: 'health_safety', title: 'Health and safety', words: ['health and safety', 'health & safety'] },
+  { key: 'first_aid', title: 'First aid', words: ['first aid'] },
+  { key: 'fire_safety', title: 'Fire safety', words: ['fire'] },
+  { key: 'data_protection', title: 'Data protection (GDPR)', words: ['gdpr', 'data protection'] },
+  { key: 'mental_health', title: 'Mental health awareness', words: ['mental health'] },
+  { key: 'equality', title: 'Equality, diversity and inclusion', words: ['equality', 'diversity'] },
+  { key: 'lone_working', title: 'Lone working', words: ['lone work'] },
+  { key: 'infection', title: 'Infection prevention and control', words: ['infection'] },
+  { key: 'substances', title: 'Drug and alcohol awareness', words: ['drug', 'alcohol', 'substance'] },
+] as const;
+const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
+const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a 24-hour time such as 09:00');
+const workingHours = z.object(Object.fromEntries(DAYS.map((d) => [d, z.tuple([hhmm, hhmm]).refine(([a, b]) => a < b, 'The finish must be after the start').optional()])) as Record<(typeof DAYS)[number], any>).strict();
+
+export function cpdRoadmap(records: { id: string; title: string; source: string; completed_on: string; certificate_file_id: string | null; verified_at: string | null }[]) {
+  const done = (r: (typeof records)[number]) => r.source === 'course' || !!r.verified_at;
+  const used = new Set<string>();
+  const steps = CPD_STEPS.map((s) => {
+    const hits = records.filter((r) => s.words.some((w) => r.title.toLowerCase().includes(w)));
+    const r = hits.find(done) ?? hits[0]; // records arrive newest first
+    if (r) used.add(r.id);
+    return { key: s.key, title: s.title, status: !r ? 'todo' : done(r) ? 'done' : 'awaiting', record: r ?? null };
+  });
+  return { steps, other: records.filter((r) => done(r) && !used.has(r.id)) };
+}
+
+people.get('/people/:id/overview', async (req, res) => {
+  const a = req.access;
+  const id = idParam(req.params.id);
+  const p = await visiblePerson(a, id);
+  const self = id === a.personId;
+  const now = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map((x) => [x.type, x.value]));
+  const day = now.weekday.toLowerCase().slice(0, 3) as (typeof DAYS)[number];
+  const today: [string, string] | undefined = p.working_hours?.[day];
+  // Leave shows only as "away" with dates: the kind of leave (sickness, for example) is not shared.
+  const [awayNow, upcoming, onVisit] = await Promise.all([
+    one<{ end_date: string }>(`select end_date from leave_requests where person_id = $1 and status = 'approved' and ${LONDON_TODAY} between start_date and end_date order by end_date desc limit 1`, [id]),
+    q(`select start_date, end_date from leave_requests where person_id = $1 and status = 'approved' and start_date > ${LONDON_TODAY} order by start_date limit 5`, [id]),
+    one(`select 1 from visits where person_id = $1 and status = 'in_progress'`, [id]),
+  ]);
+  const time = `${now.hour}:${now.minute}`;
+  const status = awayNow ? 'away' : onVisit ? 'on_visit' : today && time >= today[0] && time < today[1] ? 'available' : 'off';
+  const trainingCos = await sharedCompanies(a, id, 'training.view_all');
+  const cpd = self || trainingCos.length
+    ? cpdRoadmap(await q('select id, title, source, completed_on, certificate_file_id, verified_at from training_records where person_id = $1 order by completed_on desc, created_at desc', [id]))
+    : null;
+  res.json({
+    availability: { status, away_until: awayNow?.end_date ?? null, today: today ?? null, day },
+    working_hours: p.working_hours ?? {}, upcoming_leave: upcoming, cpd,
+    can: { editHours: self || (await sharedCompanies(a, id, 'staff.edit')).length > 0, addEvidence: self, verify: !self && (await sharedCompanies(a, id, 'training.manage')).length > 0 },
+  });
+});
+
+people.put('/people/:id/working-hours', async (req, res) => {
+  const id = idParam(req.params.id);
+  await visiblePerson(req.access, id);
+  if (id !== req.access.personId) await needOnPerson(req.access, id, 'staff.edit');
+  const b = parse(workingHours, req.body);
+  await q('update people set working_hours = $2, updated_at = now() where id = $1', [id, JSON.stringify(b)]);
+  await audit(pool, req.person.id, null, 'person', id, 'working_hours', b);
+  res.json({ working_hours: b });
+});
+
 // ── Proposed profile changes (staff propose; HR verifies) ──
 const proposable = z.object({
   field: z.enum(['preferred_name', 'professional_summary', 'work_phone', 'skills', 'languages', 'development_goals']),

@@ -64,28 +64,38 @@ function Session() {
   return <HubCtx.Provider value={hub}><Shell /></HubCtx.Provider>;
 }
 
-const NAV: { to: string; label: string; icon: string; show?: (h: ReturnType<typeof useHub>) => boolean }[] = [
-  { to: '/', label: 'My Day', icon: 'home' },
-  { to: '/news', label: 'News', icon: 'note' },
-  { to: '/properties', label: 'Properties', icon: 'building' },
-  { to: '/activity', label: 'Activity & Calendar', icon: 'calendar' },
-  { to: '/attendance', label: 'Visits & attendance', icon: 'clock' },
-  { to: '/tasks', label: 'Tasks', icon: 'tasks' },
-  { to: '/timesheets', label: 'Timesheets', icon: 'calendar' },
-  { to: '/leave', label: 'Leave', icon: 'calendar' },
-  { to: '/handover', label: 'Handover', icon: 'note' },
-  { to: '/performance', label: 'Performance', icon: 'check' },
-  { to: '/training', label: 'Training', icon: 'file' },
-  { to: '/policies', label: 'Policies & handbooks', icon: 'shield' },
-  { to: '/estates', label: 'Repairs & safety', icon: 'building' },
-  { to: '/governance', label: 'Governance', icon: 'check', show: (h) => h.can('governance.view') },
-  { to: '/concerns', label: 'Concerns', icon: 'note' },
-  { to: '/finance', label: 'Finance & expenses', icon: 'file' },
-  { to: '/assistant', label: 'AI assistant', icon: 'search' },
-  { to: '/inbox', label: 'Needs Your Review', icon: 'inbox' },
-  { to: '/people', label: 'People', icon: 'users' },
-  { to: '/workload', label: 'Workload', icon: 'calendar', show: (h) => h.can('visits.view_all') },
+// Grouped so the sidebar reads as a few clear areas rather than one long list. People sits high: it is used most.
+const NAV: { to: string; label: string; icon: string; group: string; show?: (h: ReturnType<typeof useHub>) => boolean }[] = [
+  { to: '/', label: 'My Day', icon: 'home', group: '' },
+  { to: '/inbox', label: 'Needs Your Review', icon: 'inbox', group: '' },
+  { to: '/news', label: 'News', icon: 'note', group: '' },
+  { to: '/people', label: 'People', icon: 'users', group: 'People' },
+  { to: '/performance', label: 'Performance', icon: 'check', group: 'People' },
+  { to: '/workload', label: 'Workload', icon: 'tasks', group: 'People', show: (h) => h.can('visits.view_all') },
+  { to: '/properties', label: 'Properties', icon: 'building', group: 'Properties & visits' },
+  { to: '/attendance', label: 'Visits & attendance', icon: 'clock', group: 'Properties & visits' },
+  { to: '/tasks', label: 'Tasks', icon: 'tasks', group: 'Properties & visits' },
+  { to: '/handover', label: 'Handover', icon: 'note', group: 'Properties & visits' },
+  { to: '/estates', label: 'Repairs & safety', icon: 'shield', group: 'Properties & visits' },
+  { to: '/activity', label: 'Calendar & activity', icon: 'calendar', group: 'Time & leave' },
+  { to: '/timesheets', label: 'Timesheets', icon: 'clock', group: 'Time & leave' },
+  { to: '/leave', label: 'Leave', icon: 'calendar', group: 'Time & leave' },
+  { to: '/training', label: 'Training', icon: 'check', group: 'Learning & policies' },
+  { to: '/policies', label: 'Policies & handbooks', icon: 'file', group: 'Learning & policies' },
+  { to: '/governance', label: 'Governance', icon: 'shield', group: 'Organisation', show: (h) => h.can('governance.view') },
+  { to: '/concerns', label: 'Concerns', icon: 'note', group: 'Organisation' },
+  { to: '/finance', label: 'Finance & expenses', icon: 'file', group: 'Organisation' },
+  { to: '/assistant', label: 'AI assistant', icon: 'search', group: 'Organisation' },
 ];
+// The visible pages, in groups, in NAV order.
+const navGroups = (hub: ReturnType<typeof useHub>) => {
+  const out: [string, typeof NAV][] = [];
+  for (const n of NAV.filter((x) => !x.show || x.show(hub))) {
+    if (out.at(-1)?.[0] !== n.group) out.push([n.group, []]);
+    out.at(-1)![1].push(n);
+  }
+  return out;
+};
 
 function Shell() {
   const hub = useHub();
@@ -126,10 +136,15 @@ function Shell() {
       <aside className="sidebar" aria-label="Main navigation">
         <Link to="/" className="brand"><span className="brand-mark" aria-hidden="true">VW</span><span className="brand-text"><strong>Valor &amp; Wellbeing Hub</strong><span>People · Performance · Properties · Governance</span></span></Link>
         <nav aria-label="Primary">
-          {NAV.filter((n) => !n.show || n.show(hub)).map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.to === '/'} className="nav-link" title={collapsed ? n.label : undefined}>
-              <Icon name={n.icon} /><span className="nav-label">{n.label}</span>{n.to === '/inbox' && inboxCount > 0 && <span className="count" aria-label={`${inboxCount} items`}>{inboxCount}</span>}
-            </NavLink>
+          {navGroups(hub).map(([g, items]) => (
+            <div key={g || 'top'} className="nav-group" role={g ? 'group' : undefined} aria-label={g || undefined}>
+              {g && <div className="nav-section" aria-hidden="true">{g}</div>}
+              {items.map((n) => (
+                <NavLink key={n.to} to={n.to} end={n.to === '/'} className="nav-link" title={collapsed ? n.label : undefined}>
+                  <Icon name={n.icon} /><span className="nav-label">{n.label}</span>{n.to === '/inbox' && inboxCount > 0 && <span className="count" aria-label={`${inboxCount} items`}>{inboxCount}</span>}
+                </NavLink>
+              ))}
+            </div>
           ))}
           {selected?.support_system_url && <a className="nav-link" href={selected.support_system_url} target="_blank" rel="noopener noreferrer"><Icon name="link" /><span className="nav-label">Open Support System<span className="sr-only"> (opens in a new tab; separate system and sign-in)</span></span></a>}
         </nav>
@@ -295,7 +310,12 @@ function MoreSheet({ onClose, isAdmin, inboxCount }: { onClose: () => void; isAd
     <dialog ref={ref} className="panel" aria-label="More" onClose={onClose}>
       <div className="dialog-head"><h2>More</h2><button className="btn ghost icon-btn" onClick={onClose} aria-label="Close"><Icon name="x" /></button></div>
       <div className="dialog-body">
-        {NAV.filter((n) => !n.show || n.show(hub)).map((n) => <Link key={n.to} to={n.to} className="btn secondary block" style={{ marginBottom: 8, justifyContent: 'flex-start' }}><Icon name={n.icon} />{n.label}{n.to === '/inbox' && inboxCount > 0 && ` (${inboxCount})`}</Link>)}
+        {navGroups(hub).map(([g, items]) => (
+          <section key={g || 'top'} aria-label={g || 'Main'}>
+            {g && <h3 className="small muted" style={{ margin: '16px 0 8px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{g}</h3>}
+            {items.map((n) => <Link key={n.to} to={n.to} className="btn secondary block" style={{ marginBottom: 8, justifyContent: 'flex-start' }}><Icon name={n.icon} />{n.label}{n.to === '/inbox' && inboxCount > 0 && ` (${inboxCount})`}</Link>)}
+          </section>
+        ))}
         {sel?.support_system_url && <a className="btn secondary block" style={{ marginBottom: 8, justifyContent: 'flex-start' }} href={sel.support_system_url} target="_blank" rel="noopener noreferrer"><Icon name="link" />Open Support System</a>}
         {isAdmin && <Link to="/admin" className="btn block" style={{ justifyContent: 'flex-start' }}><Icon name="settings" />Admin Centre</Link>}
       </div>

@@ -5,7 +5,7 @@ import { addDays, fmtDate, fmtDateTime, fmtDay, fmtElapsed, fmtMinutes, fmtTime,
 import { useHub } from '../hub.tsx';
 import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, PhotoGrid, Skeleton, Status, useToast } from '../ui.tsx';
 
-export const CATEGORIES: [string, string][] = [['inspection', 'Inspection'], ['maintenance', 'Maintenance'], ['cleaning', 'Cleaning'], ['key_handover', 'Key handover'], ['property_check', 'Property check'], ['administration', 'Administration'], ['other', 'Other']];
+export const CATEGORIES: [string, string][] = [['support_work', 'Support work'], ['inspection', 'Inspection'], ['maintenance', 'Maintenance'], ['cleaning', 'Cleaning'], ['key_handover', 'Key handover'], ['property_check', 'Property check'], ['administration', 'Administration'], ['other', 'Other']];
 const SUMMARY_HINT = 'Property work only, in a sentence or two. Do not record resident names or support matters here — those belong in the support system.';
 
 const PHOTO_HINT = 'Optional. Photos of the property and the work only — never of residents or their belongings. JPEG, PNG or WebP, up to 10 MB each.';
@@ -18,6 +18,7 @@ function WorkType({ value, onChange, error }: { value: string; onChange: (v: str
       <legend>Type of work</legend>
       {error && <span className="err" id="wt-err">Error: {error}</span>}
       <Chips label="Type of work" value={value} onChange={onChange} options={CATEGORIES as [string, string][]} />
+      {value === 'support_work' && <span className="hint" style={{ marginTop: 8 }}>Support work is approved automatically — no manager review needed.</span>}
     </fieldset>
   );
 }
@@ -115,7 +116,7 @@ export function ActiveVisit() {
     <div className="card" style={{ maxWidth: 560, margin: '0 auto', textAlign: 'center' }}>
       <span className="done-check" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M4 12l5 5L20 6" /></svg></span>
       <h1 id="page-title" tabIndex={-1} style={{ marginTop: 16 }}>Visit saved</h1>
-      <p>{fmtMinutes(done.minutes)} recorded ({fmtTime(done.started_at)}–{fmtTime(done.ended_at)}){done.photos > 0 && <> with {done.photos} photo{done.photos === 1 ? '' : 's'}</>}. It is now waiting for your manager’s review.</p>
+      <p>{fmtMinutes(done.minutes)} recorded ({fmtTime(done.started_at)}–{fmtTime(done.ended_at)}){done.photos > 0 && <> with {done.photos} photo{done.photos === 1 ? '' : 's'}</>}. {done.status === 'approved' ? 'Support work is approved automatically, so it already counts towards your timesheet.' : 'It is now waiting for your manager’s review.'}</p>
       {done.failed > 0 && <p className="notice warn">{done.failed} photo{done.failed === 1 ? '' : 's'} did not upload. Open the visit to add {done.failed === 1 ? 'it' : 'them'} again.</p>}
       <div className="row" style={{ justifyContent: 'center' }}><Link className="btn" to="/">Back to My Day</Link><Link className="btn secondary" to={`/visits/${done.id}`}>View visit</Link></div>
     </div>
@@ -223,7 +224,7 @@ export function ManualVisit() {
       const r = await post('/visits/manual', { property_id: f.property_id, appointment_id: f.appointment_id, start_local: `${f.date}T${f.time}`, minutes, work_category: f.work_category, summary: f.summary, client_request_id: requestId.current, confirm_unusual: confirmUnusual || undefined });
       remember('lastProperty', f.property_id); remember('lastWorkType', f.work_category); remember('lastDuration', f.preset);
       const failed = photos.length && !r.duplicate ? await uploadPhotos(r.visit.id, photos, setProgress) : 0;
-      toast(r.duplicate ? 'This visit was already saved.' : failed ? `Visit saved. ${failed} photo${failed === 1 ? '' : 's'} did not upload — add ${failed === 1 ? 'it' : 'them'} again on the visit.` : `Visit saved${photos.length ? ` with ${photos.length} photo${photos.length === 1 ? '' : 's'}` : ''} and sent for review.`);
+      toast(r.duplicate ? 'This visit was already saved.' : failed ? `Visit saved. ${failed} photo${failed === 1 ? '' : 's'} did not upload — add ${failed === 1 ? 'it' : 'them'} again on the visit.` : `Visit saved${photos.length ? ` with ${photos.length} photo${photos.length === 1 ? '' : 's'}` : ''} ${r.visit.status === 'approved' ? 'and approved automatically (support work)' : 'and sent for review'}.`);
       nav(`/visits/${r.visit.id}`);
     } catch (e) {
       if (e instanceof ApiError && e.code === 'unusual_duration') setConfirmUnusual(false);

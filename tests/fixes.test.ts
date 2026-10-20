@@ -1,4 +1,4 @@
-// Regression tests for audit findings 1–3.
+// Regression tests for audit findings 1–3, 5, 8 and 10.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { A, as, P, pool, resetDb, V } from './helpers.ts';
 
@@ -54,5 +54,29 @@ describe('audit 3 · replacing a photo', () => {
     expect((await sam.get(`/api/people/${P.sam}/photo`)).status).toBe(200);
     expect((await sam.del(`/api/people/${P.sam}/photo`)).status).toBe(200);
     expect((await pool.query(`select count(*)::int n from file_blobs`)).rows[0].n).toBe(0);
+  });
+});
+
+describe('audit 5, 8, 10', () => {
+  it('the database refuses a second live visit overlapping the first (two simultaneous requests cannot both win)', async () => {
+    const copy = `insert into visits (person_id, appointment_id, company_id, property_id, entry_mode, status, started_at, ended_at, work_category, summary)
+                  select person_id, appointment_id, company_id, property_id, entry_mode, 'submitted', started_at + interval '10 minutes', ended_at, work_category, summary from visits where id = $1`;
+    await expect(pool.query(copy, [V.d01])).rejects.toMatchObject({ code: '23P01' });
+    await pool.query(`update visits set status = 'cancelled' where id = $1`, [V.d01]);
+    await expect(pool.query(copy, [V.d01])).resolves.toBeTruthy(); // cancelled visits do not block
+  });
+  it('only a manager can reopen a completed task, so a recurring task cannot spawn its next copy twice', async () => {
+    const t = (await (await as('priya')).post('/api/tasks').send({ company_id: '00000000-0000-4000-8000-0000000000c1', title: 'Weekly fire check', owner_id: P.sam, due_on: '2026-10-21', recurrence: 'weekly' })).body;
+    const sam = await as('sam');
+    expect((await sam.patch(`/api/tasks/${t.id}`).send({ status: 'completed' })).status).toBe(200);
+    expect((await sam.patch(`/api/tasks/${t.id}`).send({ status: 'in_progress' })).status).toBe(403);
+    expect((await pool.query(`select count(*)::int n from tasks where title = 'Weekly fire check'`)).rows[0].n).toBe(2);
+  });
+  it('keys can only be issued to current staff of the property’s company', async () => {
+    const alex = await as('alex');
+    const prop = (await pool.query(`select id from properties where company_id = '00000000-0000-4000-8000-0000000000c1' limit 1`)).rows[0].id;
+    const key = (await alex.post(`/api/properties/${prop}/keys`).send({ label: 'Front door' })).body;
+    expect((await alex.post(`/api/keys/${key.id}/issue`).send({ holder_person_id: P.agent })).status).toBe(400);
+    expect((await alex.post(`/api/keys/${key.id}/issue`).send({ holder_person_id: P.sam })).status).toBe(200);
   });
 });

@@ -48,7 +48,6 @@ export async function loadAccess(personId: string, db: Db = pool): Promise<Acces
 export const can = (a: Access, perm: string, companyId: string | null | undefined) => !!companyId && !!a.perms.get(companyId)?.has(perm);
 export const companiesWith = (a: Access, perm: string) => [...a.perms].filter(([, p]) => p.has(perm)).map(([c]) => c);
 export const myCompanies = (a: Access) => [...a.perms.keys()];
-export const inCompany = (a: Access, companyId: string | null | undefined) => !!companyId && a.perms.has(companyId);
 export function need(a: Access, perm: string, companyId: string | null | undefined) {
   if (!can(a, perm, companyId)) throw forbidden();
 }

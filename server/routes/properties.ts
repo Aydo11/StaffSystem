@@ -144,6 +144,9 @@ properties.post('/keys/:id/:action', async (req, res) => {
   if (action === 'issue') {
     const { holder_person_id } = parse(z.object({ holder_person_id: uuid }), req.body);
     if (k.holder_person_id && !k.returned_at && !k.lost_reported_at) throw conflict('This key is already issued. Record its return first.');
+    // Only current staff of the property's company, so keys appear on the right leaver checklist.
+    if (!(await one(`select 1 from appointments a where a.person_id = $1 and a.company_id = $2 and ${ACTIVE_APPT('a')}`, [holder_person_id, k.company_id])))
+      throw bad('Keys can only be issued to someone with a current appointment in this property’s company.', { fields: { holder_person_id: 'Not current staff here' } });
     await q('update property_keys set holder_person_id = $2, issued_at = now(), returned_at = null, lost_reported_at = null where id = $1', [id, holder_person_id]);
   } else if (action === 'return') {
     await q('update property_keys set returned_at = now() where id = $1 and holder_person_id is not null', [id]);

@@ -97,6 +97,8 @@ tasks.patch('/tasks/:id', async (req, res) => {
   const ownerFields = ['status', 'checklist', 'comment', 'expected_updated_at'];
   if (!manage && Object.keys(b).some((k) => !ownerFields.includes(k))) throw forbidden('Only managers can change task details.');
   if (b.status && b.status !== t.status) {
+    // Reopening would let a recurring task spawn its next copy twice.
+    if (t.status === 'completed' && !manage) throw forbidden('Only a manager can reopen a completed task.');
     const ownerMoves = ['not_started', 'in_progress', 'submitted'];
     const reviewerMoves = ['changes_requested', 'completed'];
     if (ownerMoves.includes(b.status) && !isOwner && !manage) throw forbidden('Only the owner can move this task.');

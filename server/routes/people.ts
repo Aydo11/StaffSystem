@@ -329,7 +329,7 @@ people.post('/appointments/:id/end', async (req, res) => {
     await q(`update appointments set end_date = $2, ended_reason = $3, status = case when $4 then 'ended' else status end, updated_at = now() where id = $1`, [id, b.end_date, b.reason, past], db);
     await q('update appointment_properties set to_date = $2 where appointment_id = $1 and (to_date is null or to_date > $2)', [id, b.end_date], db);
     await q('update appointment_rates set effective_to = $2 where appointment_id = $1 and effective_to is null and effective_from <= $2', [id, b.end_date], db);
-    await q(`update scheduled_visits set status = 'cancelled' where appointment_id = $1 and status = 'scheduled' and planned_start::date > $2`, [id, b.end_date], db);
+    await q(`update scheduled_visits set status = 'cancelled' where appointment_id = $1 and status = 'scheduled' and (planned_start at time zone 'Europe/London')::date > $2`, [id, b.end_date], db);
     // Remove this company's explicit roles only if no other appointment in the same company remains. Other companies are untouched.
     const other = await one(`select 1 from appointments a where a.person_id = $1 and a.company_id = $2 and a.id <> $3 and a.status <> 'ended' and (a.end_date is null or a.end_date > $4)`, [ap.person_id, ap.company_id, id, b.end_date], db);
     let revoked = 0;

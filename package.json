@@ -12,7 +12,6 @@
     "migrate:seed": "tsx --env-file-if-exists=.env scripts/migrate.ts --seed",
     "db:reset": "tsx --env-file-if-exists=.env scripts/reset.ts",
     "test": "vitest run",
-    "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json",
     "db:local": "tsx scripts/localdb.ts",
     "create-admin": "tsx --env-file-if-exists=.env scripts/create-admin.ts"
@@ -34,8 +33,6 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.14.0",
-    "@playwright/test": "^1.64.1",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.3.0",
     "@types/node": "^26.6.5",
@@ -45,6 +42,7 @@
     "@types/react-dom": "^19.3.0",
     "@types/supertest": "^7.2.1",
     "@vitejs/plugin-react": "^6.1.2",
+    "axe-core": "^4.10.3",
     "concurrently": "^10.0.6",
     "embedded-postgres": "^18.4.0-beta.17",
     "supertest": "^7.3.1",

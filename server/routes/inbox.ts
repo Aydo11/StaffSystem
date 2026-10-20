@@ -19,11 +19,11 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
   const mine = scope(a, null, company);
 
   const sets = await Promise.all([
-    q(`select 'visit_review' kind, 'Visit by ' || ${name('p')} || ' at ' || pr.name || ' needs your review' title, ${C}, v.submitted_at::date::text due,
+    q(`select 'visit_review' kind, 'Visit by ' || ${name('p')} || ' at ' || pr.name || ' needs your review' title, ${C}, (v.submitted_at at time zone 'Europe/London')::date::text due,
               'You (approver)' owner, 'Approve or return it' next_step, '/visits/' || v.id link, 'review' severity
          from visits v join companies c on c.id = v.company_id join people p on p.id = v.person_id join properties pr on pr.id = v.property_id
         where v.status = 'submitted' and v.company_id = any($1::uuid[]) and v.person_id <> $2`, [approve, me]),
-    q(`select 'correction_review' kind, 'Correction requested by ' || ${name('p')} title, ${C}, vc.created_at::date::text due,
+    q(`select 'correction_review' kind, 'Correction requested by ' || ${name('p')} title, ${C}, (vc.created_at at time zone 'Europe/London')::date::text due,
               'You (approver)' owner, 'Compare original and proposed times, then decide' next_step, '/visits/' || v.id link, 'review' severity
          from visit_corrections vc join visits v on v.id = vc.visit_id join companies c on c.id = v.company_id join people p on p.id = vc.requested_by
         where vc.status = 'pending' and v.company_id = any($1::uuid[]) and vc.requested_by <> $2`, [approve, me]),
@@ -31,11 +31,11 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
               'You (approver)' owner, 'Approve or reject the time entry' next_step, '/timesheets?tab=review' link, 'review' severity
          from time_entries t join companies c on c.id = t.company_id join people p on p.id = t.person_id
         where t.status = 'submitted' and t.company_id = any($1::uuid[]) and t.person_id <> $2`, [approve, me]),
-    q(`select 'timesheet_review' kind, 'Timesheet from ' || ${name('p')} || ' (' || to_char(t.period_start, 'DD Mon') || '–' || to_char(t.period_end, 'DD Mon YYYY') || ')' title, ${C}, t.submitted_at::date::text due,
+    q(`select 'timesheet_review' kind, 'Timesheet from ' || ${name('p')} || ' (' || to_char(t.period_start, 'DD Mon') || '–' || to_char(t.period_end, 'DD Mon YYYY') || ')' title, ${C}, (t.submitted_at at time zone 'Europe/London')::date::text due,
               'You (approver)' owner, 'Check the hours and approve or reject' next_step, '/timesheets?tab=review' link, 'review' severity
          from timesheets t join companies c on c.id = t.company_id join people p on p.id = t.person_id
         where t.status = 'submitted' and t.company_id = any($1::uuid[]) and t.person_id <> $2`, [ts, me]),
-    q(`select 'missing_clock_out' kind, 'No finish time: ' || ${name('p')} || ' at ' || pr.name || ' since ' || to_char(v.started_at at time zone 'Europe/London', 'DD Mon HH24:MI') title, ${C}, v.started_at::date::text due,
+    q(`select 'missing_clock_out' kind, 'No finish time: ' || ${name('p')} || ' at ' || pr.name || ' since ' || to_char(v.started_at at time zone 'Europe/London', 'DD Mon HH24:MI') title, ${C}, (v.started_at at time zone 'Europe/London')::date::text due,
               case when v.person_id = $2 then 'You' else ${name('p')} end owner, 'Finish the visit or request a correction with the real finish time' next_step, '/visits/' || v.id link, 'action' severity
          from visits v join companies c on c.id = v.company_id join people p on p.id = v.person_id join properties pr on pr.id = v.property_id
         where v.status = 'in_progress' and v.started_at < now() - interval '12 hours' and (v.company_id = any($1::uuid[]) or v.person_id = $2)`, [viewAll, me]),
@@ -46,7 +46,7 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
          join appointments a on a.id = v.appointment_id left join people m on m.id = a.manager_person_id
         where v.status = 'in_progress' and v.expected_end_at < now() and v.checkin_ack_at is null and v.started_at >= now() - interval '12 hours'
           and (v.company_id = any($1::uuid[]) or v.person_id = $2)`, [viewAll, me]),
-    q(`select 'visit_returned' kind, 'Visit at ' || pr.name || ' was returned: ' || coalesce(v.decision_note, 'no note') title, ${C}, v.decided_at::date::text due,
+    q(`select 'visit_returned' kind, 'Visit at ' || pr.name || ' was returned: ' || coalesce(v.decision_note, 'no note') title, ${C}, (v.decided_at at time zone 'Europe/London')::date::text due,
               'You' owner, 'Request a correction if the times were wrong' next_step, '/visits/' || v.id link, 'action' severity
          from visits v join companies c on c.id = v.company_id join properties pr on pr.id = v.property_id
         where v.person_id = $1 and v.status = 'rejected' and v.decided_at > now() - interval '14 days' and v.company_id = any($2::uuid[])
@@ -62,7 +62,7 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
               (t.status = 'submitted' and t.reviewer_id = $1 and t.owner_id <> $1)
            or (t.status = 'changes_requested' and t.owner_id = $1)
            or (t.status in ('not_started','in_progress') and t.owner_id = $1 and t.due_on < ${LONDON_TODAY}))`, [me, mine]),
-    q(`select distinct on (r.id) 'profile_change' kind, ${name('p')} || ' proposed a change to ' || replace(r.field, '_', ' ') title, ${C}, r.requested_at::date::text due,
+    q(`select distinct on (r.id) 'profile_change' kind, ${name('p')} || ' proposed a change to ' || replace(r.field, '_', ' ') title, ${C}, (r.requested_at at time zone 'Europe/London')::date::text due,
               'You (HR)' owner, 'Verify and approve or reject' next_step, '/people/' || p.id link, 'review' severity
          from profile_change_requests r join people p on p.id = r.person_id join appointments a on a.person_id = p.id join companies c on c.id = a.company_id
         where r.status = 'pending' and a.company_id = any($1::uuid[]) and r.person_id <> $2`, [staffEdit, me]),
@@ -81,18 +81,18 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
          from training_matrix(${LONDON_TODAY}) m join companies c on c.id = m.company_id
          left join lateral (select title from courses x where x.root_id = m.course_root_id and x.status = 'published' order by version desc limit 1) c2 on true
         where m.person_id = $1 and m.company_id = any($2::uuid[]) and (m.status = 'overdue' or (m.status in ('due','expiring') and m.due_on <= ${LONDON_TODAY} + 14))`, [me, mine]),
-    q(`select 'policy_ack' kind, 'Please read and acknowledge: ' || p.title title, ${C}, r.supplied_at::date::text due,
+    q(`select 'policy_ack' kind, 'Please read and acknowledge: ' || p.title title, ${C}, (r.supplied_at at time zone 'Europe/London')::date::text due,
               'You' owner, 'Read it, then press Acknowledge (this means you have read it, not that you agree)' next_step, '/policies/' || p.id || '?company=' || r.company_id link, 'info' severity
          from policy_receipts r join policies p on p.id = r.policy_id join companies c on c.id = r.company_id
         where r.person_id = $1 and r.acknowledged_at is null and r.company_id = any($2::uuid[]) and p.status = 'approved'
           and not exists (select 1 from policies p2 join policy_publications pp on pp.policy_id = p2.id where p2.root_id = p.root_id and p2.version > p.version and pp.company_id = r.company_id)`, [me, mine]),
-    q(`select distinct on (qa.id) 'quiz_marking' kind, 'Written answers to mark: ' || c2.title || ' (' || ${name('p')} || ')' title, ${C}, qa.submitted_at::date::text due,
+    q(`select distinct on (qa.id) 'quiz_marking' kind, 'Written answers to mark: ' || c2.title || ' (' || ${name('p')} || ')' title, ${C}, (qa.submitted_at at time zone 'Europe/London')::date::text due,
               'You (trainer)' owner, 'Mark the written answers' next_step, '/training?tab=manage' link, 'review' severity
          from quiz_attempts qa join courses c2 on c2.id = qa.course_id join people p on p.id = qa.person_id
          join appointments ap on ap.person_id = qa.person_id and ap.company_id = any($2::uuid[]) and (c2.company_id is null or c2.company_id = ap.company_id)
          join companies c on c.id = ap.company_id
         where qa.status = 'awaiting_marking' and qa.person_id <> $1`, [me, scope(a, 'training.manage', company)]),
-    q(`select distinct on (r.id) 'certificate_verify' kind, 'Certificate to verify: ' || r.title || ' (' || ${name('p')} || ')' title, ${C}, r.created_at::date::text due,
+    q(`select distinct on (r.id) 'certificate_verify' kind, 'Certificate to verify: ' || r.title || ' (' || ${name('p')} || ')' title, ${C}, (r.created_at at time zone 'Europe/London')::date::text due,
               'You (trainer)' owner, 'Check the certificate, then verify or reject it' next_step, '/training?tab=manage' link, 'review' severity
          from training_records r join people p on p.id = r.person_id join appointments ap on ap.person_id = r.person_id and ap.company_id = any($2::uuid[]) join companies c on c.id = ap.company_id
         where r.source = 'external' and r.verified_at is null and r.person_id <> $1`, [me, scope(a, 'training.manage', company)]),
@@ -101,7 +101,7 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
               '/governance/actions/' || x.id link, case when x.due_on < ${LONDON_TODAY} or x.status = 'reopened' then 'action' else 'info' end severity
          from improvement_actions x join companies c on c.id = x.company_id
         where x.owner_id = $1 and x.status in ('open','reopened') and x.company_id = any($2::uuid[])`, [me, mine]),
-    q(`select 'action_verify' kind, 'Evidence to verify: ' || x.action title, ${C}, x.evidence_at::date::text due, 'You (governance)' owner,
+    q(`select 'action_verify' kind, 'Evidence to verify: ' || x.action title, ${C}, (x.evidence_at at time zone 'Europe/London')::date::text due, 'You (governance)' owner,
               'Check the evidence, then verify it or ask for more' next_step, '/governance/actions/' || x.id link, 'review' severity
          from improvement_actions x join companies c on c.id = x.company_id
         where x.status = 'evidence_submitted' and x.company_id = any($2::uuid[]) and x.owner_id is distinct from $1`, [me, scope(a, 'governance.manage', company)]),
@@ -109,7 +109,7 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
               'Check whether the change worked and whether the issue came back' next_step, '/governance/actions/' || x.id link, 'review' severity
          from improvement_actions x join companies c on c.id = x.company_id
         where x.verified_at is not null and x.effectiveness is null and x.effectiveness_review_on <= ${LONDON_TODAY} + 7 and x.company_id = any($2::uuid[]) and x.owner_id is distinct from $1`, [me, scope(a, 'governance.manage', company)]),
-    q(`select 'case_ack' kind, 'Confidential case to acknowledge (' || replace(k.kind, '_', ' ') || ')' title, ${C}, k.created_at::date::text due, 'You (HR)' owner,
+    q(`select 'case_ack' kind, 'Confidential case to acknowledge (' || replace(k.kind, '_', ' ') || ')' title, ${C}, (k.created_at at time zone 'Europe/London')::date::text due, 'You (HR)' owner,
               'Acknowledge it and agree who will investigate' next_step, '/concerns/' || k.id link, 'action' severity
          from cases k join companies c on c.id = k.company_id
         where k.status = 'received' and k.company_id = any($2::uuid[]) and not ($1 = any(k.implicated_ids)) and k.raised_by is distinct from $1 and k.subject_person_id is distinct from $1`, [me, scope(a, 'cases.handle', company)]),
@@ -123,7 +123,7 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
          from safety_requirements sr join properties p on p.id = sr.property_id join companies c on c.id = sr.company_id
          left join lateral (select max(done_on) done_on from safety_checks sc where sc.requirement_id = sr.id) last on true
         where sr.retired_at is null and sr.company_id = any($1::uuid[]) and coalesce(last.done_on + sr.interval_days, sr.created_at::date) < ${LONDON_TODAY}`, [scope(a, 'safety.manage', company)]),
-    q(`select 'delivery_failed' kind, 'Email could not be delivered to ' || ${name('p')} title, ${C}, o.updated_at::date::text due, 'You (administrator)' owner,
+    q(`select 'delivery_failed' kind, 'Email could not be delivered to ' || ${name('p')} title, ${C}, (o.updated_at at time zone 'Europe/London')::date::text due, 'You (administrator)' owner,
               'Check their email address. They still have the in-app notification.' next_step, '/people/' || p.id link, 'review' severity
          from outbound_messages o join people p on p.id = o.person_id join companies c on c.id = o.company_id
         where o.status = 'failed' and o.updated_at > now() - interval '14 days' and o.company_id = any($1::uuid[])`, [scope(a, 'messaging.configure', company)]),

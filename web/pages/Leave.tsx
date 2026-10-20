@@ -7,6 +7,8 @@ import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadEr
 const KINDS: [string, string][] = [['annual', 'Annual leave'], ['sick', 'Sickness'], ['unpaid', 'Unpaid'], ['training', 'Training or study'], ['compassionate', 'Compassionate'], ['other', 'Other']];
 const kindLabel = (k: string) => KINDS.find(([v]) => v === k)?.[1] ?? label(k);
 const days = (l: any) => `${l.days} day${l.days === 1 ? '' : 's'}`;
+// Day and month of the first day, shown as a calendar tile (decorative: the full range is in the text).
+const Tile = ({ d }: { d: string }) => { const x = new Date(`${d}T12:00:00Z`); return <span className="date-tile" aria-hidden="true"><b>{x.getUTCDate()}</b><span>{x.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' })}</span></span>; };
 const range = (l: any) => (l.start_date === l.end_date ? fmtDate(l.start_date) : `${fmtDate(l.start_date)} – ${fmtDate(l.end_date)}`);
 
 export function LeavePage() {
@@ -67,8 +69,8 @@ function MyLeave({ l, reload }: { l: any; reload: () => void }) {
   const canCancel = ['requested', 'approved'].includes(l.status) && l.end_date >= londonToday();
   return (
     <li>
-      <span><strong>{kindLabel(l.kind)}</strong> · {range(l)} <span className="small muted">({days(l)})</span><br />
-        <span className="small muted">{l.company_name}{l.decided_by_name && ` · ${l.status === 'approved' ? 'Approved' : 'Decided'} by ${l.decided_by_name}, ${fmtDateTime(l.decided_at)}`}{l.decision_note && ` · “${l.decision_note}”`}</span></span>
+      <span className="dated"><Tile d={l.start_date} /><span><strong>{kindLabel(l.kind)}</strong> · {range(l)} <span className="small muted">({days(l)})</span><br />
+        <span className="small muted">{l.company_name}{l.decided_by_name && ` · ${l.status === 'approved' ? 'Approved' : 'Decided'} by ${l.decided_by_name}, ${fmtDateTime(l.decided_at)}`}{l.decision_note && ` · “${l.decision_note}”`}</span></span></span>
       <span className="row"><Status s={l.status} />{canCancel && <Button variant="secondary" busy={cancel.busy} onClick={() => cancel.run()} aria-label={`Cancel leave from ${fmtDate(l.start_date)}`}>Cancel</Button>}</span>
       <ErrorSummary error={cancel.error} />
     </li>

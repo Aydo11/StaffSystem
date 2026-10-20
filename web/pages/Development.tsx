@@ -58,7 +58,7 @@ function AppointmentDev({ a, isMe, reload }: { a: any; isMe: boolean; reload: ()
       <h3 style={{ fontSize: '1rem', marginTop: 16 }}>Onboarding</h3>
       {a.onboarding ? (
         <>
-          <p className="small">{done} of {items.length} done</p>
+          <div className="progress"><div className="bar" role="progressbar" aria-label="Onboarding progress" aria-valuemin={0} aria-valuemax={items.length} aria-valuenow={done}><span style={{ width: `${items.length ? (done / items.length) * 100 : 0}%` }} /></div><span className="small">{done} of {items.length} done</span></div>
           <ul className="list">{items.map((i: any) => <OnboardingItem key={i.id} i={i} editable={a.can.onboarding} reload={reload} />)}</ul>
         </>
       ) : a.can.onboarding ? <Button variant="secondary" busy={start.busy} onClick={() => start.run()} aria-label={`Start onboarding checklist for ${a.job_title}, ${a.company_name}`}>Start onboarding checklist</Button> : <p className="muted">Not started.</p>}

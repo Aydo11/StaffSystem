@@ -346,3 +346,58 @@ td { padding:16px; } tbody tr { transition:background .15s ease; } tbody tr:hove
 @media (max-width:720px) { .auth-shell { grid-template-columns:1fr; } .auth-story { padding:28px 24px; gap:24px; } .auth-story h2 { font-size:2.2rem; margin-bottom:12px; } .auth-story p { font-size:.9rem; margin:0; } .auth-art,.auth-tags { display:none; } .auth-eyebrow { margin-bottom:12px; } .auth-form-side { padding:28px 16px; } .auth-form-inner > .card { padding:24px; } .auth-story .brand { padding:0; } .auth-story .brand-text { display:block; } }
 @media (prefers-reduced-motion:reduce) { .nav-link:hover,.card-link:hover,.btn:hover:not(:disabled):not(.ghost),.prop-card:hover .prop-photo img { transform:none; } }
 }
+
+/* ── Motion and detail, pass 2 ──
+   Short (≤ 280 ms), ease-out, enter and exit symmetrical. Reduced-motion users get the 1 ms override above.
+   Keyboard-driven surfaces (command palette) stay instant. */
+@media screen {
+/* Dialogs: fade and settle out as well as in; the backdrop fades too. */
+dialog.modal, dialog.panel { transition: opacity 180ms ease, transform 200ms var(--ease-out), overlay 200ms allow-discrete, display 200ms allow-discrete; }
+dialog.modal:not([open]) { opacity: 0; transform: scale(0.97); }
+dialog.panel:not([open]) { transform: translateX(24px); opacity: 0; }
+dialog::backdrop { transition: background-color 200ms ease, overlay 200ms allow-discrete, display 200ms allow-discrete; }
+@starting-style { dialog[open]::backdrop { background-color: rgb(15 36 56 / 0); } }
+@media (max-width: 720px) { dialog.panel:not([open]), dialog.modal:not([open]) { transform: translateY(32px); } }
+
+/* Lists, table rows and tab content arrive in a quick cascade (only when first shown). */
+@keyframes item-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes row-in { from { opacity: 0; } }
+.list > li, [role='tabpanel'] > .card, [role='tabpanel'] > section { animation: item-in 260ms var(--ease-out) both; }
+tbody tr { animation: row-in 240ms ease both; }
+.list > li:nth-child(2), tbody tr:nth-child(2), [role='tabpanel'] > :nth-child(2) { animation-delay: 30ms; }
+.list > li:nth-child(3), tbody tr:nth-child(3), [role='tabpanel'] > :nth-child(3) { animation-delay: 60ms; }
+.list > li:nth-child(4), tbody tr:nth-child(4), [role='tabpanel'] > :nth-child(4) { animation-delay: 90ms; }
+.list > li:nth-child(5), tbody tr:nth-child(5) { animation-delay: 120ms; }
+.list > li:nth-child(6), tbody tr:nth-child(6) { animation-delay: 150ms; }
+.list > li:nth-child(n+7), tbody tr:nth-child(n+7) { animation-delay: 170ms; }
+
+/* Progress fills from empty; status badges change colour smoothly. */
+@starting-style { .bar > span { width: 0; } }
+.bar > span { transition: width 500ms var(--ease-out); }
+.badge { transition: background-color 200ms ease, color 200ms ease; }
+
+/* Messages ease in rather than jump. */
+@keyframes notice-in { from { opacity: 0; transform: translateY(-4px); } }
+.error-summary, .notice { animation: notice-in 220ms var(--ease-out); }
+
+/* Checklists: a ticked item settles and quietens. */
+input[type='checkbox'] { accent-color: var(--teal-text); }
+@keyframes tick { 50% { transform: scale(1.18); } }
+input[type='checkbox']:checked { animation: tick 220ms var(--ease-out); }
+.check { transition: color 200ms ease; }
+.check:has(input:checked) { color: var(--text-2); }
+
+/* Empty states: a calm tile instead of bare text. */
+.empty::before { content: ''; display: block; width: 56px; height: 56px; margin: 0 auto var(--s3); border-radius: 16px;
+  background: var(--teal-50) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230a6b61' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 13h4l2 3h4l2-3h4'/%3E%3Cpath d='M5.5 6h13L21 13v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5z'/%3E%3C/svg%3E") center / 26px no-repeat; }
+
+/* Date tile, used for leave and other dated entries. */
+.date-tile { display: grid; place-items: center; align-content: center; width: 52px; height: 56px; flex: none; border-radius: 12px; background: var(--teal-50); color: var(--teal-text); line-height: 1.05; text-align: center; }
+.date-tile b { font-size: 1.35rem; letter-spacing: -0.03em; }
+.date-tile span { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.dated { display: flex; gap: var(--s3); align-items: center; }
+
+/* Labelled progress (onboarding). */
+.progress { display: flex; align-items: center; gap: var(--s3); margin-bottom: var(--s3); }
+.progress .bar { flex: 1; max-width: 320px; }
+}

@@ -2,8 +2,8 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { hashPassword, newToken, sha256, verifyPassword } from '../crypto.ts';
-import { one, q, tx } from '../db.ts';
-import { audit, bad, conflict, forbidden, HttpError, idParam, LONDON_TODAY, notFound, parse, text, uuid } from '../http.ts';
+import { one, pool, q, tx } from '../db.ts';
+import { audit, bad, conflict, forbidden, HttpError, idParam, LONDON_TODAY, notFound, notify, parse, text, uuid } from '../http.ts';
 import { emailReady, sendEmail } from '../outbox.ts';
 import { ACTIVE_APPT, companiesWith, need } from '../perm.ts';
 
@@ -57,11 +57,24 @@ registrationPublic.post('/auth/resend-verification', limit, async (req, res) => 
   res.status(202).json({ ok: true });
 });
 
+// Super admins, and people who can add staff in the requested company, get a notification and an email.
+async function tellApprovers(id: string) {
+  const r = await one('select full_name, job_title, company_id from staff_registrations where id = $1', [id]);
+  const to = await q<{ id: string; email: string }>(`select distinct p.id, p.email from role_grants g join people p on p.id = g.person_id and p.status = 'active'
+      left join role_permissions rp on rp.role_key = g.role_key
+     where g.revoked_at is null and (g.expires_at is null or g.expires_at > now())
+       and (g.role_key = 'super_admin' or (rp.permission_key = 'staff.create' and g.company_id = $1))`, [r.company_id]);
+  for (const a of to) {
+    await notify(pool, a.id, r.company_id, `New sign-up request: ${r.full_name} (${r.job_title})`, '/admin/requests');
+    if (emailReady() && a.email) await sendEmail(a.email, 'A new staff sign-up is waiting for approval', 'Someone has verified their email and asked to join the Hub. Open the Admin Centre to approve or reject the request.', '/admin/requests').catch(() => {});
+  }
+}
 registrationPublic.post('/auth/verify-email', limit, async (req, res) => {
   const { token } = parse(z.object({ token: z.string().min(20).max(100) }), req.body);
   const r = await one(`update staff_registrations set email_verified_at=now(),verification_hash=null,verification_expires_at=null
     where verification_hash=$1 and verification_expires_at>now() and email_verified_at is null and status='pending' returning id`, [sha256(token)]);
   if (!r) throw bad('This verification link has expired or has already been used. Resend verification if needed.');
+  await tellApprovers(r.id);
   res.json({ ok: true });
 });
 

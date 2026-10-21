@@ -22,10 +22,18 @@ it('requires verification and approval; hashes one-time tokens and creates only 
   let r=await registration();
   expect(r.password_hash).not.toContain(pw);expect(r.verification_hash).not.toBe(verification());
   expect((await pool.query(`select * from people where email='new.staff@example.test'`)).rowCount).toBe(0);
-  expect((await publicPost('/api/auth/login').send({email:r.email,password:pw})).status).toBe(401);
+  const early=await publicPost('/api/auth/login').send({email:r.email,password:pw});
+  expect(early.status).toBe(403);expect(early.body.message).toMatch(/verify your email/);
+  expect((await publicPost('/api/auth/login').send({email:r.email,password:'not the password'})).status).toBe(401); // a wrong password learns nothing
   expect((await decide(r.id,{})).status).toBe(409);
   expect((await publicPost('/api/auth/verify-email').send({token:verification()})).status).toBe(200);
   expect((await publicPost('/api/auth/verify-email').send({token:verification()})).status).toBe(400);
+  // Approvers hear about it: a notification, an email and an item in Needs Your Review.
+  expect((await pool.query(`select 1 from notifications where person_id=$1 and link='/admin/requests'`,[P.alex])).rowCount).toBe(1);
+  expect(emails.some((e)=>e.subject==='A new staff sign-up is waiting for approval')).toBe(true);
+  expect((await (await as('alex')).get('/api/inbox')).body.some((i:any)=>i.kind==='staff_request')).toBe(true);
+  expect((await (await as('sam')).get('/api/inbox')).body.some((i:any)=>i.kind==='staff_request')).toBe(false);
+  expect((await publicPost('/api/auth/login').send({email:r.email,password:pw})).body.message).toMatch(/waiting for an administrator/);
   const approved=await decide(r.id,{});expect(approved.status).toBe(200);
   expect((await decide(r.id,{})).status).toBe(409);
   r=await registration();expect(r.password_hash).toBeNull();

@@ -34,7 +34,7 @@ async function uploadPhotos(visitId: string, files: File[], onProgress: (n: numb
 }
 
 function ApptChoice({ appts, value, onChange, error }: { appts: any[]; value: string; onChange: (v: string) => void; error?: string }) {
-  if (!appts.length) return <div className="notice warn">You have no current appointment that covers this property. Ask your manager to allocate it to you.</div>;
+  if (!appts.length) return <div className="notice warn">You have no current role that covers this property. Ask your manager to allocate it to you.</div>;
   return (
     <fieldset className="field" style={{ border: 0, padding: 0, margin: '0 0 16px' }} aria-describedby={error ? 'appt-err' : undefined}>
       <legend>Which company and role is this work for?</legend>

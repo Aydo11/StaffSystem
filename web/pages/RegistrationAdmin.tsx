@@ -8,26 +8,30 @@ export function RegistrationAdmin() {
   return <><PageHead title="Staff & organisation requests" intro="Check each request and its organisation before approval. Staff receive ordinary staff access; additional roles and clearance are managed separately."/>
     {requests.loading && <Skeleton/>}{requests.error && <LoadError error={requests.error} retry={requests.reload}/>}
     {requests.data?.length===0 && <p>No registration requests.</p>}
-    {requests.data?.map(r=><RequestCard key={r.id} r={r} reload={requests.reload}/>)}
+    {requests.data && [...requests.data].sort((a,b)=>rank(a)-rank(b)).map(r=><RequestCard key={r.id} r={r} reload={requests.reload}/>)}
     <Reassignment/>
   </>;
 }
+// Ready to approve first, then waiting for email verification, then decided.
+const rank=(r:any)=>r.status!=='pending'?2:r.email_verified_at?0:1;
 function RequestCard({r,reload}:{r:any;reload:()=>void}) {
   const hub=useHub();
   const [company,setCompany]=useState(r.company_id ?? ''),[name,setName]=useState(r.organisation_name ?? ''),[code,setCode]=useState(''),[note,setNote]=useState(''),[job,setJob]=useState(r.job_title),[relationship,setRelationship]=useState('employee');
   const [delivery,setDelivery]=useState('');
   const decision=useSubmit(async (value:string)=>{
-    const result=await post(`/admin/registrations/${r.id}/decide`,{decision:value,note,job_title:job,relationship,...(company==='new'?{new_organisation:{name,code}}:company?{company_id:company}:{})});
+    const result=await post(`/admin/registrations/${r.id}/decide`,{decision:value,note:note.trim()||(value==='approved'?'Approved by an administrator':note),job_title:job,relationship,...(company==='new'?{new_organisation:{name,code}}:company?{company_id:company}:{})});
     setDelivery(result.email==='sent'?'Decision email sent.':'Decision saved. Email was not delivered; contact the applicant.');reload();
   });
   return <section className="card" style={{marginBottom:16}}><h2>{r.full_name}</h2><p>{r.email} · {r.company_name ?? `New organisation: ${r.organisation_name}`}</p>
-    <p>{r.email_verified_at?'Email verified':'Awaiting email verification'} · {r.status}</p><ErrorSummary error={decision.error}/>
+    <p>{r.status!=='pending'?r.status:r.email_verified_at?<strong>Email verified · ready to approve</strong>:'Waiting for them to verify their email'}</p><ErrorSummary error={decision.error}/>
     {r.status==='pending'?<><Field label="Approve into organisation"><select value={company} onChange={e=>setCompany(e.target.value)}><option value="">Choose an organisation</option>{hub.me.companies.map(c=><option value={c.id} key={c.id}>{c.name}</option>)}{hub.me.superAdmin && <option value="new">Create requested organisation</option>}</select></Field>
     {company==='new' && <><Field label="Organisation name"><input value={name} onChange={e=>setName(e.target.value)}/></Field><Field label="Unique organisation code" hint="2–6 uppercase letters"><input maxLength={6} value={code} onChange={e=>setCode(e.target.value.toUpperCase())}/></Field></>}
     <Field label="Approved job title"><input value={job} onChange={e=>setJob(e.target.value)}/></Field>
     <Field label="Relationship"><select value={relationship} onChange={e=>setRelationship(e.target.value)}>{['employee','contractor','agency','secondment','volunteer','other'].map(v=><option key={v}>{v}</option>)}</select></Field>
-    <Field label="Decision reason"><textarea value={note} maxLength={500} onChange={e=>setNote(e.target.value)}/></Field>
-    <div className="row"><Button busy={decision.busy} disabled={!r.email_verified_at || !company || note.trim().length<3} onClick={()=>decision.run('approved')}>Approve staff account</Button><Button variant="secondary" disabled={decision.busy || note.trim().length<3} onClick={()=>decision.run('rejected')}>Reject request</Button></div></>:<p>{r.decision_note}</p>}
+    <Field label="Note" optional hint="Needed only if you reject the request."><textarea value={note} maxLength={500} onChange={e=>setNote(e.target.value)}/></Field>
+    {!r.email_verified_at && <p className="notice warn">They have not verified their email yet, so they cannot be approved. Ask them to open the link we emailed them, or to resend it from the sign-up page.</p>}
+    {r.email_verified_at && !company && <p className="notice">Choose the organisation to approve them into.</p>}
+    <div className="row"><Button busy={decision.busy} disabled={!r.email_verified_at || !company} onClick={()=>decision.run('approved')}>Approve staff account</Button><Button variant="secondary" disabled={decision.busy || note.trim().length<3} onClick={()=>decision.run('rejected')}>Reject request</Button></div></>:<p>{r.decision_note}</p>}
     {delivery && <p role="status">{delivery}</p>}
   </section>;
 }

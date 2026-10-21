@@ -37,6 +37,21 @@ async function setPasswordFor(admin: Awaited<ReturnType<typeof as>>, personId: s
 }
 
 describe('sign-in', () => {
+  it('can reset a password while already signed in and replaces the old session', async () => {
+    const admin = await as('morgan');
+    const signedIn = await setPasswordFor(admin, P.sam);
+    const oldToken = signedIn.body.token;
+    const reset = await admin.post(`/api/people/${P.sam}/access-link`).send({});
+    const changed = await api().post('/api/auth/set-password')
+      .set('Authorization', `Bearer ${oldToken}`)
+      .send({ token: tokenFrom(reset.body.link), password: 'Maple!82' });
+    expect(changed.status).toBe(200);
+    expect(changed.body.token).not.toBe(oldToken);
+    expect((await api().get('/api/me').set('Authorization', `Bearer ${oldToken}`)).status).toBe(401);
+    expect((await api().get('/api/me').set('Authorization', `Bearer ${changed.body.token}`)).status).toBe(200);
+    expect((await api().post('/api/auth/login').send({ email: 'sam.rivers@example.test', password: 'Maple!82' })).status).toBe(200);
+    expect((await api().post('/api/auth/login').send({ email: 'sam.rivers@example.test', password: pw })).status).toBe(401);
+  });
   it('accepts eight-character passwords for invite, change and reset, and rejects seven', async () => {
     const admin = await as('morgan');
     const link = await admin.post(`/api/people/${P.sam}/access-link`).send({});

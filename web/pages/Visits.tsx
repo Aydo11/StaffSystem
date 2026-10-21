@@ -4,6 +4,7 @@ import { ApiError, api, post, serverNow, upload, useApi, useSubmit } from '../ap
 import { addDays, fmtDate, fmtDateTime, fmtDay, fmtElapsed, fmtMinutes, fmtTime, label, londonLocal, londonToday, weekStart } from '../format.ts';
 import { useHub } from '../hub.tsx';
 import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, PhotoGrid, Skeleton, Status, useToast } from '../ui.tsx';
+import { blankExtras, EXTRA_LABELS, extrasPayload, rated, VisitExtras, type Extras } from '../condition.tsx';
 
 export const CATEGORIES: [string, string][] = [['support_work', 'Support work'], ['inspection', 'Inspection'], ['maintenance', 'Maintenance'], ['cleaning', 'Cleaning'], ['key_handover', 'Key handover'], ['property_check', 'Property check'], ['administration', 'Administration'], ['other', 'Other']];
 const SUMMARY_HINT = 'Property work only, in a sentence or two. Do not record resident names or support matters here — those belong in the support system.';
@@ -85,8 +86,8 @@ export function ActiveVisit() {
   const toast = useToast();
   const [now, setNow] = useState(serverNow());
   const draftKey = v ? `hub.visitDraft.${v.id}` : '';
-  const [draft, setDraft] = useState<{ work_category: string; summary: string }>(() => {
-    try { return JSON.parse(localStorage.getItem(draftKey) || '') ; } catch { return { work_category: '', summary: '' }; }
+  const [draft, setDraft] = useState<{ work_category: string; summary: string; extras: Extras }>(() => {
+    try { const d = JSON.parse(localStorage.getItem(draftKey) || ''); return { ...d, extras: d.extras ?? blankExtras() }; } catch { return { work_category: '', summary: '', extras: blankExtras() }; }
   });
   const [review, setReview] = useState(false);
   const [cancel, setCancel] = useState(false);
@@ -101,8 +102,9 @@ export function ActiveVisit() {
     const fields: Record<string, string> = {};
     if (!draft.work_category) fields.work_category = 'Choose the type of work';
     if (draft.summary.trim().length < 3) fields.summary = 'Add a brief summary of the work';
+    if (!rated(draft.extras)) fields.rating = 'Give the house mood rating: rate at least one part of the home';
     if (Object.keys(fields).length) { setReview(false); throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields }); }
-    const r = await post(`/visits/${v!.id}/finish`, draft);
+    const r = await post(`/visits/${v!.id}/finish`, { work_category: draft.work_category, summary: draft.summary, ...extrasPayload(draft.extras) });
     try { localStorage.removeItem(draftKey); } catch { /* ignore */ }
     setReview(false);
     const failed = photos.length ? await uploadPhotos(r.id, photos, setProgress) : 0;
@@ -145,12 +147,13 @@ export function ActiveVisit() {
         <section className="card" aria-labelledby="w-h">
           <h2 id="w-h">Work details</h2>
           <p className="small muted">Saved on this device as you type, so you won’t lose it if the page reloads.</p>
-          <ErrorSummary error={finish.error} />
+          <ErrorSummary error={finish.error} labels={EXTRA_LABELS} />
           <WorkType value={draft.work_category} onChange={(v) => setDraft({ ...draft, work_category: v })} error={finish.error?.fields.work_category} />
           <Field label="What did you do?" hint={SUMMARY_HINT} error={finish.error?.fields.summary}>
             <textarea name="summary" maxLength={500} value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} />
           </Field>
           <FilePicker label="Photos of the property" hint={PHOTO_HINT} accept="image/jpeg,image/png,image/webp" multiple busy={progress !== null} progress={progress} onChange={setPhotos} />
+          <VisitExtras value={draft.extras} onChange={(x) => setDraft({ ...draft, extras: x })} ratingError={finish.error?.fields.rating} fieldErrors={finish.error?.fields} />
         </section>
       </div>
       <Dialog open={review} onClose={() => setReview(false)} title="Check your visit" variant="modal"
@@ -162,6 +165,9 @@ export function ActiveVisit() {
           <dt>Duration so far</dt><dd><strong>{fmtMinutes(Math.floor(elapsed / 60000))}</strong></dd>
           <dt>Type</dt><dd>{label(draft.work_category) || 'Not chosen'}</dd>
           <dt>Photos</dt><dd>{photos.length || 'None'}</dd>
+          <dt>House mood</dt><dd>{rated(draft.extras) ? 'Rated' : <strong>Not rated yet</strong>}</dd>
+          {extrasPayload(draft.extras).complaint && <><dt>Complaint</dt><dd>Will be sent to the complaints manager</dd></>}
+          {extrasPayload(draft.extras).repair && <><dt>Maintenance</dt><dd>{draft.extras.repair.title}</dd></>}
         </dl>
         <p className="small muted" style={{ marginTop: 16 }}>The finish time is recorded by the server when you press Save Visit. If the times are wrong later, you can request a correction.</p>
       </Dialog>
@@ -183,6 +189,7 @@ export function ManualVisit() {
   const toast = useToast();
   const nowLocal = londonLocal();
   const [f, setF] = useState({ property_id: params.get('property') ?? remember('lastProperty'), appointment_id: '', date: nowLocal.slice(0, 10), time: '', preset: remember('lastDuration') || '60', custom: '', work_category: remember('lastWorkType'), summary: '' });
+  const [extras, setExtras] = useState<Extras>(blankExtras);
   const [confirmUnusual, setConfirmUnusual] = useState(false);
   const [photos, setPhotos] = useState<File[]>([]);
   const [progress, setProgress] = useState<number | null>(null);
@@ -219,9 +226,10 @@ export function ManualVisit() {
     if (!minutes || minutes < 1) fields.custom = 'Enter the number of minutes';
     if (!f.work_category) fields.work_category = 'Choose the type of work';
     if (f.summary.trim().length < 3) fields.summary = 'Add a brief summary';
+    if (!rated(extras)) fields.rating = 'Give the house mood rating: rate at least one part of the home';
     if (Object.keys(fields).length) throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields });
     try {
-      const r = await post('/visits/manual', { property_id: f.property_id, appointment_id: f.appointment_id, start_local: `${f.date}T${f.time}`, minutes, work_category: f.work_category, summary: f.summary, client_request_id: requestId.current, confirm_unusual: confirmUnusual || undefined });
+      const r = await post('/visits/manual', { property_id: f.property_id, appointment_id: f.appointment_id, start_local: `${f.date}T${f.time}`, minutes, work_category: f.work_category, summary: f.summary, client_request_id: requestId.current, confirm_unusual: confirmUnusual || undefined, ...extrasPayload(extras) });
       remember('lastProperty', f.property_id); remember('lastWorkType', f.work_category); remember('lastDuration', f.preset);
       const failed = photos.length && !r.duplicate ? await uploadPhotos(r.visit.id, photos, setProgress) : 0;
       toast(r.duplicate ? 'This visit was already saved.' : failed ? `Visit saved. ${failed} photo${failed === 1 ? '' : 's'} did not upload — add ${failed === 1 ? 'it' : 'them'} again on the visit.` : `Visit saved${photos.length ? ` with ${photos.length} photo${photos.length === 1 ? '' : 's'}` : ''} ${r.visit.status === 'approved' ? 'and approved automatically (support work)' : 'and sent for review'}.`);
@@ -238,7 +246,7 @@ export function ManualVisit() {
     <>
       <PageHead title="Log a completed visit" crumbs={[['My Day', '/'], ['Log completed visit']]} intro="For work you have already finished. It is labelled as a manual entry with the time you submitted it." />
       <form className="card" style={{ maxWidth: 720 }} noValidate onSubmit={(e) => { e.preventDefault(); save.run(); }}>
-        <ErrorSummary error={unusual ? null : save.error} labels={{ property_id: 'Property', appointment_id: 'Company and role', time: 'Start time', custom: 'Duration' }} />
+        <ErrorSummary error={unusual ? null : save.error} labels={{ property_id: 'Property', appointment_id: 'Company and role', time: 'Start time', custom: 'Duration', ...EXTRA_LABELS }} />
         {props.loading && !props.data ? <Skeleton /> : (
           <Field label="Property" error={errs.property_id}>
             <select name="property_id" value={f.property_id} onChange={(e) => setF({ ...f, property_id: e.target.value, appointment_id: '' })}>
@@ -262,6 +270,7 @@ export function ManualVisit() {
         <WorkType value={f.work_category} onChange={(v) => setF({ ...f, work_category: v })} error={errs.work_category} />
         <Field label="What did you do?" hint={SUMMARY_HINT} error={errs.summary}><textarea name="summary" maxLength={500} value={f.summary} onChange={set('summary')} /></Field>
         <FilePicker label="Photos of the property" hint={PHOTO_HINT} accept="image/jpeg,image/png,image/webp" multiple busy={progress !== null} progress={progress} onChange={setPhotos} />
+        <VisitExtras value={extras} onChange={setExtras} ratingError={errs.rating} fieldErrors={errs} />
         {unusual && (
           <div className="notice warn" role="alert">
             <p><strong>{save.error!.message}</strong></p>

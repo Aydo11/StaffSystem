@@ -172,15 +172,18 @@ export function MfaGate({ onDone }: { onDone: () => void }) {
 
 // Reached from an invitation or reset link: /set-password#token=… (the token stays out of server logs).
 export function SetPassword() {
-  const token = new URLSearchParams(location.hash.slice(1)).get('token') ?? '';
+  // Keep the ticket for this form's lifetime, including re-renders after saving.
+  const [token] = useState(() => new URLSearchParams(location.hash.slice(1)).get('token') ?? '');
   const [pw, setPw] = useState('');
   const [pw2, setPw2] = useState('');
   const save = useSubmit(async () => {
     if (pw.length < 8) throw invalid({ password: 'Use at least 8 characters' });
     if (pw !== pw2) throw invalid({ confirm: 'The two passwords do not match' });
     const r = await post('/auth/set-password', { token, password: pw });
-    history.replaceState(null, '', '/');
     setToken(r.token);
+    // A signed-in user still has signedIn=true, so an auth event alone does not
+    // re-render App or leave this screen. Navigate after saving the new session.
+    location.replace('/');
   });
   useEffect(() => { document.title = 'Choose your password · Valor & Wellbeing Hub'; }, []);
   return (

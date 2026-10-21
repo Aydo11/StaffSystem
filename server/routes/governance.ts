@@ -380,7 +380,7 @@ async function pack(db: Db, a: Access, companyId: string, month: string): Promis
                                               (select count(*) from finance_documents f where f.company_id = $1 and f.status in ('awaiting_approval','submitted'))::int awaiting`, [companyId], db) : null;
   const S = (key: string, title: string, status: Section['status'], figures: Section['figures'], link: string, note?: string): Section => ({ key, title, status, figures, link, note });
   const sections: Section[] = [
-    S('staffing', 'Staffing', m.staff ? 'verified' : 'evidence_missing', [['Current appointments', m.staff], ['Started this month', m.starters], ['Left this month', m.leavers]], '/people'),
+    S('staffing', 'Staffing', m.staff ? 'verified' : 'evidence_missing', [['Current roles', m.staff], ['Started this month', m.starters], ['Left this month', m.leavers]], '/people'),
     S('clearance', 'Recruitment and clearance', m.clearance_open || m.clearance_review_overdue ? 'action_required' : m.staff ? 'verified' : 'evidence_missing', [['Pending or not authorised', m.clearance_open], ['Clearance reviews overdue', m.clearance_review_overdue]], '/people'),
     S('training', 'Training', !m.training_all ? 'evidence_missing' : m.training_overdue ? 'action_required' : 'verified', [['Required courses tracked', m.training_all], ['Overdue', m.training_overdue]], '/training?tab=manage'),
     S('supervision', 'Supervision', m.supervision_overdue ? 'action_required' : m.staff ? 'verified' : 'evidence_missing', [['People without supervision in 8 weeks', m.supervision_overdue]], '/performance?tab=supervision'),

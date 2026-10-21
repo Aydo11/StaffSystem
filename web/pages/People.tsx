@@ -7,6 +7,7 @@ import { useHub } from '../hub.tsx';
 import { AccessLinkNotice, PersonDataActions, SignInAccess } from './DataTools.tsx';
 import { DevelopmentTab } from './Development.tsx';
 import { ProfileOverview } from './ProfileOverview.tsx';
+import { StoryTab } from './Story.tsx';
 import { Avatar, Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 export function People() {
@@ -92,7 +93,7 @@ function InviteDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () =
   const e = save.error?.fields ?? {};
   return (
     <Dialog open onClose={onClose} title="Invite a person" footer={<Button busy={save.busy} onClick={() => save.run()}>Create and invite</Button>}>
-      <p className="small muted">If they already have a profile with another company, add an appointment to that profile instead — one person has one login.</p>
+      <p className="small muted">If they already have a profile with another company, add a role to that profile instead — one person has one login.</p>
       <ErrorSummary error={save.error} />
       <Field label="Company" error={e.company_id}><select name="company_id" value={f.company_id} onChange={set('company_id')}>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
       <div className="form-grid">
@@ -106,36 +107,60 @@ function InviteDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () =
 }
 
 // ── Person page / My Profile ──
-type PTab = 'profile' | 'appointments' | 'development' | 'clearance' | 'personal';
+type PTab = 'overview' | 'story' | 'profile' | 'roles' | 'development' | 'clearance' | 'personal';
 export function PersonPage({ self }: { self?: boolean }) {
   const hub = useHub();
   const params = useParams();
   const id = self ? hub.me.person.id : params.id!;
   const d = useApi<any>(`/people/${id}`);
-  const [tab, setTab] = useState<PTab>(() => (new URLSearchParams(location.search).get('tab') as PTab) || 'profile');
+  const [tab, setTabState] = useState<PTab>(() => (new URLSearchParams(location.search).get('tab') as PTab) || 'overview');
+  const setTab = (t: PTab) => { setTabState(t); history.replaceState(null, '', `${location.pathname}?tab=${t}`); };
+  const [photo, setPhoto] = useState(false);
   if (d.error) return <LoadError error={d.error} retry={d.reload} />;
   if (!d.data) return <Skeleton lines={8} />;
-  const { person: p, can, clearance, restricted, checks } = d.data;
+  const { person: p, can, clearance, restricted, checks, appointments } = d.data;
   const isMe = id === hub.me.person.id;
-  const tabs: [PTab, string][] = [['profile', 'Profile'], ['appointments', 'Appointments'], ['development', 'Development'], ...(clearance ? [['clearance', checks ? 'Clearance & checks' : 'Clearance'] as [PTab, string]] : []), ...(restricted ? [['personal', 'Personal details'] as [PTab, string]] : [])];
+  const first = p.preferred_name ?? p.full_name.split(' ')[0];
+  const current = appointments.filter((a: any) => a.is_current);
+  const tabs: [PTab, string][] = [['overview', 'Overview'], ['story', isMe ? 'My story' : `${first}’s story`], ['profile', 'Skills & documents'], ['roles', 'Roles'], ['development', 'Development'],
+    ...(clearance ? [['clearance', checks ? 'Clearance & checks' : 'Clearance'] as [PTab, string]] : []), ...(restricted ? [['personal', 'Personal details'] as [PTab, string]] : [])];
   return (
     <>
-      <PageHead title={isMe ? 'My Profile' : p.full_name} crumbs={isMe ? undefined : [['People', '/people'], [p.full_name]]}
-        actions={<Link className="btn secondary" to={`/people/${id}/resume`}>{isMe ? 'My Resume' : 'Professional profile'}</Link>} />
-      <div className="row" style={{ marginBottom: 16 }}>
-        <Avatar personId={p.id} name={p.full_name} hasPhoto={p.has_photo} size="lg" />
-        <div><strong style={{ fontSize: '1.25rem' }}>{p.full_name}</strong>{p.preferred_name && <span className="muted"> (known as {p.preferred_name})</span>}<br /><span className="muted">{p.staff_ref} · {p.email}</span> {p.status !== 'active' && <Status s={p.status} />}</div>
-      </div>
-      <div className="row no-print" style={{ marginBottom: 12 }}>{(isMe || restricted) && <PersonDataActions person={p} />}<SignInAccess person={p} isMe={isMe} /></div>
-      <ProfileOverview personId={id} isMe={isMe} />
+      <PageHead title={isMe ? 'My Profile' : p.full_name} crumbs={isMe ? undefined : [['People', '/people'], [p.full_name]]} />
+      <section className="card profile-hero" aria-label="Summary">
+        <div className="hero-photo">
+          <Avatar personId={p.id} name={p.full_name} hasPhoto={p.has_photo} size="lg" />
+          {(isMe || can.edit) && <button type="button" className="btn ghost small" onClick={() => setPhoto(true)}><Icon name="camera" size={16} />{p.has_photo ? 'Change' : 'Add photo'}</button>}
+        </div>
+        <div className="hero-main">
+          <h2>{p.full_name}{p.preferred_name && <span className="muted" style={{ fontWeight: 400, fontSize: '1rem' }}> · known as {p.preferred_name}</span>} {p.status !== 'active' && <Status s={p.status} />}</h2>
+          <div className="hero-roles">{current.length ? current.map((a: any) => <span key={a.id}><CompanyBadge code={a.company_code} name={a.company_name} /> {a.job_title}</span>) : <span className="muted">No current role</span>}</div>
+          <div className="small muted">{[p.email, p.work_phone, p.staff_ref].filter(Boolean).join(' · ')}</div>
+        </div>
+        <div className="hero-actions no-print">
+          <Link className="btn secondary" to={`/people/${id}/resume`}><Icon name="file" size={18} />{isMe ? 'My resume' : 'Professional profile'}</Link>
+          {(isMe || restricted) && <PersonDataActions person={p} />}
+          <SignInAccess person={p} isMe={isMe} />
+        </div>
+      </section>
       <Tabs label="Profile sections" tabs={tabs} value={tab} onChange={setTab} />
       <div role="tabpanel">
+        {tab === 'overview' && <>
+          <ProfileOverview personId={id} isMe={isMe} />
+          <section className="card" aria-labelledby="about-h">
+            <div className="row between"><h2 id="about-h" style={{ margin: 0 }}>About {isMe ? 'me' : first}</h2><Button variant="ghost" onClick={() => setTab('profile')}>Skills &amp; documents</Button></div>
+            <p style={{ marginTop: 12 }}>{p.professional_summary ?? <span className="muted">{isMe ? 'Add a short professional summary under Skills & documents.' : 'No summary yet.'}</span>}</p>
+            {p.skills.length > 0 && <div className="chips" aria-label="Skills">{p.skills.map((s: string) => <span key={s} className="badge st-info">{s}</span>)}</div>}
+          </section>
+        </>}
+        {tab === 'story' && <StoryTab personId={id} name={first} isMe={isMe} />}
         {tab === 'profile' && <ProfileTab d={d.data} isMe={isMe} reload={d.reload} />}
-        {tab === 'appointments' && <AppointmentsTab d={d.data} isMe={isMe} reload={d.reload} />}
+        {tab === 'roles' && <AppointmentsTab d={d.data} isMe={isMe} reload={d.reload} />}
         {tab === 'development' && <DevelopmentTab personId={id} isMe={isMe} />}
         {tab === 'clearance' && <ClearanceTab d={d.data} reload={d.reload} />}
         {tab === 'personal' && <PersonalTab d={d.data} reload={d.reload} editable={can.editRestricted} />}
       </div>
+      {photo && <PhotoDialog personId={p.id} onClose={() => setPhoto(false)} onSaved={() => { setPhoto(false); d.reload(); if (isMe) hub.reloadMe(); }} />}
     </>
   );
 }
@@ -312,11 +337,11 @@ function AppointmentsTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: (
   const props = useApi<any[]>(dlg?.kind === 'property' ? `/properties?company=${dlg.appt.company_id}` : null);
   const colleagues = useApi<any[]>(dlg?.kind === 'end' ? `/people?company=${dlg.appt.company_id}` : null);
   const close = (msg: string) => { setDlg(null); toast(msg); reload(); };
-  const create = useSubmit(async () => { await post('/appointments', { person_id: p.id, company_id: f.company_id, ...apptBody(f) }); close('Appointment added.'); });
-  const edit = useSubmit(async () => { const b = apptBody(f); delete (b as any).start_date; await patch(`/appointments/${dlg!.appt.id}`, b); close('Appointment updated. The previous values are kept in the audit history.'); });
+  const create = useSubmit(async () => { await post('/appointments', { person_id: p.id, company_id: f.company_id, ...apptBody(f) }); close('Role added.'); });
+  const edit = useSubmit(async () => { const b = apptBody(f); delete (b as any).start_date; await patch(`/appointments/${dlg!.appt.id}`, b); close('Role updated. The previous values are kept in the audit history.'); });
   const end = useSubmit(async () => {
     const r = await post(`/appointments/${dlg!.appt.id}/end`, { end_date: f.end_date, reason: f.reason, transfer_to: f.transfer_to || undefined });
-    close(`Appointment ended.${r.keysStillHeld.length ? ` ${r.keysStillHeld.length} key(s) still need returning.` : ''}${r.leaver ? ' This was their last appointment, so their sign-in has ended.' : r.accessEndsOn ? ` This company’s roles end after ${fmtDate(r.accessEndsOn)}. Other appointments are unchanged.` : ' Their other appointments are unchanged.'}`);
+    close(`Role ended.${r.keysStillHeld.length ? ` ${r.keysStillHeld.length} key(s) still need returning.` : ''}${r.leaver ? ' This was their last role, so their sign-in has ended.' : r.accessEndsOn ? ` This company’s roles end after ${fmtDate(r.accessEndsOn)}. Other roles are unchanged.` : ' Their other roles are unchanged.'}`);
   });
   const rate = useSubmit(async () => { await post(`/appointments/${dlg!.appt.id}/rates`, { rate_type: f.rate_type, amount: f.amount, effective_from: f.effective_from }); close('Rate added. Earlier rates are kept.'); });
   const endAlloc = useSubmit(async (aid: string) => { await post(`/appointment-properties/${aid}/end`); toast('Allocation ended.'); reload(); });
@@ -325,14 +350,14 @@ function AppointmentsTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: (
 
   return (
     <>
-      {addable.length > 0 && <p><Button onClick={() => { setF(blankAppt(addable[0].id)); setDlg({ kind: 'new' }); }}>Add an appointment</Button></p>}
-      {appointments.length === 0 ? <Empty>No appointments you can see.</Empty> : appointments.map((a: any) => (
+      {addable.length > 0 && <p><Button onClick={() => { setF(blankAppt(addable[0].id)); setDlg({ kind: 'new' }); }}>Add a role</Button></p>}
+      {appointments.length === 0 ? <Empty>No roles you can see.</Empty> : appointments.map((a: any) => (
         <section key={a.id} className="card" aria-labelledby={`ap-${a.id}`}>
           <div className="row between">
             <h3 id={`ap-${a.id}`} style={{ margin: 0 }}><CompanyBadge code={a.company_code} name={a.company_name} /> {a.job_title}</h3>
             <span className="row"><Status s={a.is_current ? 'active' : a.status} text={a.is_current ? 'Current' : undefined} />
               {manageable(a.company_id) && a.status !== 'ended' && <><Button variant="secondary" onClick={() => { setF({ ...a, legal_employer_company_id: a.legal_employer_company_id ?? '', legal_employer_name: a.legal_employer_name ?? '', manager_person_id: a.manager_person_id ?? '', responsibilities: a.responsibilities ?? '', contracted_hours_per_week: a.contracted_hours_per_week ?? '' }); setDlg({ kind: 'edit', appt: a }); }}>Edit</Button>
-                <Button variant="secondary" onClick={() => { setF({ end_date: londonToday(), reason: '', transfer_to: '' }); setDlg({ kind: 'end', appt: a }); }}>End appointment</Button></>}</span>
+                <Button variant="secondary" onClick={() => { setF({ end_date: londonToday(), reason: '', transfer_to: '' }); setDlg({ kind: 'end', appt: a }); }}>End role</Button></>}</span>
           </div>
           <dl className="facts" style={{ marginTop: 12 }}>
             <dt>Company</dt><dd>{a.company_name}</dd>
@@ -356,17 +381,17 @@ function AppointmentsTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: (
         </section>
       ))}
 
-      <Dialog open={dlg?.kind === 'new'} onClose={() => setDlg(null)} title={`New appointment for ${p.full_name}`} footer={<Button busy={create.busy} onClick={() => create.run()}>Add appointment</Button>}>
+      <Dialog open={dlg?.kind === 'new'} onClose={() => setDlg(null)} title={`New role for ${p.full_name}`} footer={<Button busy={create.busy} onClick={() => create.run()}>Add role</Button>}>
         <ErrorSummary error={create.error} />
         <Field label="Company"><select name="company_id" value={f.company_id} onChange={set('company_id')}>{addable.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
         {dlg?.kind === 'new' && <AppointmentFields f={f} set={set} errors={create.error?.fields ?? {}} companyId={f.company_id} />}
       </Dialog>
-      <Dialog open={dlg?.kind === 'edit'} onClose={() => setDlg(null)} title="Edit appointment" footer={<Button busy={edit.busy} onClick={() => edit.run()}>Save Changes</Button>}>
+      <Dialog open={dlg?.kind === 'edit'} onClose={() => setDlg(null)} title="Edit role" footer={<Button busy={edit.busy} onClick={() => edit.run()}>Save Changes</Button>}>
         <ErrorSummary error={edit.error} />
         {dlg?.kind === 'edit' && <AppointmentFields f={f} set={set} errors={edit.error?.fields ?? {}} companyId={dlg.appt.company_id} />}
       </Dialog>
-      <Dialog open={dlg?.kind === 'end'} onClose={() => setDlg(null)} title={`End ${dlg?.appt?.job_title ?? ''} appointment`} footer={<Button variant="danger" busy={end.busy} onClick={() => end.run()}>End appointment</Button>}>
-        <p>This ends only this appointment with {dlg?.appt?.company_name}. Other appointments stay as they are. Property allocations and this company’s access end on the date given.</p>
+      <Dialog open={dlg?.kind === 'end'} onClose={() => setDlg(null)} title={`End ${dlg?.appt?.job_title ?? ''} role`} footer={<Button variant="danger" busy={end.busy} onClick={() => end.run()}>End role</Button>}>
+        <p>This ends only this role with {dlg?.appt?.company_name}. Other roles stay as they are. Property allocations and this company’s access end on the date given.</p>
         <ErrorSummary error={end.error} />
         <Field label="Last day" error={end.error?.fields.end_date}><input name="end_date" type="date" value={f.end_date ?? ''} onChange={set('end_date')} /></Field>
         <Field label="Reason" error={end.error?.fields.reason}><textarea name="reason" value={f.reason ?? ''} onChange={set('reason')} /></Field>

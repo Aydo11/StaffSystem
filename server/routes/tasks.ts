@@ -4,10 +4,10 @@ import { one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, isoDate, LONDON_TODAY, notFound, notify, parse, text, uuid, idParam } from '../http.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith } from '../perm.ts';
 import { deleteFile, readFile, saveFile } from '../storage.ts';
-import { taskVisible, visitVisible } from '../visibility.ts';
+import { personVisible, taskVisible, visitVisible } from '../visibility.ts';
 import { caseRoleForFile } from './cases.ts';
 import { loadRepair } from './estates.ts';
-import { upload } from './people.ts';
+import { canReadStory, upload } from './people.ts';
 
 export const tasks = Router();
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
@@ -60,7 +60,7 @@ const taskCreate = taskBody.extend({ company_id: uuid, priority: taskBody.shape.
 async function checkAssignees(companyId: string, ids: (string | null | undefined)[]) {
   for (const id of ids.filter(Boolean)) {
     const ok = await one(`select 1 from appointments a where a.person_id = $1 and a.company_id = $2 and ${ACTIVE_APPT('a')}`, [id, companyId]);
-    if (!ok) throw bad('Owners and reviewers must have a current appointment in the task’s company.', { fields: { owner_id: 'Not in this company' } });
+    if (!ok) throw bad('Owners and reviewers must have a current role in the task’s company.', { fields: { owner_id: 'Not in this company' } });
   }
 }
 async function checkProperty(companyId: string, propertyId: string | null | undefined) {
@@ -193,6 +193,10 @@ tasks.get('/files/:id', async (req, res) => {
   } else if (f.entity_type === 'finance') {
     const d = await one('select company_id, submitted_by, recipient_person_id, kind from finance_documents where id = $1', [f.entity_id]);
     if (!d || !(can(a, 'finance.view', d.company_id) || d.submitted_by === a.personId || d.recipient_person_id === a.personId || (d.kind === 'expense_claim' && can(a, 'expenses.approve', d.company_id)))) throw notFound();
+  } else if (f.entity_type === 'story') {
+    // A story photo is readable by whoever may read that person's story.
+    const st = await one('select p.id, p.story_visibility from story_chapters sc join people p on p.id = sc.person_id where sc.id = $1', [f.entity_id]);
+    if (!st || !(await one(`select 1 from people p where p.id = $1 and ${personVisible('p', 2, 3)}`, [st.id, a.personId, companiesWith(a, 'staff.view')])) || !(await canReadStory(a, st.id, st.story_visibility))) throw notFound();
   } else if (f.entity_type === 'person_doc') {
     // Staff documents: the person themself, or someone who can edit their profile in a company they work for.
     const cos = (await q<{ company_id: string }>('select distinct company_id from appointments where person_id = $1', [f.entity_id])).map((x) => x.company_id);

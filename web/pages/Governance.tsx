@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ApiError, download, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtDateTime, label, londonToday } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 type Tab = 'pack' | 'leads' | 'meetings' | 'decisions' | 'risks' | 'audits' | 'actions' | 'quality' | 'framework';
 const PACK_STATUS: Record<string, [string, string]> = { evidence_missing: ['evidence_missing', 'Evidence Missing'], awaiting_review: ['review', 'Awaiting Review'], action_required: ['action', 'Action Required'], verified: ['verified', 'Verified'], not_applicable: ['not_required', 'Not Applicable'] };
@@ -71,51 +71,85 @@ function Pack() {
   );
 }
 
+// People named for one area in one company, as removable chips, with "Add" buttons for each role.
+function RoleChips({ rows, role, canManage, onEnd, busy }: { rows: any[]; role: 'lead' | 'deputy'; canManage: boolean; onEnd: (r: any) => void; busy: boolean }) {
+  const list = rows.filter((r) => r.role === role);
+  return (
+    <div className="lead-row"><span className="small muted lead-role">{role === 'lead' ? 'Leads' : 'Deputies'}</span>
+      {list.length === 0 ? <span className="small muted">None</span> : list.map((r) => (
+        <span key={r.id} className="lead-chip">{r.person_name}{canManage && <button type="button" className="chip-x" disabled={busy} onClick={() => onEnd(r)} aria-label={`Remove ${r.person_name} as ${role}`}><Icon name="x" size={14} /></button>}</span>
+      ))}
+    </div>
+  );
+}
+
 function Leads() {
   const hub = useHub();
   const toast = useToast();
   const leads = useApi<any[]>(`/governance/leads${hub.q()}`);
   const org = useApi<any[]>(`/governance/org-chart${hub.q()}`);
   const [params, setParams] = useSearchParams();
-  const blank = (area: string, company = firstCo(hub, 'governance.manage')) => ({ company_id: company, area, lead_person_id: '', deputy_person_id: '', delegated_authority: '' });
+  const blank = (area: string, role = 'lead', company = firstCo(hub, 'governance.manage')) => ({ company_id: company, area, role, person_id: '', delegated_authority: '' });
   // ?set=complaints_oversight opens the form straight away (linked from property pages and the Admin Centre).
   const [f, setF] = useState<any>(() => { const a = params.get('set'); return a && hub.can('governance.manage') ? blank(a) : null; });
   const close = () => { setF(null); if (params.get('set')) setParams({ tab: 'leads' }, { replace: true }); };
-  const complaintCos = hub.me.companies.filter((c) => c.perms.includes('governance.manage'));
-  const save = useSubmit(async () => { await post('/governance/leads', { ...f, deputy_person_id: f.deputy_person_id || null, lead_person_id: f.lead_person_id || null }); close(); toast('Lead recorded. The previous lead is kept in history.'); leads.reload(); });
+  const manageCos = hub.me.companies.filter((c) => c.perms.includes('governance.manage'));
+  const save = useSubmit(async () => { await post('/governance/leads', { ...f, delegated_authority: f.delegated_authority || null }); close(); toast(`${f.role === 'lead' ? 'Lead' : 'Deputy'} added. Others in this area are unchanged.`); leads.reload(); });
+  const end = useSubmit(async (r: any) => { await post(`/governance/leads/${r.id}/end`); toast(`${r.person_name} removed. This is kept in history.`); leads.reload(); });
+  const all = leads.data ?? [];
+  const groups = [...new Map(all.map((l) => [`${l.company_id}|${l.area}`, l])).values()].filter((g) => g.area !== 'complaints_oversight');
   const rows = org.data ?? [];
   const tree = (managerId: string | null, companyId: string, depth = 0): any[] => rows.filter((r) => r.company_id === companyId && (managerId ? r.manager_person_id === managerId : !r.manager_person_id || !rows.some((x) => x.person_id === r.manager_person_id && x.company_id === companyId)))
     .flatMap((r) => (depth > 6 ? [] : [<li key={r.id}>{r.person_name} — <span className="muted">{r.job_title}</span>{rows.some((x) => x.manager_person_id === r.person_id && x.company_id === companyId) && <ul>{tree(r.person_id, companyId, depth + 1)}</ul>}</li>]));
   const companies = [...new Map(rows.map((r) => [r.company_id, r.company_code])).entries()];
   return (
     <div className="grid-2">
-      {complaintCos.length > 0 && (
+      {manageCos.length > 0 && (
         <section className="card" aria-labelledby="cm-h">
-          <h2 id="cm-h">Complaints manager</h2>
-          <p className="small muted">Complaints logged at a property go to this person as a task. If none is set, they go to the deputy, then to the property’s manager.</p>
-          <ul className="list">{complaintCos.map((c) => {
-            const l = (leads.data ?? []).find((x) => x.company_id === c.id && x.area === 'complaints_oversight');
-            return <li key={c.id}><span><CompanyBadge code={c.code} name={c.name} /> {c.name}<br /><span className="small">{l?.lead_name ? <>Lead: <strong>{l.lead_name}</strong>{l.deputy_name && ` · Deputy: ${l.deputy_name}`}</> : <span className="muted">Not set</span>}</span></span>
-              <Button variant="secondary" onClick={() => setF(blank('complaints_oversight', c.id))}>{l?.lead_name ? 'Change' : 'Set complaints manager'}</Button></li>;
+          <h2 id="cm-h">Complaints managers</h2>
+          <p className="small muted">You can name several. Each new complaint goes to the lead with the fewest open complaints, and the other leads are told. If there are no leads it goes to a deputy, then to the property’s manager.</p>
+          <ul className="list">{manageCos.map((c) => {
+            const mine = all.filter((x) => x.company_id === c.id && x.area === 'complaints_oversight');
+            return (
+              <li key={c.id} className="lead-group">
+                <div className="row between" style={{ width: '100%' }}><span><CompanyBadge code={c.code} name={c.name} /> <strong>{c.name}</strong></span>
+                  <span className="row"><Button variant="secondary" onClick={() => setF(blank('complaints_oversight', 'lead', c.id))}><Icon name="plus" size={16} />Manager</Button><Button variant="ghost" onClick={() => setF(blank('complaints_oversight', 'deputy', c.id))}><Icon name="plus" size={16} />Deputy</Button></span></div>
+                <RoleChips rows={mine} role="lead" canManage onEnd={(r) => end.run(r)} busy={end.busy} />
+                <RoleChips rows={mine} role="deputy" canManage onEnd={(r) => end.run(r)} busy={end.busy} />
+              </li>
+            );
           })}</ul>
+          <ErrorSummary error={end.error} />
         </section>
       )}
       <section className="card" aria-labelledby="ld-h">
-        <div className="row between"><h2 id="ld-h">Named leads and deputies</h2>{hub.can('governance.manage') && <Button variant="secondary" onClick={() => setF(blank('quality'))}>Set a lead</Button>}</div>
-        <p className="small muted">Naming someone a lead records responsibility. It does not give them any extra access.</p>
-        {(leads.data ?? []).length === 0 ? <Empty>No leads recorded.</Empty> : <ul className="list">{leads.data!.map((l) => <li key={l.id}><span><strong>{AREAS.find(([k]) => k === l.area)?.[1] ?? label(l.area)}</strong> <CompanyBadge code={l.company_code} name={l.company_name} /><br />Lead: {l.lead_name ?? 'Not set'}{l.deputy_name && ` · Deputy: ${l.deputy_name}`}{l.delegated_authority && <><br /><span className="small muted">Delegated authority: {l.delegated_authority}</span></>}</span></li>)}</ul>}
+        <div className="row between"><h2 id="ld-h">Leads and deputies</h2>{hub.can('governance.manage') && <Button variant="secondary" onClick={() => setF(blank('quality'))}><Icon name="plus" size={16} />Add a person</Button>}</div>
+        <p className="small muted">Each area can have several leads and several deputies. Naming someone records responsibility; it does not give them any extra access.</p>
+        {groups.length === 0 ? <Empty>No leads recorded.</Empty> : <ul className="list">{groups.map((g) => {
+          const mine = all.filter((x) => x.company_id === g.company_id && x.area === g.area);
+          const manage = hub.can('governance.manage', g.company_id);
+          return (
+            <li key={`${g.company_id}|${g.area}`} className="lead-group">
+              <div className="row between" style={{ width: '100%' }}><span><strong>{AREAS.find(([k]) => k === g.area)?.[1] ?? label(g.area)}</strong> <CompanyBadge code={g.company_code} name={g.company_name} /></span>
+                {manage && <Button variant="ghost" onClick={() => setF(blank(g.area, 'lead', g.company_id))}><Icon name="plus" size={16} />Add</Button>}</div>
+              <RoleChips rows={mine} role="lead" canManage={manage} onEnd={(r) => end.run(r)} busy={end.busy} />
+              <RoleChips rows={mine} role="deputy" canManage={manage} onEnd={(r) => end.run(r)} busy={end.busy} />
+              {mine.filter((m) => m.delegated_authority).map((m) => <p key={m.id} className="small muted" style={{ margin: '4px 0 0' }}>{m.person_name}: {m.delegated_authority}</p>)}
+            </li>
+          );
+        })}</ul>}
       </section>
       <section className="card" aria-labelledby="oc-h">
         <h2 id="oc-h">Organisation chart</h2>
         <p className="small muted">From each role’s manager. People with roles in several companies appear under each.</p>
         {companies.map(([cid, code]) => <div key={cid}><h3 style={{ fontSize: '1rem' }}>{code}</h3><ul>{tree(null, cid)}</ul></div>)}
       </section>
-      <Dialog open={!!f} onClose={close} title={f?.area === 'complaints_oversight' ? 'Set the complaints manager' : 'Set a lead'} footer={<Button busy={save.busy} onClick={() => save.run()}>Save</Button>}>
+      <Dialog open={!!f} onClose={close} title={f?.area === 'complaints_oversight' ? (f.role === 'lead' ? 'Add a complaints manager' : 'Add a complaints deputy') : 'Add a lead or deputy'} footer={<Button busy={save.busy} onClick={() => save.run()}>Add</Button>}>
         {f && <><ErrorSummary error={save.error} />
-          <CompanySelect perm="governance.manage" value={f.company_id} onChange={(v) => setF({ ...f, company_id: v })} />
+          <CompanySelect perm="governance.manage" value={f.company_id} onChange={(v) => setF({ ...f, company_id: v, person_id: '' })} />
           <Field label="Area"><select name="area" value={f.area} onChange={(e) => setF({ ...f, area: e.target.value })}>{AREAS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>
-          <PersonSelect companyId={f.company_id} label="Lead" value={f.lead_person_id} onChange={(v) => setF({ ...f, lead_person_id: v })} />
-          <PersonSelect companyId={f.company_id} label="Deputy" optional value={f.deputy_person_id} onChange={(v) => setF({ ...f, deputy_person_id: v })} />
+          <fieldset className="field" style={{ border: 0, padding: 0 }}><legend>Role</legend><Chips label="Role" value={f.role} onChange={(v) => setF({ ...f, role: v })} options={[['lead', 'Lead'], ['deputy', 'Deputy']]} /></fieldset>
+          <PersonSelect companyId={f.company_id} label="Person" value={f.person_id} onChange={(v) => setF({ ...f, person_id: v })} />
           <Field label="Delegated authority" optional><textarea name="delegated_authority" value={f.delegated_authority} onChange={(e) => setF({ ...f, delegated_authority: e.target.value })} /></Field></>}
       </Dialog>
     </div>

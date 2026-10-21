@@ -167,10 +167,12 @@ insert into policy_receipts (policy_id, company_id, person_id, supplied_at)
 select p.policy_id, p.company_id, a.person_id, p.approved_at from policy_publications p join appointments a on a.company_id = p.company_id where a.status = 'active';
 
 -- Stage 6 demo: leads, a meeting with a decision, a risk, an audit with a finding, safety schedules, a repair, an agent with a portal user, a quality summary.
-insert into governance_leads (company_id, area, lead_person_id, deputy_person_id, delegated_authority, created_by) values
- ('00000000-0000-4000-8000-0000000000c1', 'quality', '00000000-0000-4000-8000-000000000a08', '00000000-0000-4000-8000-000000000a03', 'May approve audit plans and close standard actions.', '00000000-0000-4000-8000-000000000a01'),
- ('00000000-0000-4000-8000-0000000000c1', 'property_safety', '00000000-0000-4000-8000-000000000a03', null, 'May commission urgent safety repairs up to the agreed limit.', '00000000-0000-4000-8000-000000000a01'),
- ('00000000-0000-4000-8000-0000000000c1', 'complaints_oversight', '00000000-0000-4000-8000-000000000a08', '00000000-0000-4000-8000-000000000a03', 'Investigates and responds to complaints about Valor properties.', '00000000-0000-4000-8000-000000000a01');
+insert into governance_leads (company_id, area, person_id, role, delegated_authority, created_by) values
+ ('00000000-0000-4000-8000-0000000000c1', 'quality', '00000000-0000-4000-8000-000000000a08', 'lead', 'May approve audit plans and close standard actions.', '00000000-0000-4000-8000-000000000a01'),
+ ('00000000-0000-4000-8000-0000000000c1', 'quality', '00000000-0000-4000-8000-000000000a03', 'deputy', null, '00000000-0000-4000-8000-000000000a01'),
+ ('00000000-0000-4000-8000-0000000000c1', 'property_safety', '00000000-0000-4000-8000-000000000a03', 'lead', 'May commission urgent safety repairs up to the agreed limit.', '00000000-0000-4000-8000-000000000a01'),
+ ('00000000-0000-4000-8000-0000000000c1', 'complaints_oversight', '00000000-0000-4000-8000-000000000a08', 'lead', 'Investigates and responds to complaints about Valor properties.', '00000000-0000-4000-8000-000000000a01'),
+ ('00000000-0000-4000-8000-0000000000c1', 'complaints_oversight', '00000000-0000-4000-8000-000000000a03', 'deputy', null, '00000000-0000-4000-8000-000000000a01');
 insert into meetings (id, title, company_ids, held_on, chair_id, agenda, attendance, minutes, minutes_status, minutes_version, created_by) values
  ('00000000-0000-4000-8000-000000000f21', 'Joint quality meeting (fictional)', array['00000000-0000-4000-8000-0000000000c1','00000000-0000-4000-8000-0000000000c2']::uuid[], '2026-10-01', '00000000-0000-4000-8000-000000000a08',
   '[{"item":"Fire door checks across properties"},{"item":"Supervision coverage"}]', '[{"person_id":"00000000-0000-4000-8000-000000000a08","name":"Robin Ash","status":"present"},{"person_id":"00000000-0000-4000-8000-000000000a03","name":"Priya Shah","status":"present"},{"person_id":"00000000-0000-4000-8000-000000000a04","name":"Jordan Lee","status":"apologies"}]',

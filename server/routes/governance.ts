@@ -24,22 +24,31 @@ async function loadOwned(a: Access, table: string, id: string, perm = 'governanc
 
 // ── Accountability: named leads and deputies (responsibility, not access) and the org chart ──
 governance.get('/governance/leads', async (req, res) => {
-  res.json(await q(`select g.*, ${name('l')} as lead_name, ${name('d')} as deputy_name, c.code as company_code, c.name as company_name
-                      from governance_leads g join companies c on c.id = g.company_id left join people l on l.id = g.lead_person_id left join people d on d.id = g.deputy_person_id
-                     where g.company_id = any($1::uuid[]) and g.to_date is null order by c.code, g.area`, [scope(req.access, null, req.query.company)]));
+  res.json(await q(`select g.*, ${name('l')} as person_name, c.code as company_code, c.name as company_name
+                      from governance_leads g join companies c on c.id = g.company_id join people l on l.id = g.person_id
+                     where g.company_id = any($1::uuid[]) and g.to_date is null order by c.code, g.area, g.role, g.created_at`, [scope(req.access, null, req.query.company)]));
 });
+// Any number of leads and deputies per area; adding one never removes another.
 governance.post('/governance/leads', async (req, res) => {
-  const b = parse(z.object({ company_id: uuid, area: z.enum(['staffing', 'quality', 'safeguarding_oversight', 'property_safety', 'complaints_oversight', 'finance', 'data_protection']), lead_person_id: uuid.nullable(), deputy_person_id: uuid.nullable().optional(), delegated_authority: text(2000).nullable().optional() }), req.body);
+  const b = parse(z.object({ company_id: uuid, area: z.enum(['staffing', 'quality', 'safeguarding_oversight', 'property_safety', 'complaints_oversight', 'finance', 'data_protection']), person_id: uuid, role: z.enum(['lead', 'deputy']), delegated_authority: text(2000).nullable().optional() }), req.body);
   need(req.access, 'governance.manage', b.company_id);
-  if (b.lead_person_id && b.lead_person_id === b.deputy_person_id) throw bad('The deputy must be a different person.');
+  if (!(await one('select 1 from appointments where person_id = $1 and company_id = $2', [b.person_id, b.company_id]))) throw bad('This person has no role in this company.', { fields: { person_id: 'Not in this company' } });
   const r = await tx(async (db) => {
-    await q(`update governance_leads set to_date = ${LONDON_TODAY} where company_id = $1 and area = $2 and to_date is null`, [b.company_id, b.area], db);
-    const row = await one('insert into governance_leads (company_id, area, lead_person_id, deputy_person_id, delegated_authority, created_by) values ($1,$2,$3,$4,$5,$6) returning *',
-      [b.company_id, b.area, b.lead_person_id, b.deputy_person_id ?? null, b.delegated_authority ?? null, req.person.id], db);
-    await audit(db, req.person.id, b.company_id, 'governance_lead', row.id, 'set', { area: b.area, lead: b.lead_person_id });
+    await q(`update governance_leads set to_date = ${LONDON_TODAY} where company_id = $1 and area = $2 and person_id = $3 and to_date is null`, [b.company_id, b.area, b.person_id], db); // switching lead ↔ deputy
+    const row = await one('insert into governance_leads (company_id, area, person_id, role, delegated_authority, created_by) values ($1,$2,$3,$4,$5,$6) returning *',
+      [b.company_id, b.area, b.person_id, b.role, b.delegated_authority ?? null, req.person.id], db);
+    await audit(db, req.person.id, b.company_id, 'governance_lead', row.id, 'set', { area: b.area, person: b.person_id, role: b.role });
     return row;
   });
   res.status(201).json(r);
+});
+governance.post('/governance/leads/:id/end', async (req, res) => {
+  const g = await one('select * from governance_leads where id = $1 and to_date is null', [idParam(req.params.id)]);
+  if (!g) throw notFound();
+  need(req.access, 'governance.manage', g.company_id);
+  await q(`update governance_leads set to_date = ${LONDON_TODAY} where id = $1`, [g.id]);
+  await audit(pool, req.person.id, g.company_id, 'governance_lead', g.id, 'end', { area: g.area });
+  res.json({ ok: true });
 });
 governance.get('/governance/org-chart', async (req, res) => {
   const cs = scope(req.access, 'staff.view', req.query.company);

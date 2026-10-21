@@ -164,7 +164,7 @@ properties.post('/keys/:id/:action', async (req, res) => {
     if (k.holder_person_id && !k.returned_at && !k.lost_reported_at) throw conflict('This key is already issued. Record its return first.');
     // Only current staff of the property's company, so keys appear on the right leaver checklist.
     if (!(await one(`select 1 from appointments a where a.person_id = $1 and a.company_id = $2 and ${ACTIVE_APPT('a')}`, [holder_person_id, k.company_id])))
-      throw bad('Keys can only be issued to someone with a current appointment in this property’s company.', { fields: { holder_person_id: 'Not current staff here' } });
+      throw bad('Keys can only be issued to someone with a current role in this property’s company.', { fields: { holder_person_id: 'Not current staff here' } });
     await q('update property_keys set holder_person_id = $2, issued_at = now(), returned_at = null, lost_reported_at = null where id = $1', [id, holder_person_id]);
   } else if (action === 'return') {
     await q('update property_keys set returned_at = now() where id = $1 and holder_person_id is not null', [id]);
@@ -182,7 +182,7 @@ properties.post('/scheduled-visits', async (req, res) => {
   if (!ap || !req.access.perms.has(ap.company_id)) throw notFound();
   if (ap.person_id !== req.person.id) need(req.access, 'visits.approve', ap.company_id);
   const pr = await one(`select 1 from properties p where p.id = $1 and (p.company_id = $2 or exists (select 1 from property_company_links l where l.property_id = p.id and l.company_id = $2))`, [b.property_id, ap.company_id]);
-  if (!pr) throw bad('This property is not part of the appointment’s company.', { fields: { property_id: 'Wrong company' } });
+  if (!pr) throw bad('This property is not part of the role’s company.', { fields: { property_id: 'Wrong company' } });
   if (await onLeave(ap.person_id, b.planned_start.slice(0, 10))) throw conflict('They are on approved leave that day. Plan the visit for someone else or another day.');
   const row = await one(`insert into scheduled_visits (company_id, property_id, person_id, appointment_id, planned_start, planned_minutes, notes, created_by)
                          values ($1,$2,$3,$4,($5::timestamp at time zone 'Europe/London'),$6,$7,$8) returning *`,

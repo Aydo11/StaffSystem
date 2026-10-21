@@ -7,7 +7,7 @@ import { audit, bad, conflict, forbidden, HttpError, idParam, LONDON_TODAY, notF
 import { emailReady, sendEmail } from '../outbox.ts';
 import { ACTIVE_APPT, companiesWith, need } from '../perm.ts';
 
-const credentials = z.object({ email: z.email().trim().toLowerCase().max(254), password: z.string().min(12).max(200) });
+const credentials = z.object({ email: z.email().trim().toLowerCase().max(254), password: z.string().min(8).max(200) });
 const limit = rateLimit({ windowMs: 15 * 60_000, limit: 20, standardHeaders: true, legacyHeaders: false });
 export const registrationPublic = Router();
 export const registrationAdmin = Router();

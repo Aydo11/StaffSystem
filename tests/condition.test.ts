@@ -1,6 +1,6 @@
 // House mood ratings, complaints routed to the complaints lead, and repairs saved with a visit.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { A, as, P, pool, prop, resetDb, rid } from './helpers.ts';
+import { A, as, C, P, pool, prop, resetDb, rid } from './helpers.ts';
 
 beforeEach(resetDb);
 const day = (h: string) => `${new Date(Date.now() - 3 * 86400e3).toLocaleDateString('en-CA', { timeZone: 'Europe/London' })}T${h}`;
@@ -48,5 +48,20 @@ describe('complaints and maintenance', () => {
     const before = (await pool.query('select count(*)::int n from visits')).rows[0].n;
     expect((await sam.post('/api/visits/manual').send(manual({ repair: { title: 'Fix it', urgency: 'routine', description: 'The resident name is Bob' } }))).status).toBe(400);
     expect((await pool.query('select count(*)::int n from visits')).rows[0].n).toBe(before);
+  });
+  it('several complaints managers share the work; leads and deputies can be added and removed', async () => {
+    const alex = await as('alex'), sam = await as('sam');
+    expect((await alex.post('/api/governance/leads').send({ company_id: C.VH, area: 'complaints_oversight', person_id: P.morgan, role: 'lead' })).status).toBe(201);
+    expect((await alex.post('/api/governance/leads').send({ company_id: C.VH, area: 'complaints_oversight', person_id: P.jordan, role: 'lead' })).status).toBe(400); // no role in VH
+    const log = () => sam.post(`/api/properties/${prop(1)}/complaints`).send({ source: 'resident', category: 'noise', summary: 'Loud music late at night again.' });
+    await log(); await log();
+    const owners = (await pool.query(`select t.owner_id from property_complaints c join tasks t on t.id = c.task_id order by c.created_at`)).rows.map((r) => r.owner_id);
+    expect(new Set(owners)).toEqual(new Set([P.robin, P.morgan])); // one each
+    const cm = (await alex.get(`/api/governance/leads?company=${C.VH}`)).body.filter((l: any) => l.area === 'complaints_oversight');
+    expect(cm.map((l: any) => `${l.person_name}:${l.role}`).sort()).toEqual(['Morgan:lead', 'Priya:deputy', 'Robin:lead']);
+    const robin = cm.find((l: any) => l.person_name === 'Robin');
+    expect((await alex.post(`/api/governance/leads/${robin.id}/end`)).status).toBe(200);
+    expect((await (await as('sam')).post(`/api/governance/leads/${robin.id}/end`)).status).toBe(404);
+    expect((await alex.get(`/api/governance/leads?company=${C.VH}`)).body.filter((l: any) => l.area === 'complaints_oversight')).toHaveLength(2);
   });
 });

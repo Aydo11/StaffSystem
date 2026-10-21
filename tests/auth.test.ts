@@ -37,6 +37,21 @@ async function setPasswordFor(admin: Awaited<ReturnType<typeof as>>, personId: s
 }
 
 describe('sign-in', () => {
+  it('accepts eight-character passwords for invite, change and reset, and rejects seven', async () => {
+    const admin = await as('morgan');
+    const link = await admin.post(`/api/people/${P.sam}/access-link`).send({});
+    const token = tokenFrom(link.body.link);
+    expect((await api().post('/api/auth/set-password').send({ token, password: 'Oaks!72' })).status).toBe(400);
+    const set = await api().post('/api/auth/set-password').send({ token, password: 'Oaks!729' });
+    expect(set.status).toBe(200);
+    const auth = { Authorization: `Bearer ${set.body.token}` };
+    expect((await api().post('/api/auth/password').set(auth).send({ current: 'Oaks!729', password: 'Pine!43' })).status).toBe(400);
+    expect((await api().post('/api/auth/password').set(auth).send({ current: 'Oaks!729', password: 'Pine!438' })).status).toBe(200);
+    const reset = await admin.post(`/api/people/${P.sam}/access-link`).send({});
+    expect(reset.body.purpose).toBe('reset');
+    expect((await api().post('/api/auth/set-password').send({ token: tokenFrom(reset.body.link), password: 'Elm!9632' })).status).toBe(200);
+    expect((await api().post('/api/auth/login').send({ email: 'sam.rivers@example.test', password: 'Elm!9632' })).status).toBe(200);
+  });
   it('an invitation link sets a password once, then email + password signs in', async () => {
     const set = await setPasswordFor(await as('morgan'), P.sam);
     expect(set.status).toBe(200);
@@ -109,3 +124,4 @@ describe('access links and secrets', () => {
     expect(JSON.stringify(r.body)).not.toMatch(/password_hash|totp_secret|scrypt\$/);
   });
 });
+

@@ -2,7 +2,7 @@ import request from 'supertest';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { app, as, A, C, P, pool, resetDb } from './helpers.ts';
 
-const pw='a long secure registration passphrase';
+const pw='Oaks!729'; // exactly eight characters: the minimum supported by sign-up and resend
 let emails:any[]=[];
 let testNetwork=0;
 const publicPost=(url:string)=>request(app).post(url).set('X-Forwarded-For', '192.0.2.' + testNetwork);

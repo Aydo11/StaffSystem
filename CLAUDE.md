@@ -67,3 +67,9 @@ Stage 5 done (migration 005, `routes/training.ts`, `routes/policies.ts`, `web/pa
 - API (routes/messaging.ts): `GET /news/:id`, `POST /news/:id/photos`, `DELETE /news/:id/photos/:fid`; gallery = `news` files other than the cover; replacing the cover deletes the old one. Draft photos are readable only by the author and publishers.
 - Migration 017: `update` category, `news_posts.summary`, six "Sample:" posts for all companies (skipped on an empty DB) — archive them once real news exists.
 - Chat is in the sidebar ("Chat", `/messages`) as well as the top-bar icon. Tests: `tests/news.test.ts`.
+
+## House mood, complaints and maintenance (21 Oct 2026)
+- Visit finish and manual log take optional `rating` (1–5 per aspect: kitchen, bathroom, bedrooms, living_areas, garden, communal; null = not checked), `complaint` and `repair`, saved in the same transaction (`server/condition.ts`, `saveExtras` in routes/visits.ts). The web form requires the rating; the API does not.
+- Migration 018: `condition_ratings`, view `property_condition` (latest rating of each aspect in 12 months → score 0–100), `property_complaints` (each creates a high-priority task, due in 10 days, for the company's Governance `complaints_oversight` lead → deputy → property manager; complaint is resolved when the task is completed).
+- `POST /properties/:id/complaints` for any staff who can see the property. Property list/detail return `condition_score`, `open_complaints`, `open_repairs`, `condition`, `complaints`, `repairs`. `reportRepair` is shared from routes/estates.ts.
+- Web: `web/condition.tsx` (fold-away `VisitExtras`, `ConditionBar`, suggestions). Card glow: red < 60%, amber < 80%, green above. Tests: `tests/condition.test.ts`.

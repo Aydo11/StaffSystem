@@ -91,7 +91,7 @@ function Leads() {
       </section>
       <section className="card" aria-labelledby="oc-h">
         <h2 id="oc-h">Organisation chart</h2>
-        <p className="small muted">From each appointment’s manager. People with appointments in several companies appear under each.</p>
+        <p className="small muted">From each role’s manager. People with roles in several companies appear under each.</p>
         {companies.map(([cid, code]) => <div key={cid}><h3 style={{ fontSize: '1rem' }}>{code}</h3><ul>{tree(null, cid)}</ul></div>)}
       </section>
       <Dialog open={!!f} onClose={() => setF(null)} title="Set a lead" footer={<Button busy={save.busy} onClick={() => save.run()}>Save</Button>}>

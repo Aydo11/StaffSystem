@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { type Db, one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, idParam, notFound, notify, parse, text, uuid } from '../http.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith, need, scope } from '../perm.ts';
-import { saveFile } from '../storage.ts';
+import { deleteFile, saveFile } from '../storage.ts';
 import { upload } from './people.ts';
 
 export const messaging = Router();
@@ -157,15 +157,24 @@ messaging.post('/message-reports/:id/decide', async (req, res) => {
 });
 
 // ── News ──
+// Readers see published posts for their companies; drafts only for the author and publishers of every audience company.
+const NEWS_SELECT = `select n.*, ${name('au')} as author_name, au.photo_path is not null as author_has_photo,
+    (select array_agg(code order by code) from companies where id = any(n.company_ids)) as company_codes,
+    coalesce((select json_agg(json_build_object('id', f.id, 'original_name', f.original_name) order by f.uploaded_at) from files f where f.entity_type = 'news' and f.entity_id = n.id and f.id is distinct from n.image_file_id), '[]') as photos
+  from news_posts n join people au on au.id = n.author_id
+ where n.company_ids && $1::uuid[] and (n.status = 'published' or (n.status = 'draft' and (n.author_id = $2 or n.company_ids <@ $3::uuid[])))`;
 messaging.get('/news', async (req, res) => {
   const a = req.access;
-  res.json(await q(`select n.*, ${name('au')} as author_name, (select array_agg(code order by code) from companies where id = any(n.company_ids)) as company_codes
-                      from news_posts n join people au on au.id = n.author_id
-                     where n.company_ids && $1::uuid[] and (n.status = 'published' or (n.status = 'draft' and (n.author_id = $2 or n.company_ids <@ $3::uuid[])))
-                     order by n.status = 'draft' desc, n.pinned desc, coalesce(n.published_at, n.created_at) desc limit 100`,
+  res.json(await q(`${NEWS_SELECT} order by n.status = 'draft' desc, n.pinned desc, coalesce(n.published_at, n.created_at) desc limit 100`,
     [scope(a, null, req.query.company), a.personId, companiesWith(a, 'news.publish')]));
 });
-const newsBody = z.object({ company_ids: z.array(uuid).min(1).max(3), category: z.enum(['announcement', 'policy', 'training', 'celebration', 'operations', 'other']), title: text(200).min(3), body: text(20000).min(3), image_alt: text(300).nullable(), pinned: z.boolean() }).partial();
+messaging.get('/news/:id', async (req, res) => {
+  const a = req.access;
+  const n = await one(`${NEWS_SELECT} and n.id = $4`, [scope(a, null, undefined), a.personId, companiesWith(a, 'news.publish'), idParam(req.params.id)]);
+  if (!n) throw notFound();
+  res.json(n);
+});
+const newsBody = z.object({ company_ids: z.array(uuid).min(1).max(3), category: z.enum(['update', 'announcement', 'policy', 'training', 'celebration', 'operations', 'other']), title: text(200).min(3), summary: text(300).nullable(), body: text(20000).min(3), image_alt: text(300).nullable(), pinned: z.boolean() }).partial();
 async function loadPost(a: Access, id: string) {
   const n = await one('select * from news_posts where id = $1', [id]);
   if (!n || !n.company_ids.every((c: string) => can(a, 'news.publish', c))) throw notFound();
@@ -174,7 +183,7 @@ async function loadPost(a: Access, id: string) {
 messaging.post('/news', async (req, res) => {
   const b = parse(newsBody.extend({ company_ids: z.array(uuid).min(1).max(3), category: newsBody.shape.category.unwrap(), title: text(200).min(3), body: text(20000).min(3) }), req.body);
   for (const c of b.company_ids) need(req.access, 'news.publish', c);
-  res.status(201).json(await one('insert into news_posts (company_ids, category, title, body, pinned, author_id) values ($1,$2,$3,$4,$5,$6) returning *', [b.company_ids, b.category, b.title, b.body, b.pinned ?? false, req.person.id]));
+  res.status(201).json(await one('insert into news_posts (company_ids, category, title, summary, body, pinned, author_id) values ($1,$2,$3,$4,$5,$6,$7) returning *', [b.company_ids, b.category, b.title, b.summary || null, b.body, b.pinned ?? false, req.person.id]));
 });
 messaging.patch('/news/:id', async (req, res) => {
   const n = await loadPost(req.access, idParam(req.params.id));
@@ -188,9 +197,29 @@ messaging.post('/news/:id/image', upload.single('file'), async (req, res) => {
   const n = await loadPost(req.access, idParam(req.params.id));
   if (!req.file) throw bad('Choose an image.');
   const alt = parse(text(300).min(3, 'Describe the image'), req.body?.image_alt);
-  const f = await tx((db) => saveFile(db, { companyId: n.company_ids[0], entityType: 'news', entityId: n.id, name: req.file!.originalname, buf: req.file!.buffer, uploadedBy: req.person.id, imagesOnly: true }));
-  await q('update news_posts set image_file_id = $2, image_alt = $3 where id = $1', [n.id, f.id, alt]);
+  const f = await tx(async (db) => {
+    const f = await saveFile(db, { companyId: n.company_ids[0], entityType: 'news', entityId: n.id, name: req.file!.originalname, buf: req.file!.buffer, uploadedBy: req.person.id, imagesOnly: true });
+    await q('update news_posts set image_file_id = $2, image_alt = $3 where id = $1', [n.id, f.id, alt], db);
+    if (n.image_file_id) await deleteFile(db, n.image_file_id); // the old cover would otherwise show up in the gallery
+    return f;
+  });
   res.status(201).json({ id: f.id });
+});
+// Gallery: extra photos shown under the article.
+messaging.post('/news/:id/photos', upload.single('file'), async (req, res) => {
+  const n = await loadPost(req.access, idParam(req.params.id));
+  if (!req.file) throw bad('Choose a photo.');
+  const c = await one<{ n: number }>(`select count(*)::int n from files where entity_type = 'news' and entity_id = $1 and id is distinct from $2`, [n.id, n.image_file_id]);
+  if (c!.n >= 20) throw conflict('A post can have up to 20 gallery photos.');
+  const f = await tx((db) => saveFile(db, { companyId: n.company_ids[0], entityType: 'news', entityId: n.id, name: req.file!.originalname, buf: req.file!.buffer, uploadedBy: req.person.id, imagesOnly: true }));
+  res.status(201).json({ id: f.id });
+});
+messaging.delete('/news/:id/photos/:fid', async (req, res) => {
+  const n = await loadPost(req.access, idParam(req.params.id));
+  const fid = idParam(req.params.fid);
+  if (fid === n.image_file_id || !(await one(`select 1 from files where id = $1 and entity_type = 'news' and entity_id = $2`, [fid, n.id]))) throw notFound();
+  await tx((db) => deleteFile(db, fid));
+  res.json({ ok: true });
 });
 messaging.post('/news/:id/:step', async (req, res) => {
   const step = parse(z.enum(['publish', 'archive']), req.params.step);

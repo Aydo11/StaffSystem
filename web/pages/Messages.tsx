@@ -37,7 +37,7 @@ function ChatShell({ openId }: { openId?: string }) {
   const shown = (list.data ?? []).filter((c) => !term.trim() || chatName(c, meId).toLowerCase().includes(term.trim().toLowerCase()));
   return (
     <>
-      <PageHead title="Messages" intro={ADMIN_NOTE} actions={<Button onClick={() => setCreating(true)}><Icon name="plus" size={18} />New chat</Button>} />
+      <PageHead title="Chat" intro={ADMIN_NOTE} actions={<Button onClick={() => setCreating(true)}><Icon name="plus" size={18} />New chat</Button>} />
       {hub.can('messaging.moderate') && <Tabs label="Message sections" tabs={[['chats', 'Chats'], ['reports', 'Reported messages']]} value={tab} onChange={(t) => setParams(t === 'chats' ? {} : { tab: t })} />}
       {tab === 'reports' ? <Reports /> : (
         <div className={`chat${openId ? ' has-open' : ''}`}>
@@ -260,51 +260,6 @@ function Reports() {
 }
 
 // ── News ──
-function NewsImage({ id, alt }: { id: string; alt: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-  useEffect(() => { let u: string | null = null; blobUrl(`/files/${id}`).then((x) => { u = x; setSrc(x); }); return () => { if (u) URL.revokeObjectURL(u); }; }, [id]);
-  return src ? <img src={src} alt={alt} style={{ maxHeight: 280, borderRadius: 8, margin: '8px 0' }} /> : null;
-}
-export function News() {
-  const hub = useHub();
-  const toast = useToast();
-  const d = useApi<any[]>(`/news${hub.q()}`);
-  const [f, setF] = useState<any>(null);
-  const cos = hub.me.companies.filter((c) => c.perms.includes('news.publish'));
-  const save = useSubmit(async (publish: boolean) => {
-    const body = { company_ids: f.company_ids, category: f.category, title: f.title, body: f.body, pinned: f.pinned };
-    const n = f.id ? (await api('PATCH', `/news/${f.id}`, body)) : await post('/news', body);
-    if (f.image) await upload(`/news/${n.id}/image`, f.image, f.image.name, undefined, { image_alt: f.image_alt });
-    if (publish) await post(`/news/${n.id}/publish`);
-    setF(null); toast(publish ? 'Published.' : 'Draft saved.'); d.reload();
-  });
-  const archive = useSubmit(async (nid: string) => { await post(`/news/${nid}/archive`); d.reload(); });
-  return (
-    <>
-      <PageHead title="News" intro="Announcements for the companies you work with." actions={cos.length > 0 && <Button onClick={() => setF({ company_ids: [cos[0].id], category: 'announcement', title: '', body: '', pinned: false, image: null, image_alt: '' })}>Write a post</Button>} />
-      {d.loading && !d.data ? <Skeleton /> : (d.data ?? []).length === 0 ? <Empty>No news yet.</Empty> : d.data!.map((n) => (
-        <article key={n.id} className="card" aria-labelledby={`n-${n.id}`}>
-          <div className="row between"><h2 id={`n-${n.id}`} style={{ fontSize: '1.25rem', margin: 0 }}>{n.pinned && <span className="badge st-info" style={{ marginRight: 8 }}>Pinned</span>}{n.title}</h2>{n.status === 'draft' && <Status s="planned" text="Draft" />}</div>
-          <p className="small muted">{label(n.category)} · {n.company_codes.join(', ')} · {n.author_name}{n.published_at && `, ${fmtDate(n.published_at)}`}</p>
-          {n.image_file_id && <NewsImage id={n.image_file_id} alt={n.image_alt} />}
-          <p style={{ whiteSpace: 'pre-wrap' }}>{n.body}</p>
-          {n.company_ids.every((c: string) => hub.can('news.publish', c)) && <div className="row"><Button variant="ghost" onClick={() => setF({ ...n, image: null })}>Edit</Button>{n.status === 'published' && <Button variant="ghost" busy={archive.busy} onClick={() => archive.run(n.id)}>Archive</Button>}</div>}
-        </article>
-      ))}
-      <Dialog open={!!f} onClose={() => setF(null)} title={f?.id ? 'Edit post' : 'Write a post'} footer={<><Button variant="secondary" busy={save.busy} onClick={() => save.run(false)}>Save draft</Button><Button busy={save.busy} onClick={() => save.run(true)}>Publish</Button></>}>
-        {f && <><ErrorSummary error={save.error} />
-          <fieldset className="field" style={{ border: 0, padding: 0 }}><legend>Who should see it?</legend>{cos.map((c) => <label key={c.id} className="check"><input type="checkbox" checked={f.company_ids.includes(c.id)} onChange={(e) => setF({ ...f, company_ids: e.target.checked ? [...f.company_ids, c.id] : f.company_ids.filter((x: string) => x !== c.id) })} /> {c.name}</label>)}</fieldset>
-          <Field label="Category"><select name="category" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{['announcement', 'policy', 'training', 'celebration', 'operations', 'other'].map((k) => <option key={k} value={k}>{label(k)}</option>)}</select></Field>
-          <Field label="Title" error={save.error?.fields.title}><input name="title" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></Field>
-          <Field label="Text" error={save.error?.fields.body}><textarea name="body" rows={6} value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} /></Field>
-          <FilePicker label="Image" accept="image/jpeg,image/png,image/webp" onChange={(fs) => setF({ ...f, image: fs[0] ?? null })} />
-          {f.image && <Field label="Describe the image" error={save.error?.fields._}><input name="image_alt" value={f.image_alt ?? ''} onChange={(e) => setF({ ...f, image_alt: e.target.value })} /></Field>}
-          <label className="check"><input type="checkbox" checked={f.pinned} onChange={(e) => setF({ ...f, pinned: e.target.checked })} /> Pin to the top</label></>}
-      </Dialog>
-    </>
-  );
-}
-
 // Email preferences (shown on the Notifications page).
 const CATS: [string, string][] = [['visit_reminder', 'Visit reminders'], ['training_due', 'Training due'], ['feedback_ready', 'Reviews and feedback ready'], ['invoice_available', 'Statements and invoices available']];
 export function EmailPreferences() {

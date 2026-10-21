@@ -19,7 +19,8 @@ import { CasePage, Concerns } from './pages/Concerns.tsx';
 import { AgentPage, AgentPortal, Estates, RepairPage } from './pages/Estates.tsx';
 import { ActionPage, Governance } from './pages/Governance.tsx';
 import { Finance, FinanceDocument } from './pages/Finance.tsx';
-import { Conversation, Messages, News } from './pages/Messages.tsx';
+import { Conversation, Messages } from './pages/Messages.tsx';
+import { News, NewsArticle } from './pages/News.tsx';
 import { Assistant } from './pages/Assistant.tsx';
 import { InstallPage } from './pages/DataTools.tsx';
 import { JobDescriptionPage } from './pages/Development.tsx';
@@ -71,7 +72,8 @@ function Session() {
 const NAV: { to: string; label: string; icon: string; group: string; show?: (h: ReturnType<typeof useHub>) => boolean }[] = [
   { to: '/', label: 'My Day', icon: 'home', group: '' },
   { to: '/inbox', label: 'Needs Your Review', icon: 'inbox', group: '' },
-  { to: '/news', label: 'News', icon: 'note', group: '' },
+  { to: '/messages', label: 'Chat', icon: 'send', group: '' },
+  { to: '/news', label: 'News & updates', icon: 'bell', group: '' },
   { to: '/people', label: 'People', icon: 'users', group: 'People' },
   { to: '/performance', label: 'Performance', icon: 'check', group: 'People' },
   { to: '/workload', label: 'Workload', icon: 'tasks', group: 'People', show: (h) => h.can('visits.view_all') },
@@ -210,6 +212,7 @@ function Shell() {
             <Route path="/messages" element={<Messages />} />
             <Route path="/messages/:id" element={<Conversation />} />
             <Route path="/news" element={<News />} />
+            <Route path="/news/:id" element={<NewsArticle />} />
             <Route path="/assistant" element={<Assistant />} />
             <Route path="/install" element={<InstallPage />} />
             <Route path="/governance/actions/:id" element={<ActionPage />} />

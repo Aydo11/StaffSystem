@@ -61,3 +61,9 @@ Stage 5 done (migration 005, `routes/training.ts`, `routes/policies.ts`, `web/pa
 - "My story" (migration 016, `web/pages/Story.tsx`, `/people/:id/story*` in routes/people.ts): chapters written only by the person; `people.story_visibility` private/managers/colleagues decides readers (`canReadStory`, also gates `story` photos in /files/:id). Tests: `tests/story.test.ts`.
 - Profile: summary card (photo, current roles, contact, actions) above tabs Overview · Story · Skills & documents · Roles · Development…; tab kept in `?tab=`.
 - UI says "role" for an appointment (owner request); tables, routes, permission keys and `type: 'appointment'` values keep the old name.
+
+## News & updates (21 Oct 2026)
+- `web/pages/News.tsx`: lead story + card grid with cover photos (category colour panel when none), category filter, article page `/news/:id` with standfirst, body and photo gallery. Editor: cover (alt text required), gallery photos (≤20), short summary.
+- API (routes/messaging.ts): `GET /news/:id`, `POST /news/:id/photos`, `DELETE /news/:id/photos/:fid`; gallery = `news` files other than the cover; replacing the cover deletes the old one. Draft photos are readable only by the author and publishers.
+- Migration 017: `update` category, `news_posts.summary`, six "Sample:" posts for all companies (skipped on an empty DB) — archive them once real news exists.
+- Chat is in the sidebar ("Chat", `/messages`) as well as the top-bar icon. Tests: `tests/news.test.ts`.

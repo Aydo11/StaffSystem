@@ -188,8 +188,10 @@ tasks.get('/files/:id', async (req, res) => {
   } else if (f.entity_type === 'message') {
     if (!(await one('select 1 from conversation_members where conversation_id = $1 and person_id = $2 and left_at is null', [f.entity_id, a.personId]))) throw notFound();
   } else if (f.entity_type === 'news') {
-    const n = await one('select company_ids, status from news_posts where id = $1', [f.entity_id]);
+    const n = await one('select company_ids, status, author_id from news_posts where id = $1', [f.entity_id]);
     if (!n || !n.company_ids.some((c: string) => a.perms.has(c))) throw notFound();
+    // Draft photos stay with the author and publishers until the post goes out.
+    if (n.status !== 'published' && n.author_id !== a.personId && !n.company_ids.every((c: string) => can(a, 'news.publish', c))) throw notFound();
   } else if (f.entity_type === 'finance') {
     const d = await one('select company_id, submitted_by, recipient_person_id, kind from finance_documents where id = $1', [f.entity_id]);
     if (!d || !(can(a, 'finance.view', d.company_id) || d.submitted_by === a.personId || d.recipient_person_id === a.personId || (d.kind === 'expense_claim' && can(a, 'expenses.approve', d.company_id)))) throw notFound();

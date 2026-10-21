@@ -176,7 +176,7 @@ export function SetPassword() {
   const [pw, setPw] = useState('');
   const [pw2, setPw2] = useState('');
   const save = useSubmit(async () => {
-    if (pw.length < 12) throw invalid({ password: 'Use at least 12 characters' });
+    if (pw.length < 8) throw invalid({ password: 'Use at least 8 characters' });
     if (pw !== pw2) throw invalid({ confirm: 'The two passwords do not match' });
     const r = await post('/auth/set-password', { token, password: pw });
     history.replaceState(null, '', '/');
@@ -189,7 +189,7 @@ export function SetPassword() {
       {!token ? <div className="notice bad">This link is incomplete. Open the link from your email again, or ask your administrator for a new one.</div> : (
         <form noValidate onSubmit={(e) => { e.preventDefault(); save.run(); }}>
           <ErrorSummary error={save.error} />
-          <Field label="New password" hint="At least 12 characters. A short phrase is easier to remember." error={save.error?.fields.password}>
+          <Field label="New password" hint="At least 8 characters. A short phrase is easier to remember." error={save.error?.fields.password}>
             <input name="password" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} />
           </Field>
           <Field label="Type it again" error={save.error?.fields.confirm}>

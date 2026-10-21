@@ -7,7 +7,7 @@ import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePi
 
 type Tab = 'pack' | 'leads' | 'meetings' | 'decisions' | 'risks' | 'audits' | 'actions' | 'quality' | 'framework';
 const PACK_STATUS: Record<string, [string, string]> = { evidence_missing: ['evidence_missing', 'Evidence Missing'], awaiting_review: ['review', 'Awaiting Review'], action_required: ['action', 'Action Required'], verified: ['verified', 'Verified'], not_applicable: ['not_required', 'Not Applicable'] };
-const AREAS: [string, string][] = [['staffing', 'Staffing'], ['quality', 'Quality'], ['safeguarding_oversight', 'Safeguarding oversight'], ['property_safety', 'Property safety'], ['complaints_oversight', 'Complaints oversight'], ['finance', 'Finance'], ['data_protection', 'Data protection']];
+const AREAS: [string, string][] = [['staffing', 'Staffing'], ['quality', 'Quality'], ['safeguarding_oversight', 'Safeguarding oversight'], ['property_safety', 'Property safety'], ['complaints_oversight', 'Complaints manager'], ['finance', 'Finance'], ['data_protection', 'Data protection']];
 const ACTION_STATUS: Record<string, [string, string]> = { open: ['info', 'Open'], evidence_submitted: ['review', 'Evidence submitted'], verified: ['verified', 'Verified'], closed: ['completed', 'Closed'], reopened: ['action', 'Reopened'] };
 
 function PersonSelect({ companyId, value, onChange, label: l, optional }: { companyId: string; value: string; onChange: (v: string) => void; label: string; optional?: boolean }) {
@@ -24,7 +24,7 @@ export function Governance() {
   const hub = useHub();
   const [params, setParams] = useSearchParams();
   const tab = (params.get('tab') as Tab) ?? 'pack';
-  const tabs: [Tab, string][] = [['pack', 'Monthly pack'], ['leads', 'Leads and structure'], ['meetings', 'Meetings'], ['decisions', 'Decisions'], ['risks', 'Risks'], ['audits', 'Audits'], ['actions', 'Actions'],
+  const tabs: [Tab, string][] = [['pack', 'Monthly pack'], ['leads', 'Leads and accountability'], ['meetings', 'Meetings'], ['decisions', 'Decisions'], ['risks', 'Risks'], ['audits', 'Audits'], ['actions', 'Actions'],
     ...(hub.can('quality.view') ? [['quality', 'Quality summaries'] as [Tab, string]] : []), ['framework', 'Assessment framework']];
   return (
     <>
@@ -76,25 +76,41 @@ function Leads() {
   const toast = useToast();
   const leads = useApi<any[]>(`/governance/leads${hub.q()}`);
   const org = useApi<any[]>(`/governance/org-chart${hub.q()}`);
-  const [f, setF] = useState<any>(null);
-  const save = useSubmit(async () => { await post('/governance/leads', { ...f, deputy_person_id: f.deputy_person_id || null, lead_person_id: f.lead_person_id || null }); setF(null); toast('Lead recorded. The previous lead is kept in history.'); leads.reload(); });
+  const [params, setParams] = useSearchParams();
+  const blank = (area: string, company = firstCo(hub, 'governance.manage')) => ({ company_id: company, area, lead_person_id: '', deputy_person_id: '', delegated_authority: '' });
+  // ?set=complaints_oversight opens the form straight away (linked from property pages and the Admin Centre).
+  const [f, setF] = useState<any>(() => { const a = params.get('set'); return a && hub.can('governance.manage') ? blank(a) : null; });
+  const close = () => { setF(null); if (params.get('set')) setParams({ tab: 'leads' }, { replace: true }); };
+  const complaintCos = hub.me.companies.filter((c) => c.perms.includes('governance.manage'));
+  const save = useSubmit(async () => { await post('/governance/leads', { ...f, deputy_person_id: f.deputy_person_id || null, lead_person_id: f.lead_person_id || null }); close(); toast('Lead recorded. The previous lead is kept in history.'); leads.reload(); });
   const rows = org.data ?? [];
   const tree = (managerId: string | null, companyId: string, depth = 0): any[] => rows.filter((r) => r.company_id === companyId && (managerId ? r.manager_person_id === managerId : !r.manager_person_id || !rows.some((x) => x.person_id === r.manager_person_id && x.company_id === companyId)))
     .flatMap((r) => (depth > 6 ? [] : [<li key={r.id}>{r.person_name} — <span className="muted">{r.job_title}</span>{rows.some((x) => x.manager_person_id === r.person_id && x.company_id === companyId) && <ul>{tree(r.person_id, companyId, depth + 1)}</ul>}</li>]));
   const companies = [...new Map(rows.map((r) => [r.company_id, r.company_code])).entries()];
   return (
     <div className="grid-2">
+      {complaintCos.length > 0 && (
+        <section className="card" aria-labelledby="cm-h">
+          <h2 id="cm-h">Complaints manager</h2>
+          <p className="small muted">Complaints logged at a property go to this person as a task. If none is set, they go to the deputy, then to the property’s manager.</p>
+          <ul className="list">{complaintCos.map((c) => {
+            const l = (leads.data ?? []).find((x) => x.company_id === c.id && x.area === 'complaints_oversight');
+            return <li key={c.id}><span><CompanyBadge code={c.code} name={c.name} /> {c.name}<br /><span className="small">{l?.lead_name ? <>Lead: <strong>{l.lead_name}</strong>{l.deputy_name && ` · Deputy: ${l.deputy_name}`}</> : <span className="muted">Not set</span>}</span></span>
+              <Button variant="secondary" onClick={() => setF(blank('complaints_oversight', c.id))}>{l?.lead_name ? 'Change' : 'Set complaints manager'}</Button></li>;
+          })}</ul>
+        </section>
+      )}
       <section className="card" aria-labelledby="ld-h">
-        <div className="row between"><h2 id="ld-h">Named leads and deputies</h2>{hub.can('governance.manage') && <Button variant="secondary" onClick={() => setF({ company_id: firstCo(hub, 'governance.manage'), area: 'quality', lead_person_id: '', deputy_person_id: '', delegated_authority: '' })}>Set a lead</Button>}</div>
+        <div className="row between"><h2 id="ld-h">Named leads and deputies</h2>{hub.can('governance.manage') && <Button variant="secondary" onClick={() => setF(blank('quality'))}>Set a lead</Button>}</div>
         <p className="small muted">Naming someone a lead records responsibility. It does not give them any extra access.</p>
-        {(leads.data ?? []).length === 0 ? <Empty>No leads recorded.</Empty> : <ul className="list">{leads.data!.map((l) => <li key={l.id}><span><strong>{label(l.area)}</strong> <CompanyBadge code={l.company_code} name={l.company_name} /><br />Lead: {l.lead_name ?? 'Not set'}{l.deputy_name && ` · Deputy: ${l.deputy_name}`}{l.delegated_authority && <><br /><span className="small muted">Delegated authority: {l.delegated_authority}</span></>}</span></li>)}</ul>}
+        {(leads.data ?? []).length === 0 ? <Empty>No leads recorded.</Empty> : <ul className="list">{leads.data!.map((l) => <li key={l.id}><span><strong>{AREAS.find(([k]) => k === l.area)?.[1] ?? label(l.area)}</strong> <CompanyBadge code={l.company_code} name={l.company_name} /><br />Lead: {l.lead_name ?? 'Not set'}{l.deputy_name && ` · Deputy: ${l.deputy_name}`}{l.delegated_authority && <><br /><span className="small muted">Delegated authority: {l.delegated_authority}</span></>}</span></li>)}</ul>}
       </section>
       <section className="card" aria-labelledby="oc-h">
         <h2 id="oc-h">Organisation chart</h2>
         <p className="small muted">From each role’s manager. People with roles in several companies appear under each.</p>
         {companies.map(([cid, code]) => <div key={cid}><h3 style={{ fontSize: '1rem' }}>{code}</h3><ul>{tree(null, cid)}</ul></div>)}
       </section>
-      <Dialog open={!!f} onClose={() => setF(null)} title="Set a lead" footer={<Button busy={save.busy} onClick={() => save.run()}>Save</Button>}>
+      <Dialog open={!!f} onClose={close} title={f?.area === 'complaints_oversight' ? 'Set the complaints manager' : 'Set a lead'} footer={<Button busy={save.busy} onClick={() => save.run()}>Save</Button>}>
         {f && <><ErrorSummary error={save.error} />
           <CompanySelect perm="governance.manage" value={f.company_id} onChange={(v) => setF({ ...f, company_id: v })} />
           <Field label="Area"><select name="area" value={f.area} onChange={(e) => setF({ ...f, area: e.target.value })}>{AREAS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>

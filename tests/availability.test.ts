@@ -10,6 +10,9 @@ const manual = (work_category: string, start_local = twoDaysAgo()) => ({ propert
 
 describe('support work', () => {
   it('is approved automatically with the full time allocated; other work still waits for review', async () => {
+    // Relative test dates can coincide with the fixed historic seed visits (19 October, for example).
+    // This scenario checks approval, not overlap; isolate its worker's time first.
+    await pool.query(`update visits set status='cancelled' where person_id=$1`, [P.sam]);
     const sam = await as('sam');
     const s = await sam.post('/api/visits/manual').send(manual('support_work'));
     expect(s.status).toBe(201);
@@ -48,3 +51,4 @@ describe('CPD roadmap', () => {
     expect((await (await as('taylor')).get(`/api/people/${P.sam}/overview`)).body.cpd ?? null).toBeNull();
   });
 });
+

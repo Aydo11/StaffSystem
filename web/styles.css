@@ -545,3 +545,39 @@ section[aria-labelledby='pd-h'] .prop-photo { height: auto; aspect-ratio: 4 / 3;
   .reaction { transition: transform 120ms var(--ease-out); } .reaction:active { transform: scale(0.92); }
   .react-bar button { transition: transform 120ms var(--ease-out); } .react-bar button:hover { transform: scale(1.2); }
 }
+
+/* Profile: one summary card, then tabs. */
+.profile-hero { display: grid; grid-template-columns: auto 1fr auto; gap: var(--s5); align-items: center; margin-bottom: var(--s4); }
+.profile-hero h2 { margin: 0 0 var(--s1); font-size: 1.5rem; }
+.hero-photo { display: grid; justify-items: center; gap: var(--s1); }
+.hero-photo .avatar.lg { width: 96px; height: 96px; font-size: 1.75rem; }
+.hero-photo .btn { min-height: 32px; padding: 0 var(--s2); font-size: 0.85rem; }
+.hero-roles { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); margin-bottom: var(--s1); font-weight: 600; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: var(--s2); justify-content: flex-end; max-width: 360px; }
+@media (max-width: 760px) { .profile-hero { grid-template-columns: 1fr; text-align: center; justify-items: center; } .hero-roles, .hero-actions { justify-content: center; } }
+
+/* My story: a small book — contents on the left, one chapter per page. */
+.story { display: grid; grid-template-columns: minmax(200px, 260px) 1fr; gap: var(--s4); align-items: start; }
+.story-contents ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.story-contents button { width: 100%; text-align: left; font: inherit; background: none; border: 0; border-radius: var(--r-ctl); padding: var(--s2); min-height: 40px; cursor: pointer; color: var(--text); }
+.story-contents button:hover { background: var(--bg); }
+.story-contents button[aria-current='page'] { background: var(--teal-50); color: var(--teal-text); font-weight: 600; }
+.story-page { min-height: 420px; padding: var(--s6) clamp(var(--s4), 5vw, 72px); background: linear-gradient(90deg, rgb(23 50 77 / 0.05), transparent 24px), #fffdf8; border-left: 4px solid var(--teal); display: flex; flex-direction: column; }
+.story-cover { margin: auto; text-align: center; display: grid; justify-items: center; gap: var(--s3); max-width: 520px; }
+.story-cover h2 { font-family: Georgia, 'Times New Roman', serif; font-size: 2.4rem; margin: 0; }
+.story-intro { font-family: Georgia, 'Times New Roman', serif; font-style: italic; font-size: 1.15rem; color: var(--text-2); }
+.story-title { font-family: Georgia, 'Times New Roman', serif; font-size: 2rem; margin: var(--s2) 0 var(--s4); }
+.story-photo { display: block; width: 100%; max-height: 360px; object-fit: cover; border-radius: var(--r-ctl); margin-bottom: var(--s4); }
+.story-body { font-family: Georgia, 'Times New Roman', serif; font-size: 1.1rem; line-height: 1.75; flex: 1; }
+.story-body p:first-child::first-letter { float: left; font-size: 3.2rem; line-height: 0.9; padding: 6px 8px 0 0; color: var(--teal-text); font-weight: 700; }
+.story-nav { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); border-top: 1px solid var(--line); padding-top: var(--s4); margin-top: var(--s5); }
+.story-empty { text-align: center; display: grid; justify-items: center; gap: var(--s3); padding: var(--s6); color: var(--text-2); }
+.story-empty p { max-width: 520px; }
+.story-list li { gap: var(--s3); }
+@media (max-width: 760px) { .story { grid-template-columns: 1fr; } .story-page { padding: var(--s5) var(--s4); } }
+@media screen {
+  @keyframes turn-next { from { opacity: 0; transform: perspective(1200px) rotateY(-8deg) translateX(24px); } }
+  @keyframes turn-prev { from { opacity: 0; transform: perspective(1200px) rotateY(8deg) translateX(-24px); } }
+  .story-page.turn-next { animation: turn-next 280ms var(--ease-out); transform-origin: left center; }
+  .story-page.turn-prev { animation: turn-prev 280ms var(--ease-out); transform-origin: right center; }
+}

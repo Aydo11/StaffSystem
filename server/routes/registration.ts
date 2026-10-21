@@ -16,28 +16,9 @@ registrationPublic.get('/auth/organisations', async (_req, res) => {
   res.json(await q('select id, name from companies order by name'));
 });
 
-// Email is direct: raw verification tokens never enter audit or outbound delivery logs.
-async function verificationEmail(id: string) {
-  const token = newToken();
-  const row = await one(`update staff_registrations set verification_hash=$2,
-    verification_expires_at=now()+interval '24 hours', last_sent_at=now()
-    where id=$1 and status='pending' and email_verified_at is null
-      and (last_sent_at is null or last_sent_at < now()-interval '60 seconds') returning email`, [id, sha256(token)]);
-  if (!row) return;
-  try {
-    await sendEmail(row.email, 'Verify your Hub email address',
-      'Verify your email within 24 hours. An administrator must then approve your organisation request before you can sign in.', `/verify-email#token=${token}`);
-  } catch {
-    // Leave the request recoverable via resend, without logging the token/provider body.
-    await q('update staff_registrations set last_sent_at=null where id=$1 and verification_hash=$2', [id, sha256(token)]);
-    throw new HttpError(503, 'email_failed', 'We could not send the verification email. Use resend verification to try again.');
-  }
-}
-
 registrationPublic.post('/auth/register', limit, async (req, res) => {
   const b = parse(credentials.extend({ full_name: text(120).min(2), company_id: uuid.optional(), organisation_name: text(160).min(2).optional(), job_title: text(120).min(2) }), req.body);
   if (!!b.company_id === !!b.organisation_name) throw bad('Choose an organisation or request a new one.');
-  if (!emailReady()) throw new HttpError(503, 'email_unavailable', 'Email verification is temporarily unavailable. Contact your administrator.');
   if (b.password.toLowerCase().includes(b.email.split('@')[0])) throw bad('Do not include your email address in your password.');
   if (b.company_id && !await one('select id from companies where id=$1', [b.company_id])) throw bad('Choose an available organisation.');
   const hash = await hashPassword(b.password);
@@ -45,19 +26,12 @@ registrationPublic.post('/auth/register', limit, async (req, res) => {
   const r = await one(`insert into staff_registrations(email,full_name,password_hash,company_id,organisation_name,job_title)
     select $1,$2,$3,$4,$5,$6 where not exists(select 1 from people where lower(email)=lower($1))
     on conflict do nothing returning id`, [b.email,b.full_name,hash,b.company_id ?? null,b.organisation_name ?? null,b.job_title]);
-  if (r) await verificationEmail(r.id);
-  res.status(202).json({ ok: true });
-});
-
-registrationPublic.post('/auth/resend-verification', limit, async (req, res) => {
-  const b = parse(credentials, req.body);
-  const r = await one(`select id,password_hash from staff_registrations where lower(email)=lower($1) and status='pending' and email_verified_at is null`, [b.email]);
-  const valid = await verifyPassword(b.password, r?.password_hash ?? null);
-  if (valid && r && emailReady()) await verificationEmail(r.id);
+  if (r) await tellApprovers(r.id); // no email verification step: an administrator checks each request before approving
   res.status(202).json({ ok: true });
 });
 
 // Super admins, and people who can add staff in the requested company, get a notification and an email.
+// Links emailed before verification was removed still work at /auth/verify-email; they no longer gate approval.
 async function tellApprovers(id: string) {
   const r = await one('select full_name, job_title, company_id from staff_registrations where id = $1', [id]);
   const to = await q<{ id: string; email: string }>(`select distinct p.id, p.email from role_grants g join people p on p.id = g.person_id and p.status = 'active'
@@ -66,15 +40,14 @@ async function tellApprovers(id: string) {
        and (g.role_key = 'super_admin' or (rp.permission_key = 'staff.create' and g.company_id = $1))`, [r.company_id]);
   for (const a of to) {
     await notify(pool, a.id, r.company_id, `New sign-up request: ${r.full_name} (${r.job_title})`, '/admin/requests');
-    if (emailReady() && a.email) await sendEmail(a.email, 'A new staff sign-up is waiting for approval', 'Someone has verified their email and asked to join the Hub. Open the Admin Centre to approve or reject the request.', '/admin/requests').catch(() => {});
+    if (emailReady() && a.email) await sendEmail(a.email, 'A new staff sign-up is waiting for approval', 'Someone has asked to join the Hub. Check who they are, then approve or reject the request in the Admin Centre.', '/admin/requests').catch(() => {});
   }
 }
 registrationPublic.post('/auth/verify-email', limit, async (req, res) => {
   const { token } = parse(z.object({ token: z.string().min(20).max(100) }), req.body);
   const r = await one(`update staff_registrations set email_verified_at=now(),verification_hash=null,verification_expires_at=null
     where verification_hash=$1 and verification_expires_at>now() and email_verified_at is null and status='pending' returning id`, [sha256(token)]);
-  if (!r) throw bad('This verification link has expired or has already been used. Resend verification if needed.');
-  await tellApprovers(r.id);
+  if (!r) throw bad('This verification link has expired or has already been used.');
   res.json({ ok: true });
 });
 
@@ -97,7 +70,6 @@ registrationAdmin.post('/admin/registrations/:id/decide', async (req,res) => {
     if (r.status!=='pending') throw conflict('This request has already been decided.');
     let companyId=b.company_id ?? r.company_id;
     if (b.decision==='approved') {
-      if (!r.email_verified_at) throw conflict('The staff member must verify their email first.');
       if (b.new_organisation) {
         if (!req.access.superAdmin) throw forbidden();
         if (b.company_id) throw bad('Choose an existing organisation or create one.');

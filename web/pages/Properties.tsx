@@ -178,7 +178,7 @@ export function PropertyPage() {
 
         <section className="card" aria-labelledby="pc-h">
           <div className="row between"><h2 id="pc-h">Complaints</h2><Button variant="secondary" onClick={() => setDlg('complaint')}><Icon name="plus" size={18} />Log a complaint</Button></div>
-          <p className="small muted">Each complaint goes to the complaints manager as a task. It is resolved when they complete the task.</p>
+          <p className="small muted">Each complaint goes to the complaints manager as a task. It is resolved when they complete the task.{hub.can('governance.manage', p.company_id) && <> <Link to="/governance?tab=leads&set=complaints_oversight">Choose the complaints manager</Link></>}</p>
           {complaints.length === 0 ? <Empty>No complaints logged.</Empty> : (
             <details open={openComplaints.length > 0}><summary>{openComplaints.length} open · {complaints.length - openComplaints.length} resolved</summary>
               <ul className="list">{complaints.map((c: any) => (

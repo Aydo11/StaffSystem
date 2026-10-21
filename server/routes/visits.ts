@@ -7,6 +7,18 @@ import { ACTIVE_APPT, type Access, can, companiesWith, need, scope } from '../pe
 import { deleteFile, saveFile } from '../storage.ts';
 import { visitVisible } from '../visibility.ts';
 import { upload } from './people.ts';
+import { complaintBody, logComplaint, propertyOf, ratingBody, saveRating } from '../condition.ts';
+import { repairBody, reportRepair } from './estates.ts';
+
+// Optional extras saved with a visit, all or nothing with the visit itself: a house mood rating, a complaint and a repair.
+const extras = { rating: ratingBody.optional(), complaint: complaintBody.optional(), repair: repairBody.omit({ property_id: true }).optional() };
+async function saveExtras(db: Db, personId: string, v: { id: string; property_id: string }, b: { rating?: any; complaint?: any; repair?: any }) {
+  if (!b.rating && !b.complaint && !b.repair) return;
+  const p = await propertyOf(db, v.property_id);
+  if (b.rating) await saveRating(db, personId, p, v.id, b.rating);
+  if (b.complaint) await logComplaint(db, personId, p, v.id, b.complaint);
+  if (b.repair) await reportRepair(db, personId, p, b.repair);
+}
 
 export const visits = Router();
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
@@ -101,13 +113,14 @@ async function ownActive(db: Db, a: Access, id: string) {
 
 visits.post('/visits/:id/finish', async (req, res) => {
   const id = idParam(req.params.id);
-  const b = parse(z.object({ work_category: workCategory, summary }), req.body);
+  const b = parse(z.object({ work_category: workCategory, summary, ...extras }), req.body);
   const v = await tx(async (db) => {
     const cur = await ownActive(db, req.access, id);
     // The finish time is the server's clock when Save is pressed. A visit under a minute is still stored to the second.
     const row = await one(`update visits set ended_at = greatest(now(), started_at + interval '1 second'), status = 'submitted', submitted_at = now(), work_category = $2, summary = $3 where id = $1 returning *, ${MINUTES('visits')} as minutes`, [id, b.work_category, b.summary], db);
     if (cur.scheduled_visit_id) await q(`update scheduled_visits set status = 'completed', visit_id = $2 where id = $1 and status = 'scheduled'`, [cur.scheduled_visit_id, id], db);
     await audit(db, req.person.id, cur.company_id, 'visit', id, 'finish', {});
+    await saveExtras(db, req.person.id, cur, b);
     if (await autoApproveSupportWork(db, id)) row.status = 'approved';
     return row;
   });
@@ -151,7 +164,7 @@ visits.post('/visits/:id/ack-checkin', async (req, res) => {
 visits.post('/visits/manual', async (req, res) => {
   const b = parse(z.object({
     property_id: uuid, appointment_id: uuid, client_request_id: uuid, start_local: localDateTime,
-    minutes: z.coerce.number().int().min(1, 'At least 1 minute').max(720, 'No more than 12 hours'), work_category: workCategory, summary, confirm_unusual: z.boolean().optional(),
+    minutes: z.coerce.number().int().min(1, 'At least 1 minute').max(720, 'No more than 12 hours'), work_category: workCategory, summary, confirm_unusual: z.boolean().optional(), ...extras,
   }), req.body);
   const prior = await one('select id, person_id from visits where client_request_id = $1', [b.client_request_id]);
   if (prior) {
@@ -172,6 +185,7 @@ visits.post('/visits/manual', async (req, res) => {
                          values ($1,$2,$3,$4,'manual','submitted',$5,$6,$7,$8, now(), $9) returning *`,
       [req.person.id, ap.id, ap.company_id, b.property_id, t.s, t.e, b.work_category, b.summary, b.client_request_id], db);
     await audit(db, req.person.id, ap.company_id, 'visit', v.id, 'manual_entry', { minutes: b.minutes });
+    await saveExtras(db, req.person.id, v, b);
     if (await autoApproveSupportWork(db, v.id)) v.status = 'approved';
     return { visit: v, warnings };
   });

@@ -18,7 +18,7 @@ async function membership(a: Access, conversationId: string, db: Db = pool) {
 }
 async function currentInCompany(db: Db, personIds: string[], companyId: string) {
   const ok = await q<{ person_id: string }>(`select distinct a.person_id from appointments a where a.company_id = $1 and a.person_id = any($2::uuid[]) and ${ACTIVE_APPT('a')}`, [companyId, personIds], db);
-  if (ok.length !== new Set(personIds).size) throw bad('Everyone in a conversation must have a current appointment with its company.');
+  if (ok.length !== new Set(personIds).size) throw bad('Everyone in a conversation must have a current role with its company.');
 }
 
 messaging.get('/conversations', async (req, res) => {

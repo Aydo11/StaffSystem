@@ -38,7 +38,7 @@ export function Properties() {
         </div>
       </div>
       {list.error && <LoadError error={list.error} retry={list.reload} />}
-      {list.loading && !list.data ? <Skeleton lines={6} /> : rows.length === 0 ? <Empty>{mine ? 'No properties are allocated to you yet. Your manager allocates properties to your appointment.' : 'No properties match.'}</Empty> : view === 'cards' ? (
+      {list.loading && !list.data ? <Skeleton lines={6} /> : rows.length === 0 ? <Empty>{mine ? 'No properties are allocated to you yet. Your manager allocates properties to your role.' : 'No properties match.'}</Empty> : view === 'cards' ? (
         <ul className="grid" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {rows.map((p) => (
             <li key={p.id} className="card prop-card">

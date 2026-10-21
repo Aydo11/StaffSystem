@@ -147,9 +147,9 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
           and x.review_due <= ${LONDON_TODAY} + 14 and not exists (select 1 from competency_assessments y where y.person_id = x.person_id and y.competency_id = x.competency_id and y.assessed_on > x.assessed_on)
         order by x.person_id, x.competency_id`, [scope(a, 'competence.assess', company), me]),
     q(`select 'staff_request' kind, 'Sign-up request: ' || r.full_name || ' (' || r.job_title || ')' title, coalesce(c.name, 'New organisation: ' || r.organisation_name) company_name, c.code company_code, c.id company_id,
-              (r.email_verified_at at time zone 'Europe/London')::date::text due, 'You (administrator)' owner, 'Check who they are, then approve or reject' next_step, '/admin/requests' link, 'action' severity
+              (r.created_at at time zone 'Europe/London')::date::text due, 'You (administrator)' owner, 'Check who they are, then approve or reject' next_step, '/admin/requests' link, 'action' severity
          from staff_registrations r left join companies c on c.id = r.company_id
-        where r.status = 'pending' and r.email_verified_at is not null and (r.company_id = any($1::uuid[]) or $2)`,
+        where r.status = 'pending' and (r.company_id = any($1::uuid[]) or $2)`,
       [scope(a, 'staff.create', company).filter((c) => a.perms.get(c)?.has('appointments.manage')), a.superAdmin && !company]),
   ]);
   return sets.flat() as InboxItem[];

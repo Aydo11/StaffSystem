@@ -123,7 +123,7 @@ finance.post('/finance/submissions', async (req, res) => {
   const b = parse(z.object({ company_id: uuid, kind: z.enum(['contractor_invoice', 'expense_claim']), reference: text(200).nullable().optional(), period_start: isoDate.nullable().optional(), period_end: isoDate.nullable().optional(),
     property_id: uuid.nullable().optional(), notes: text(2000).nullable().optional(), lines: z.array(lineSchema).min(1).max(50) }), req.body);
   const ap = await one(`select a.*, c.legal_name, c.name as company_name from appointments a join companies c on c.id = a.company_id where a.person_id = $1 and a.company_id = $2 and ${ACTIVE_APPT('a')} order by a.relationship = 'contractor' desc limit 1`, [req.person.id, b.company_id]);
-  if (!ap) throw bad('You need a current appointment with this company.');
+  if (!ap) throw bad('You need a current role with this company.');
   if (b.kind === 'contractor_invoice' && ap.relationship !== 'contractor') throw bad('Only contractors submit invoices. For costs you paid yourself, make an expense claim.');
   const d = await tx(async (db) => {
     const row = await one(`insert into finance_documents (company_id, kind, direction, issuer_name, recipient_name, submitted_by, reference, period_start, period_end, property_id, notes, status, created_by)

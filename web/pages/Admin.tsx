@@ -22,6 +22,7 @@ const CARDS: { title: string; help: string; to?: string; perm?: string; stage?: 
   { title: 'Templates', help: 'Versioned job descriptions, competencies with rubrics, and onboarding checklists.', to: 'templates', perm: 'jobs.manage' },
   { title: 'Training', help: 'Training matrix, requirements, courses and quizzes.', to: '/training?tab=manage', perm: 'training.manage' },
   { title: 'Policies', help: 'Policies and staff handbooks: drafting, approval, adoption and who has read them.', to: '/policies', perm: 'policies.manage' },
+  { title: 'Complaints manager', help: 'Choose who receives complaints logged at each company’s properties.', to: '/governance?tab=leads', perm: 'governance.manage' },
   { title: 'Governance', help: 'Leads, meetings, decisions, risks, audits, actions, quality summaries and framework mapping.', to: '/governance', perm: 'governance.manage' },
   { title: 'Finance', help: 'Numbering, payment details, VAT and self-billing settings; budgets and cash flow.', to: '/finance?tab=settings', perm: 'finance.manage' },
   { title: 'Integrations', help: 'Email delivery status and log. WhatsApp is paused; the AI assistant is stage 8.', to: 'integrations', perm: 'messaging.configure' },

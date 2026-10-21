@@ -133,16 +133,21 @@ estates.get('/repairs/:id', async (req, res) => {
     files: await q(`select id, original_name, uploaded_at from files where entity_type = 'repair' and entity_id = $1`, [r.id]),
     can: { manage, work: manage || agentWork || assignee, next: NEXT[r.status].filter((s) => (s === 'closed' || s === 'triaged' || s === 'assigned') ? manage : true) } });
 });
-estates.post('/repairs', async (req, res) => {
-  const b = parse(z.object({ property_id: uuid, title: text(200).min(3), description: text(4000).nullable().optional(), impact: text(1000).nullable().optional(), urgency: z.enum(['emergency', 'urgent', 'routine']), immediate_action: text(2000).nullable().optional() }), req.body);
+export const repairBody = z.object({ property_id: uuid, title: text(200).min(3), description: text(4000).nullable().optional(), impact: text(1000).nullable().optional(), urgency: z.enum(['emergency', 'urgent', 'routine']), immediate_action: text(2000).nullable().optional() });
+// Shared with the visit finish form, which can report a repair in the same save.
+export async function reportRepair(db: Db, personId: string, p: { id: string; company_id: string; name: string; manager_person_id: string | null }, b: Omit<z.infer<typeof repairBody>, 'property_id'>) {
   for (const t of [b.title, b.description, b.impact]) if (!noResidents(t)) throw bad(residentMsg);
-  const { p } = await propertyAccess(req.access, b.property_id);
   const r = await one(`insert into repairs (company_id, property_id, title, description, impact, urgency, immediate_action, reported_by, due_on) values ($1,$2,$3,$4,$5,$6,$7,$8,
                          ${LONDON_TODAY} + case $6 when 'emergency' then 1 when 'urgent' then 7 else 28 end) returning *`,
-    [p.company_id, p.id, b.title, b.description ?? null, b.impact ?? null, b.urgency, b.immediate_action ?? null, req.person.id]);
-  if (p.manager_person_id && p.manager_person_id !== req.person.id) await notify(pool, p.manager_person_id, p.company_id, `${b.urgency === 'emergency' ? 'EMERGENCY repair' : 'Repair reported'}: ${b.title} at ${p.name}`, `/estates/repairs/${r.id}`);
-  await audit(pool, req.person.id, p.company_id, 'repair', r.id, 'report', { urgency: b.urgency });
-  res.status(201).json(r);
+    [p.company_id, p.id, b.title, b.description ?? null, b.impact ?? null, b.urgency, b.immediate_action ?? null, personId], db);
+  if (p.manager_person_id && p.manager_person_id !== personId) await notify(db, p.manager_person_id, p.company_id, `${b.urgency === 'emergency' ? 'EMERGENCY repair' : 'Repair reported'}: ${b.title} at ${p.name}`, `/estates/repairs/${r.id}`);
+  await audit(db, personId, p.company_id, 'repair', r.id, 'report', { urgency: b.urgency });
+  return r;
+}
+estates.post('/repairs', async (req, res) => {
+  const b = parse(repairBody, req.body);
+  const { p } = await propertyAccess(req.access, b.property_id);
+  res.status(201).json(await reportRepair(pool, req.person.id, p, b));
 });
 estates.patch('/repairs/:id', async (req, res) => {
   const { r, manage } = await loadRepair(req.access, idParam(req.params.id));

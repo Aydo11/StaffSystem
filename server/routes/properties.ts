@@ -7,6 +7,7 @@ import { deleteFile, readFile, saveFile } from '../storage.ts';
 import { onLeave } from './leave.ts';
 import { propertyVisible, taskVisible, visitVisible } from '../visibility.ts';
 import { upload } from './people.ts';
+import { complaintBody, conditionLists, logComplaint } from '../condition.ts';
 
 export const properties = Router();
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
@@ -36,8 +37,11 @@ properties.get('/properties', async (req, res) => {
            (select count(*) from tasks t where t.property_id = p.id and t.status <> 'completed' and ${taskVisible('t', 1, 4)}) as open_tasks,
            (select coalesce(sum(s.planned_minutes), 0) from scheduled_visits s where s.property_id = p.id and s.status <> 'cancelled' and s.planned_start >= ${MONTH}) as planned_minutes_month,
            (select coalesce(sum(extract(epoch from v.ended_at - v.started_at) / 60), 0)::int from visits v where v.property_id = p.id and v.status in ('submitted','approved') and v.started_at >= ${MONTH}) as recorded_minutes_month,
-           (select coalesce(sum(va.minutes), 0) from visit_allocations va join visits v on v.id = va.visit_id where v.property_id = p.id and v.status = 'approved' and v.started_at >= ${MONTH}) as approved_minutes_month
-      from properties p join companies c on c.id = p.company_id left join people m on m.id = p.manager_person_id
+           (select coalesce(sum(va.minutes), 0) from visit_allocations va join visits v on v.id = va.visit_id where v.property_id = p.id and v.status = 'approved' and v.started_at >= ${MONTH}) as approved_minutes_month,
+           pc.score as condition_score, pc.aspects as condition_aspects,
+           (select count(*)::int from property_complaints k join tasks t on t.id = k.task_id where k.property_id = p.id and t.status <> 'completed') as open_complaints,
+           (select count(*)::int from repairs r where r.property_id = p.id and r.status <> 'closed') as open_repairs
+      from properties p join companies c on c.id = p.company_id left join people m on m.id = p.manager_person_id left join property_condition pc on pc.property_id = p.id
      where ${propertyVisible('p', 1, 2)} and ($5::uuid is null or p.company_id = $5) and p.status <> 'offboarded'
      order by allocated_to_me desc, p.ref`,
     [a.personId, companiesWith(a, 'properties.view'), companiesWith(a, 'visits.approve').concat(companiesWith(a, 'properties.manage')), companiesWith(a, 'tasks.view_all'), company]);
@@ -72,7 +76,15 @@ properties.get('/properties/:id', async (req, res) => {
     q(`select f.id, f.original_name, f.uploaded_at, v.id as visit_id, v.started_at, ${name('w')} as person_name from files f join visits v on v.id = f.entity_id join people w on w.id = v.person_id
         where f.entity_type = 'visit' and v.property_id = $1 and v.status <> 'cancelled' and ${visitVisible('v', 2, 3)} order by f.uploaded_at desc limit 24`, [id, a.personId, companiesWith(a, 'visits.view_all')]),
   ]);
-  res.json({ property: { ...p, has_photo: !!p.photo_path, photo_path: undefined }, links, keys, allocations, tasks, visits, scheduled, photos, my_appointments: mine?.my_appointments ?? [], can: { manage, assign: companiesWith(a, 'appointments.manage').length > 0 } });
+  const [condition, complaints, repairs] = await conditionLists(pool, id);
+  res.json({ property: { ...p, has_photo: !!p.photo_path, photo_path: undefined }, links, keys, allocations, tasks, visits, scheduled, photos, condition, complaints, repairs, my_appointments: mine?.my_appointments ?? [], can: { manage, assign: companiesWith(a, 'appointments.manage').length > 0 } });
+});
+
+// Any staff member who can see the property can log a complaint; it becomes a task for the complaints lead.
+properties.post('/properties/:id/complaints', async (req, res) => {
+  const p = await visibleProperty(req.access, idParam(req.params.id));
+  const b = parse(complaintBody, req.body);
+  res.status(201).json(await tx((db) => logComplaint(db, req.person.id, p, null, b)));
 });
 
 // Current or planned appointments a manager could allocate to this property (its company or an authorised linked one), not already allocated.

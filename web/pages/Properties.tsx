@@ -6,6 +6,7 @@ import { useHub } from '../hub.tsx';
 import { AllocateDialog } from '../allocate.tsx';
 import { Avatar, Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, LoadError, PageHead, PhotoGrid, Skeleton, Status, useToast } from '../ui.tsx';
 import { StartVisitDialog } from './Visits.tsx';
+import { ASPECTS, blankExtras, CATEGORIES, ComplaintFields, ConditionBar, SOURCES, Stars, suggestions, tone } from '../condition.tsx';
 
 function Photo({ id, has, name }: { id: string; has: boolean; name: string }) {
   const [src, setSrc] = useState<string | null>(null);
@@ -41,13 +42,19 @@ export function Properties() {
       {list.loading && !list.data ? <Skeleton lines={6} /> : rows.length === 0 ? <Empty>{mine ? 'No properties are allocated to you yet. Your manager allocates properties to your role.' : 'No properties match.'}</Empty> : view === 'cards' ? (
         <ul className="grid" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {rows.map((p) => (
-            <li key={p.id} className="card prop-card">
+            <li key={p.id} className={`card prop-card glow-${tone(p.condition_score)}`}>
               <Photo id={p.id} has={p.has_photo} name={p.name} />
               <div className="prop-body">
                 <div className="row between"><h3 style={{ margin: 0 }}><Link to={`/properties/${p.id}`}>{p.name}</Link></h3><CompanyBadge code={p.company_code} name={p.company_name} /></div>
                 <div className="muted small">{p.ref} · {p.address_line1}, {p.postcode}</div>
                 {p.status !== 'active' && <div><Status s={p.status} /></div>}
                 <div className="small">Next visit: <strong>{p.next_visit ? `${fmtDay(p.next_visit)} ${fmtTime(p.next_visit)}` : 'none planned'}</strong><br />Last visit: {p.last_visit ? fmtDate(p.last_visit) : 'none recorded'} · Open tasks: {p.open_tasks}</div>
+                <ConditionBar score={p.condition_score} compact />
+                {(p.open_complaints > 0 || p.open_repairs > 0 || tone(p.condition_score) === 'low') && (
+                  <details className="prop-tips"><summary>{[p.open_complaints && `${p.open_complaints} open complaint${p.open_complaints === 1 ? '' : 's'}`, p.open_repairs && `${p.open_repairs} repair${p.open_repairs === 1 ? '' : 's'}`].filter(Boolean).join(' · ') || 'Suggestions'}</summary>
+                    <ul>{suggestions(p.condition_aspects, p.open_complaints, p.open_repairs).slice(0, 3).map((t) => <li key={t}>{t}</li>)}</ul>
+                  </details>
+                )}
                 <div className="hours" aria-label="Hours this month">
                   <div><span className="muted">Planned</span><strong>{fmtMinutes(p.planned_minutes_month)}</strong></div>
                   <div><span className="muted">Recorded</span><strong>{fmtMinutes(p.recorded_minutes_month)}</strong></div>
@@ -122,7 +129,8 @@ export function PropertyPage() {
   const hub = useHub();
   const d = useApi<any>(`/properties/${id}`);
   const toast = useToast();
-  const [dlg, setDlg] = useState<null | 'start' | 'edit' | 'key' | 'issue' | 'schedule' | 'assign'>(null);
+  const [dlg, setDlg] = useState<null | 'start' | 'edit' | 'key' | 'issue' | 'schedule' | 'assign' | 'complaint'>(null);
+  const [complaint, setComplaint] = useState(blankExtras().complaint);
   const [keyId, setKeyId] = useState('');
   const [form, setForm] = useState<any>({});
   const [progress, setProgress] = useState<number | null>(null);
@@ -135,10 +143,13 @@ export function PropertyPage() {
   const staff = useApi<any[]>(dlg === 'schedule' && d.data ? `/people?company=${d.data.property.company_id}` : null);
   const assignable = useApi<any[]>(dlg === 'assign' ? `/properties/${id}/assignable` : null);
   const endAlloc = useSubmit(async (aid: string) => { await post(`/appointment-properties/${aid}/end`); toast('Allocation ended.'); d.reload(); });
+  const logComplaint = useSubmit(async () => { await post(`/properties/${id}/complaints`, complaint); setDlg(null); setComplaint(blankExtras().complaint); toast('Complaint logged and sent to the complaints manager.'); d.reload(); });
 
   if (d.error) return <LoadError error={d.error} retry={d.reload} />;
   if (!d.data) return <Skeleton lines={8} />;
-  const { property: p, keys, allocations, tasks, visits, scheduled, links, my_appointments, can, photos } = d.data;
+  const { property: p, keys, allocations, tasks, visits, scheduled, links, my_appointments, can, photos, condition, complaints, repairs } = d.data;
+  const openComplaints = complaints.filter((c: any) => c.task_status !== 'completed');
+  const tips = suggestions(condition.aspects, openComplaints.length, repairs.length);
   const current = allocations.filter((a: any) => !a.to_date);
   const canPlan = hub.can('visits.approve', p.company_id);
 
@@ -150,6 +161,40 @@ export function PropertyPage() {
           {can.manage && <Button variant="secondary" onClick={() => setDlg('edit')}>Edit</Button>}
         </>} />
       <div className="grid-2">
+        <section className={`card cond-card glow-${tone(condition.score)}`} aria-labelledby="hc-h">
+          <h2 id="hc-h">House mood</h2>
+          <ConditionBar score={condition.score} />
+          <p className="small muted">{condition.score == null ? 'Rate the home when you finish a visit and the score appears here.' : `From the latest rating of each part of the home (${condition.ratings_count} rating${condition.ratings_count === 1 ? '' : 's'} in the last 12 months, latest ${fmtDate(condition.rated_at)}).`}</p>
+          {condition.aspects && (
+            <ul className="aspects">{ASPECTS.filter(([k]) => condition.aspects[k] != null).map(([k, t]) => (
+              <li key={k} className={`tone-${tone(condition.aspects[k] * 20)}`}><span>{t}</span><Stars n={condition.aspects[k]} /></li>
+            ))}</ul>
+          )}
+          {condition.latest_note && <p className="notice"><strong>Latest note:</strong> {condition.latest_note}</p>}
+          {tips.length > 0 && (
+            <details className="prop-tips" open={tone(condition.score) === 'low'}><summary>Suggested improvements ({tips.length})</summary><ul>{tips.map((t) => <li key={t}>{t}</li>)}</ul></details>
+          )}
+        </section>
+
+        <section className="card" aria-labelledby="pc-h">
+          <div className="row between"><h2 id="pc-h">Complaints</h2><Button variant="secondary" onClick={() => setDlg('complaint')}><Icon name="plus" size={18} />Log a complaint</Button></div>
+          <p className="small muted">Each complaint goes to the complaints manager as a task. It is resolved when they complete the task.</p>
+          {complaints.length === 0 ? <Empty>No complaints logged.</Empty> : (
+            <details open={openComplaints.length > 0}><summary>{openComplaints.length} open · {complaints.length - openComplaints.length} resolved</summary>
+              <ul className="list">{complaints.map((c: any) => (
+                <li key={c.id}>
+                  <span><strong>{CATEGORIES.find(([k]) => k === c.category)?.[1]}</strong> · from {SOURCES.find(([k]) => k === c.source)?.[1].toLowerCase()}<br />
+                    <span className="small">{c.summary}</span><br />
+                    <span className="muted small">Logged by {c.raised_by_name}, {fmtDate(c.created_at)} · {c.handler_name ? `with ${c.handler_name}` : 'no complaints manager set'}{c.task_id && <> · <Link to={`/tasks/${c.task_id}`}>task</Link></>}</span></span>
+                  <Status s={c.task_status === 'completed' ? 'completed' : c.task_status ?? 'not_started'} text={c.task_status === 'completed' ? 'Resolved' : c.task_status === 'in_progress' ? 'Being handled' : 'Open'} />
+                </li>
+              ))}</ul>
+            </details>
+          )}
+          <h3 style={{ marginTop: 20 }}>Maintenance</h3>
+          {repairs.length === 0 ? <p className="muted">No open repairs.</p> : <details><summary>{repairs.length} open repair{repairs.length === 1 ? '' : 's'}</summary><ul className="list">{repairs.map((r: any) => <li key={r.id}><Link to={`/estates/repairs/${r.id}`}>{r.title}</Link><span className="small muted">{label(r.urgency)} · due {fmtDate(r.due_on)}</span></li>)}</ul></details>}
+        </section>
+
         <section className="card" aria-labelledby="pd-h">
           <h2 id="pd-h">Details</h2>
           <Photo id={p.id} has={p.has_photo} name={p.name} />
@@ -236,6 +281,10 @@ export function PropertyPage() {
           options={assignable.data?.map((x) => ({ key: x.id, appointmentId: x.id, propertyId: p.id, title: x.person_name, sub: x.job_title, companyCode: x.company_code, personId: x.person_id, hasPhoto: x.has_photo })) ?? null}
           onClose={() => setDlg(null)} onDone={() => { setDlg(null); d.reload(); }} />
       )}
+      <Dialog open={dlg === 'complaint'} onClose={() => setDlg(null)} title={`Log a complaint at ${p.name}`} footer={<Button busy={logComplaint.busy} onClick={() => logComplaint.run()}>Send to complaints manager</Button>}>
+        <ErrorSummary error={logComplaint.error} />
+        <ComplaintFields value={complaint} onChange={setComplaint} error={logComplaint.error?.fields.summary} />
+      </Dialog>
       {dlg === 'start' && <StartVisitDialog property={{ ...p, my_appointments }} onClose={() => setDlg(null)} />}
       {dlg === 'edit' && <PropertyForm existing={p} onClose={() => setDlg(null)} onSaved={() => { setDlg(null); d.reload(); }} />}
       <Dialog open={dlg === 'key'} onClose={() => setDlg(null)} title="Add a key or item" variant="modal" footer={<Button busy={addKey.busy} onClick={() => addKey.run()}>Add</Button>}>

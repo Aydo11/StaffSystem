@@ -56,3 +56,8 @@ Stage 5 done (migration 005, `routes/training.ts`, `routes/policies.ts`, `web/pa
 - Chat (`web/pages/Messages.tsx` `ChatShell`/`ChatThread`): list beside the open chat (one at a time on phones), bubbles with avatars, inline photos, emoji picker, paste-an-image, Enter to send, polling every 4 s (list 8 s). Groups are the existing `team` kind ("Group" in the UI).
 - Reactions: migration 015 `message_reactions`, `POST /messages/:id/reactions` toggles one of `REACTIONS` (members only). Photo-only messages allowed (body may be empty when a file is attached).
 - KPIs for each person: `GET /kpis/team?company&month` (performance.view_all), Performance → KPIs → "Each person" table; a name opens their full KPIs. Tests: `tests/chat.test.ts`.
+
+## My story, profile layout and wording (21 Oct 2026)
+- "My story" (migration 016, `web/pages/Story.tsx`, `/people/:id/story*` in routes/people.ts): chapters written only by the person; `people.story_visibility` private/managers/colleagues decides readers (`canReadStory`, also gates `story` photos in /files/:id). Tests: `tests/story.test.ts`.
+- Profile: summary card (photo, current roles, contact, actions) above tabs Overview · Story · Skills & documents · Roles · Development…; tab kept in `?tab=`.
+- UI says "role" for an appointment (owner request); tables, routes, permission keys and `type: 'appointment'` values keep the old name.

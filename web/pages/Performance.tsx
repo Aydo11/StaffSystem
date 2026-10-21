@@ -348,7 +348,7 @@ function Supervision() {
         <section className="card" aria-labelledby="due-h">
           <div className="row between"><h2 id="due-h">Supervision due</h2><Button onClick={() => setCreating({})}>Record a session</Button></div>
           <p className="small muted">Due 8 weeks after the last completed session unless a next date was agreed.</p>
-          {due.loading && !due.data ? <Skeleton /> : (due.data ?? []).length === 0 ? <Empty>No current appointments in view.</Empty> : (
+          {due.loading && !due.data ? <Skeleton /> : (due.data ?? []).length === 0 ? <Empty>No current roles in view.</Empty> : (
             <ul className="list">{due.data!.map((p) => {
               const overdue = !p.due_on || p.due_on < today;
               return <li key={`${p.person_id}${p.company_id}`}><span><strong>{p.person_name}</strong> <CompanyBadge code={p.company_code} name={p.company_name} /><br /><span className="muted small">{p.job_title} · last {p.last_held ? fmtDate(p.last_held) : 'never recorded'}</span></span>

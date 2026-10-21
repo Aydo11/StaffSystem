@@ -22,22 +22,26 @@ export async function saveRating(db: Db, personId: string, p: Property, visitId:
     [p.company_id, p.id, visitId, personId, ...vals, r.note || null], db);
 }
 
-// The complaints lead for the company (Governance → Accountability), then their deputy, then the property's manager.
-async function complaintsHandler(db: Db, p: Property) {
-  const l = await one<{ id: string }>(`select x.id from governance_leads g cross join lateral (values (g.lead_person_id, 1), (g.deputy_person_id, 2), ($2::uuid, 3)) x(id, rank)
-                                         join appointments a on a.person_id = x.id and a.company_id = g.company_id and ${ACTIVE_APPT('a')}
-                                        where g.company_id = $1 and g.area = 'complaints_oversight' and g.to_date is null and x.id is not null order by x.rank limit 1`, [p.company_id, p.manager_person_id], db);
-  return l?.id ?? p.manager_person_id;
+// Complaints managers for the company (Governance → Leads and accountability). The task goes to the lead with the fewest
+// open complaints (then a deputy, then the property's manager); every other complaints manager is told about it too.
+async function complaintsHandlers(db: Db, p: Property) {
+  const rows = await q<{ id: string; role: string }>(`select g.person_id as id, g.role from governance_leads g
+      join appointments a on a.person_id = g.person_id and a.company_id = g.company_id and ${ACTIVE_APPT('a')}
+     where g.company_id = $1 and g.area = 'complaints_oversight' and g.to_date is null
+     group by g.person_id, g.role
+     order by g.role = 'deputy', (select count(*) from property_complaints c join tasks t on t.id = c.task_id where t.owner_id = g.person_id and t.status <> 'completed'), min(g.created_at)`, [p.company_id], db);
+  return { owner: rows[0]?.id ?? p.manager_person_id, others: rows.slice(1).filter((r) => r.role === 'lead').map((r) => r.id) };
 }
 
 export async function logComplaint(db: Db, personId: string, p: Property, visitId: string | null, b: z.infer<typeof complaintBody>) {
-  const owner = await complaintsHandler(db, p);
+  const { owner, others } = await complaintsHandlers(db, p);
   const label = b.category.replace('_', ' ');
   const t = await one(`insert into tasks (company_id, property_id, title, description, owner_id, created_by, due_on, priority) values ($1,$2,$3,$4,$5,$6, ${LONDON_TODAY} + 10, 'high') returning id`,
     [p.company_id, p.id, `Complaint (${label}) at ${p.name}`, `Logged by staff from a ${b.source}.\n\n${b.summary}\n\nInvestigate, respond and record what was done, then complete this task to resolve the complaint.`, owner, personId], db);
   const c = await one(`insert into property_complaints (company_id, property_id, visit_id, raised_by, source, category, summary, task_id) values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
     [p.company_id, p.id, visitId, personId, b.source, b.category, b.summary, t!.id], db);
   if (owner && owner !== personId) await notify(db, owner, p.company_id, `New complaint at ${p.name} (${label})`, `/tasks/${t!.id}`);
+  for (const o of others) if (o !== personId) await notify(db, o, p.company_id, `Complaint at ${p.name} (${label}) — assigned to a colleague`, `/properties/${p.id}`);
   await audit(db, personId, p.company_id, 'property_complaint', c!.id, 'log', { category: b.category, task_id: t!.id }); // no complaint text in the audit log
   return c;
 }

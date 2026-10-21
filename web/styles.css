@@ -621,3 +621,50 @@ a.news-lead:hover h2, a.news-card:hover h3 { color: var(--teal-text); text-decor
 }
 .news-article .photo-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--s4); }
 .news-article .photo-tile { aspect-ratio: 4 / 3; border-radius: var(--r-card); }
+
+/* House mood: a coloured bar and a glow round the card — red needs attention, amber fair, green good. */
+.cond { --c: var(--line-strong); --ct: var(--text-2); margin: var(--s2) 0; }
+.cond-low { --c: #d92d20; --ct: var(--danger); } .cond-mid { --c: #c2700a; --ct: var(--warn); } .cond-high { --c: #1f8a4c; --ct: var(--ok); }
+.cond-head { display: flex; justify-content: space-between; gap: var(--s2); font-size: 0.875rem; color: var(--text-2); margin-bottom: 4px; }
+.cond-head strong { color: var(--ct); }
+.cond-word { font-weight: 500; }
+.cond-track { height: 10px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.cond.compact .cond-track { height: 8px; }
+.cond-track span { display: block; height: 100%; border-radius: inherit; background: var(--c); }
+.glow-low { box-shadow: 0 0 0 2px #d92d20, 0 0 22px rgb(217 45 32 / 0.35); }
+.glow-mid { box-shadow: 0 0 0 2px #c2700a, 0 0 18px rgb(194 112 10 / 0.25); }
+.glow-high { box-shadow: 0 0 0 2px #1f8a4c, 0 0 14px rgb(31 138 76 / 0.18); }
+@media screen {
+  .cond-track span { animation: cond-fill 280ms var(--ease-out); transform-origin: left; }
+  @keyframes cond-fill { from { transform: scaleX(0); } }
+}
+.prop-tips { font-size: 0.875rem; margin: var(--s2) 0; }
+.prop-tips summary { cursor: pointer; font-weight: 600; color: var(--teal-text); }
+.prop-tips ul { margin: var(--s2) 0 0; padding-left: 1.2em; }
+.aspects { list-style: none; margin: var(--s3) 0; padding: 0; display: grid; gap: var(--s2); }
+.aspects li { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-radius: var(--r-ctl); background: var(--bg); border-left: 4px solid var(--line-strong); }
+.aspects li.tone-low { border-left-color: #d92d20; } .aspects li.tone-mid { border-left-color: #c2700a; } .aspects li.tone-high { border-left-color: #1f8a4c; }
+.stars { letter-spacing: 2px; color: var(--line-strong); font-size: 1.1rem; }
+.stars .on { color: #b7791f; }
+
+/* Visit form: three fold-away sections so it isn't cramped. */
+.extras { display: grid; gap: var(--s3); margin-top: var(--s4); }
+.extra { border: 1px solid var(--line); border-radius: var(--r-card); background: var(--card); }
+.extra > summary { display: flex; align-items: center; gap: var(--s2); padding: var(--s3) var(--s4); cursor: pointer; font-weight: 650; list-style: none; min-height: 48px; }
+.extra > summary::-webkit-details-marker { display: none; }
+.extra > summary::after { content: '▾'; margin-left: var(--s2); color: var(--text-2); }
+.extra[open] > summary::after { content: '▴'; }
+.extra > summary > span:first-of-type { flex: 1; }
+.extra-state { font-size: 0.8rem; font-weight: 500; color: var(--text-2); }
+.extra .req { font-size: 0.75rem; font-weight: 600; color: var(--danger); margin-left: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+.extra-body { padding: 0 var(--s4) var(--s4); }
+.star-input { border: 0; padding: 0; margin: 0 0 var(--s3); }
+.star-input legend { font-weight: 600; margin-bottom: 2px; }
+.star-row { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.star-row label { position: relative; display: inline-grid; place-items: center; min-width: 40px; min-height: 40px; font-size: 1.6rem; color: var(--line-strong); cursor: pointer; border-radius: var(--r-ctl); }
+.star-row label.on { color: #b7791f; }
+.star-row label:focus-within { outline: 3px solid var(--teal); outline-offset: 1px; }
+.star-row .star-na { font-size: 0.85rem; padding: 0 10px; margin-left: var(--s2); border: 1px solid var(--line); color: var(--text-2); }
+.star-row .star-na.picked { background: var(--bg); color: var(--text); border-color: var(--line-strong); }
+.grid-2.tight { gap: var(--s3); }
+@media screen { .star-row label:not(.star-na) { transition: transform 120ms var(--ease-out); } .star-row label:not(.star-na):active { transform: scale(0.88); } }

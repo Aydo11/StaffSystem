@@ -37,7 +37,7 @@ export function ImportPage() {
     <>
       <PageHead title="Import from a spreadsheet" crumbs={[['Admin Centre', '/admin'], ['Import']]} intro="Upload a CSV, match its columns, check the preview, then import. Existing records are never changed: duplicates are skipped and listed." />
       <section className="card">
-        <Chips label="What to import" value={entity} onChange={setEntity} options={[['people', 'People with an appointment'], ['properties', 'Properties']]} />
+        <Chips label="What to import" value={entity} onChange={setEntity} options={[['people', 'People with a role'], ['properties', 'Properties']]} />
         <div className="form-grid" style={{ marginTop: 12 }}>
           <Field label="Company"><select name="company" value={company} onChange={(e) => setCompany(e.target.value)}>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
           <FilePicker label="CSV file" accept=".csv,text/csv" onChange={(fs) => pick(fs[0])} />

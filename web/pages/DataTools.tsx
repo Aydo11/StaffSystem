@@ -37,7 +37,7 @@ export function ImportPage() {
     <>
       <PageHead title="Import from a spreadsheet" crumbs={[['Admin Centre', '/admin'], ['Import']]} intro="Upload a CSV, match its columns, check the preview, then import. Existing records are never changed: duplicates are skipped and listed." />
       <section className="card">
-        <Chips label="What to import" value={entity} onChange={setEntity} options={[['people', 'People with a role'], ['properties', 'Properties']]} />
+        <Chips label="What to import" value={entity} onChange={setEntity} options={[['people', 'People with an appointment'], ['properties', 'Properties']]} />
         <div className="form-grid" style={{ marginTop: 12 }}>
           <Field label="Company"><select name="company" value={company} onChange={(e) => setCompany(e.target.value)}>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
           <FilePicker label="CSV file" accept=".csv,text/csv" onChange={(fs) => pick(fs[0])} />
@@ -149,7 +149,7 @@ export function SignInAccess({ person, isMe }: { person: any; isMe: boolean }) {
   const [f, setF] = useState({ current: '', password: '', reset_mfa: false, reason: '' });
   const [result, setResult] = useState<any>(null);
   const change = useSubmit(async () => {
-    if (f.password.length < 12) throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields: { password: 'Use at least 12 characters' } });
+    if (f.password.length < 8) throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields: { password: 'Use at least 8 characters' } });
     await post('/auth/password', { current: f.current, password: f.password }); setOpen(false); toast('Password changed. Other devices have been signed out.');
   });
   const issue = useSubmit(async () => setResult(await post(`/people/${person.id}/access-link`, { reset_mfa: f.reset_mfa, reason: f.reason || undefined })));
@@ -163,7 +163,7 @@ export function SignInAccess({ person, isMe }: { person: any; isMe: boolean }) {
         <Dialog open={open} onClose={close} title="Change password" footer={<Button busy={change.busy} onClick={() => change.run()}>Change password</Button>}>
           <ErrorSummary error={change.error} />
           <Field label="Current password" error={change.error?.fields.current}><input name="current" type="password" autoComplete="current-password" value={f.current} onChange={(e) => setF({ ...f, current: e.target.value })} /></Field>
-          <Field label="New password" hint="At least 12 characters" error={change.error?.fields.password}><input name="password" type="password" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>
+          <Field label="New password" hint="At least 8 characters" error={change.error?.fields.password}><input name="password" type="password" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>
         </Dialog>
       ) : (
         <Dialog open={open} onClose={close} title={person.has_password ? 'Send a new sign-in link' : 'Resend invitation'} footer={!result && <Button busy={issue.busy} onClick={() => issue.run()}>Create link</Button>}>
@@ -181,3 +181,4 @@ export function SignInAccess({ person, isMe }: { person: any; isMe: boolean }) {
     </>
   );
 }
+

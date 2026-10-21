@@ -12,7 +12,7 @@ import { can, loadAccess } from '../perm.ts';
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
 const MAX_FAILS = 10, LOCK_MINUTES = 15;
-const password = z.string().min(12, 'Use at least 12 characters').max(200);
+const password = z.string().min(8, 'Use at least 8 characters').max(200);
 const code = z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code from your authenticator app');
 const wrong = () => new HttpError(401, 'auth', `The email or password is not right. After ${MAX_FAILS} wrong attempts, sign-in pauses for ${LOCK_MINUTES} minutes.`);
 // Per network address; offices share one, so this is generous. Per-account lockout (above) is the real brute-force guard.
@@ -189,3 +189,4 @@ account.post('/people/:id/access-link', async (req, res) => {
   });
   res.json({ link: APP_URL + link, purpose, email: await sendAccessEmail(target.email, link, purpose) });
 });
+

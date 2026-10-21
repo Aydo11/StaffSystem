@@ -17,7 +17,7 @@ Everything lives in Render: the web service and one Postgres database holding th
 ## 2. How sign-in works
 
 - **Invitation only.** An administrator creates a person (People → Invite a person). The Hub makes a one-time link valid for 7 days. With email set up (`RESEND_API_KEY` and `EMAIL_FROM`), it is emailed; without it, the administrator sees the link and passes it on privately.
-- **Passwords**: at least 12 characters, stored as scrypt hashes. Ten wrong attempts pause that account's sign-in for 15 minutes.
+- **Passwords**: at least 8 characters, stored as scrypt hashes. Ten wrong attempts pause that account's sign-in for 15 minutes.
 - **Two-step verification** with an authenticator app (Microsoft Authenticator, Google Authenticator and similar) is required for privileged roles (super administrator, company administrator, HR administrator, finance administrator). They set it up at first sign-in and enter a code at every sign-in.
 - **Forgotten password**: with email set up, "Forgot your password?" sends a 1-hour link. Without email, an administrator opens the person's profile and uses **Send new sign-in link**. Only a super administrator can do this for someone with a privileged role, or reset a lost authenticator.
 - **Sessions** last up to 14 days and end after 3 days unused. Changing or resetting a password signs out other devices. Only hashes of session tokens and links are stored.
@@ -77,7 +77,7 @@ The software supports accountable practice. It does not make you compliant by it
 # Staff self-sign-up and organisation approval (21 October 2026)
 
 New staff use **Create an account request** on the sign-in page, or `/register`.
-They choose an existing organisation or request a new one, enter a job title and choose a password (at least 12 characters).
+They choose an existing organisation or request a new one, enter a job title and choose a password (at least 8 characters).
 This creates a pending registration only: no staff profile, appointment, role or session is created yet.
 
 Configure these on Render before enabling registration:

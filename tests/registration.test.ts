@@ -13,27 +13,24 @@ beforeEach(async()=>{
 });
 afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();});
 const signup=(extra:object={})=>publicPost('/api/auth/register').send({email:'new.staff@example.test',password:pw,full_name:'New Staff',company_id:C.VH,job_title:'Support worker',...extra});
-const verification=()=>emails[0].text.match(/#token=([^\s]+)/)[1];
 const registration=async()=> (await pool.query('select * from staff_registrations')).rows[0];
 const decide=async(id:string,body:object)=> (await as('alex')).post(`/api/admin/registrations/${id}/decide`).send({decision:'approved',note:'Employment details checked',...body});
 
-it('requires verification and approval; hashes one-time tokens and creates only ordinary staff access',async()=>{
+it('needs only administrator approval; hashes the password and creates only ordinary staff access',async()=>{
   expect((await signup()).status).toBe(202);
   let r=await registration();
-  expect(r.password_hash).not.toContain(pw);expect(r.verification_hash).not.toBe(verification());
+  expect(r.password_hash).not.toContain(pw);
+  expect(emails.some((e)=>/verify/i.test(e.subject))).toBe(false); // no verification email any more
   expect((await pool.query(`select * from people where email='new.staff@example.test'`)).rowCount).toBe(0);
-  const early=await publicPost('/api/auth/login').send({email:r.email,password:pw});
-  expect(early.status).toBe(403);expect(early.body.message).toMatch(/verify your email/);
-  expect((await publicPost('/api/auth/login').send({email:r.email,password:'not the password'})).status).toBe(401); // a wrong password learns nothing
-  expect((await decide(r.id,{})).status).toBe(409);
-  expect((await publicPost('/api/auth/verify-email').send({token:verification()})).status).toBe(200);
-  expect((await publicPost('/api/auth/verify-email').send({token:verification()})).status).toBe(400);
-  // Approvers hear about it: a notification, an email and an item in Needs Your Review.
+  // Approvers hear about it straight away: a notification, an email and an item in Needs Your Review.
   expect((await pool.query(`select 1 from notifications where person_id=$1 and link='/admin/requests'`,[P.alex])).rowCount).toBe(1);
   expect(emails.some((e)=>e.subject==='A new staff sign-up is waiting for approval')).toBe(true);
   expect((await (await as('alex')).get('/api/inbox')).body.some((i:any)=>i.kind==='staff_request')).toBe(true);
   expect((await (await as('sam')).get('/api/inbox')).body.some((i:any)=>i.kind==='staff_request')).toBe(false);
-  expect((await publicPost('/api/auth/login').send({email:r.email,password:pw})).body.message).toMatch(/waiting for an administrator/);
+  const early=await publicPost('/api/auth/login').send({email:r.email,password:pw});
+  expect(early.status).toBe(403);expect(early.body.message).toMatch(/waiting for an administrator/);
+  expect((await publicPost('/api/auth/login').send({email:r.email,password:'not the password'})).status).toBe(401); // a wrong password learns nothing
+  await signup();expect((await pool.query('select count(*)::int n from staff_registrations')).rows[0].n).toBe(1); // no duplicates
   const approved=await decide(r.id,{});expect(approved.status).toBe(200);
   expect((await decide(r.id,{})).status).toBe(409);
   r=await registration();expect(r.password_hash).toBeNull();
@@ -43,21 +40,9 @@ it('requires verification and approval; hashes one-time tokens and creates only 
   expect(me.body.companies.map((c:any)=>c.id)).toEqual([C.VH]);
 });
 
-it('handles expired and replaced verification links, duplicate requests and failed email delivery',async()=>{
-  await signup();const token=verification();const r=await registration();
-  await signup();expect(emails).toHaveLength(1);
-  await pool.query(`update staff_registrations set verification_expires_at=now()-interval '1 minute',last_sent_at=now()-interval '2 minutes'`);
-  expect((await publicPost('/api/auth/verify-email').send({token})).status).toBe(400);
-  await publicPost('/api/auth/resend-verification').send({email:r.email,password:'wrong password long enough'});expect(emails).toHaveLength(1);
-  await publicPost('/api/auth/resend-verification').send({email:r.email,password:pw});expect(emails).toHaveLength(2);
-  expect((await publicPost('/api/auth/verify-email').send({token})).status).toBe(400);
-  const replacement=emails[1].text.match(/#token=([^\s]+)/)[1];
-  expect((await publicPost('/api/auth/verify-email').send({token:replacement})).status).toBe(200);
-});
-
 it('reserves new organisation approval for super admins, and rejection never creates access',async()=>{
   expect((await signup({company_id:undefined,organisation_name:'Requested Organisation'})).status).toBe(202);
-  const r=await registration();await publicPost('/api/auth/verify-email').send({token:verification()});
+  const r=await registration();
   expect((await (await as('sam')).get('/api/admin/registrations')).status).toBe(403);
   expect((await (await as('sam')).post(`/api/admin/registrations/${r.id}/decide`).send({decision:'approved',note:'checked',company_id:C.VH})).status).toBe(403);
   const approved=await decide(r.id,{new_organisation:{name:'Requested Organisation',code:'REQ'}});expect(approved.status).toBe(200);
@@ -67,10 +52,9 @@ it('reserves new organisation approval for super admins, and rejection never cre
   expect((await pool.query(`select * from people where email='reject.staff@example.test'`)).rowCount).toBe(0);
 });
 
-it('fails closed without Resend and recovers a failed verification delivery',async()=>{
-  vi.stubEnv('RESEND_API_KEY','');expect((await signup()).status).toBe(503);expect(await registration()).toBeUndefined();
-  vi.stubEnv('RESEND_API_KEY','test-key');vi.stubGlobal('fetch',vi.fn(async()=>new Response('{}',{status:503})));
-  expect((await signup()).status).toBe(503);expect((await registration()).last_sent_at).toBeNull();
+it('still takes requests when email is not set up',async()=>{
+  vi.stubEnv('RESEND_API_KEY','');expect((await signup()).status).toBe(202);
+  expect((await registration()).status).toBe('pending');expect(emails).toHaveLength(0);
 });
 
 it('reassigns a current appointment, preserves history, cancels plans and invalidates sessions',async()=>{
@@ -95,20 +79,17 @@ it('rejects unauthorised transfers and duplicate destinations without changing h
 it('limits company administrators to requests and destinations they manage',async()=>{
   await pool.query(`insert into role_grants(person_id,role_key,company_id) values($1,'hr_admin',$2)`,[P.priya,C.VH]);
   await signup({company_id:C.WHM});const r=await registration();
-  await publicPost('/api/auth/verify-email').send({token:verification()});
   const admin=await as('priya');
   expect((await admin.get('/api/admin/registrations')).body).toEqual([]);
   expect((await admin.post(`/api/admin/registrations/${r.id}/decide`).send({decision:'approved',note:'Checked',company_id:C.VH})).status).toBe(403);
   await signup({email:'valor.staff@example.test'});
   const own=(await pool.query(`select id from staff_registrations where email='valor.staff@example.test'`)).rows[0];
-  const token=emails.at(-1).text.match(/#token=([^\s]+)/)[1];
-  await publicPost('/api/auth/verify-email').send({token});
   expect((await admin.post(`/api/admin/registrations/${own.id}/decide`).send({decision:'approved',note:'Checked',company_id:C.WHM})).status).toBe(403);
   expect((await admin.post(`/api/admin/appointments/${A.samVH}/reassign`).send({company_id:C.WHM,reason:'Attempted transfer'})).status).toBe(403);
 });
 
 it('serialises simultaneous approvals so one request cannot create two staff accounts',async()=>{
-  await signup();const r=await registration();await publicPost('/api/auth/verify-email').send({token:verification()});
+  await signup();const r=await registration();
   const admin=await as('alex');
   const results=await Promise.all([1,2].map(()=>admin.post(`/api/admin/registrations/${r.id}/decide`).send({decision:'approved',note:'Checked by administrator'})));
   expect(results.map(r=>r.status).sort()).toEqual([200,409]);

@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { authenticate } from './auth.ts';
+import { registrationPublic, registrationAdmin } from './routes/registration.ts';
 import { pool } from './db.ts';
 import { errorHandler, HttpError } from './http.ts';
 import { admin } from './routes/admin.ts';
@@ -59,7 +60,9 @@ export function createApp() {
   api.use(express.json({ limit: '200kb' }));
   api.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); }); // never cache personal data
   api.use(authPublic);
+  api.use(registrationPublic);
   api.use(authenticate);
+  api.use(registrationAdmin);
   api.use(account, core, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, estates, finance, messaging, ai, dataops, leave, development, admin);
   api.use(() => { throw new HttpError(404, 'not_found', 'No such API endpoint.'); });
   app.use('/api', api);
@@ -74,3 +77,4 @@ export function createApp() {
   app.use(errorHandler);
   return app;
 }
+

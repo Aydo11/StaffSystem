@@ -3,7 +3,7 @@ import { ApiError, post, useSubmit } from '../api.ts';
 import { type AuthConfig, setToken, signOut } from '../auth.ts';
 import { Button, ErrorSummary, Field } from '../ui.tsx';
 
-function Frame({ children }: { children: React.ReactNode }) {
+export function Frame({ children }: { children: React.ReactNode }) {
   return (
     <main className="auth-shell">
       <section className="auth-story" aria-label="About the Hub">
@@ -31,7 +31,7 @@ function Frame({ children }: { children: React.ReactNode }) {
       <section className="auth-form-side" aria-label="Account access"><div className="auth-form-inner">
         <div className="auth-eyebrow" style={{ color: 'var(--teal-text)' }}>Welcome to your Hub</div>
         <div className="card">{children}</div>
-        <p className="auth-footer">For Valor Housing Ltd, Wellbeing Homes Ltd and Wellbeing Housing Ltd staff. Accounts are by invitation only.</p>
+        <p className="auth-footer">For Valor Housing Ltd, Wellbeing Homes Ltd and Wellbeing Housing Ltd staff. New accounts require email verification and administrator approval.</p>
       </div></section>
     </main>
   );
@@ -73,6 +73,7 @@ export function Login({ config }: { config: AuthConfig }) {
 
   return (
     <Frame>
+      <p><a href="/register">New staff? Create an account request</a></p>
       <h1 style={{ fontSize: '1.5rem' }}>{ticket ? 'Two-step verification' : mode === 'signin' ? 'Sign in' : 'Reset your password'}</h1>
       {ticket ? (
         <form noValidate onSubmit={(e) => { e.preventDefault(); second.run(); }}>
@@ -200,3 +201,4 @@ export function SetPassword() {
     </Frame>
   );
 }
+

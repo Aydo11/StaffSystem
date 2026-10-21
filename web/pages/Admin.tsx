@@ -6,10 +6,12 @@ import { useHub } from '../hub.tsx';
 import { AiSettings } from './Assistant.tsx';
 import { ImportPage, RetentionPage } from './DataTools.tsx';
 import { TemplatesAdmin } from './Development.tsx';
+import { RegistrationAdmin } from './RegistrationAdmin.tsx';
 import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, useToast } from '../ui.tsx';
 
 // Cards are honest about scope: built modules link through; later stages say so plainly.
 const CARDS: { title: string; help: string; to?: string; perm?: string; stage?: number; note?: string }[] = [
+  { title: 'Staff & organisation requests', help: 'Review verified sign-ups, approve organisations and reassign staff.', to: 'requests', perm: 'staff.create' },
   { title: 'Companies', help: 'Legal details, verification, support-system link, clearance rule.', to: 'companies', perm: 'company.manage' },
   { title: 'Users', help: 'Invite people and manage profiles.', to: '/people', perm: 'staff.create' },
   { title: 'Permissions', help: 'Grant, delegate (with expiry) and revoke roles. Access review.', to: 'access', perm: 'access.manage' },
@@ -32,6 +34,7 @@ export function Admin() {
   return (
     <Routes>
       <Route index element={<AdminHome />} />
+      <Route path="requests" element={<RegistrationAdmin />} />
       <Route path="companies" element={<Companies />} />
       <Route path="access" element={<Access />} />
       <Route path="audit" element={<Audit />} />
@@ -199,3 +202,4 @@ function Integrations() {
     </>
   );
 }
+

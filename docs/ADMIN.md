@@ -73,3 +73,28 @@ The software supports accountable practice. It does not make you compliant by it
 
 - `/health` reports database reachability; Render uses it to restart unhealthy instances.
 - Errors are logged as JSON lines without request bodies. Add a log drain in Render if you need retention or alerting.
+
+# Staff self-sign-up and organisation approval (21 October 2026)
+
+New staff use **Create an account request** on the sign-in page, or `/register`.
+They choose an existing organisation or request a new one, enter a job title and choose a password (at least 12 characters).
+This creates a pending registration only: no staff profile, appointment, role or session is created yet.
+
+Configure these on Render before enabling registration:
+
+```text
+RESEND_API_KEY=<your Resend key>
+EMAIL_FROM=Valor Housing <info@valorhousing.co.uk>
+APP_URL=https://staffsystem.onrender.com
+```
+
+The sender domain must be verified in Resend. Never commit the API key. Migration `015_staff_registration.sql` is applied by the existing pre-deploy migration command. Without configured email, registration fails with a clear message and grants no access. A provider failure leaves a recoverable request; the applicant can use **Resend verification email** with their registration email and password. Resends are limited to one per minute and replace older links. Links expire after 24 hours, are single use, and store only a SHA-256 hash. Tokens are carried in URL fragments and never placed in the audit or delivery log. Live Resend delivery must be checked using the production configuration; automated tests mock the provider.
+
+Review requests in **Admin Centre → Staff & organisation requests** (`/admin/requests`). Check the applicant and organisation outside the system as needed. Approval requires email verification plus `staff.create` and `appointments.manage` in the requested organisation and the approved destination. Only super administrators can review requests for new organisations or create an organisation from them. A requested organisation may instead be matched to an existing company. Creation needs a unique name and a 2–6 uppercase letter code; its legal details remain unverified.
+
+Approval creates an active staff profile and an ordinary staff appointment starting today in Europe/London. Choose the correct relationship and job title. The approved organisation is initially the legal employer; review this on the appointment if a contracting arrangement differs. No elevated role, clearance, property assignment or pay rate is awarded. Rejection creates no account. Both decisions are final for that request, audited with an internal reason, and trigger a decision email. If email delivery fails, the decision remains saved and the screen asks the administrator to contact the applicant. The internal reason is not emailed. Pending registrations retain their password hash until decided; approval and rejection clear the registration hash and verification token. Include undecided registrations in your data-retention review.
+
+**Reassign a staff organisation** on the same screen moves a current appointment today. The administrator needs appointment-management permission in both companies and staff-create permission in the destination. Self-reassignment is blocked; privileged staff require a super administrator. A duplicate destination appointment or a visit still in progress blocks the move. For the last appointment in the old company, outstanding tasks require an eligible colleague to take them over.
+
+Reassignment ends the old appointment, creates a new one with the same job, relationship, legal employer and contracted hours, ends old property allocations and rates, cancels outstanding planned visits on that appointment, and revokes old company grants when no other current appointment there remains. It retains the person's profile and historical visits, finance and employment records. Other appointments and global super-admin grants remain independent. Review property keys, handovers, clearance, property assignments and pay rates for the new appointment. The person must sign in again: existing sessions and outstanding authentication links/tickets are invalidated. Both organisations receive an audit entry.
+

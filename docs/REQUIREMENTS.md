@@ -100,3 +100,14 @@ Other §41 checks: keyboard use and screen-reader labels — axe-core scan of 16
 | Friendlier upload button with animation, used everywhere | Implemented | `FilePicker` in `web/ui.tsx`; axe-core: 0 violations on the changed pages |
 | Assign several properties / staff at once, from either side | Verified | `uploads.test.ts`: assignable list excludes current allocations; clearance rule unchanged |
 | Attach documents such as CVs to staff profiles | Verified | `uploads.test.ts`: person and `staff.edit` only, PDF/Word/image by content |
+
+# Staff registration update — 21 October 2026
+
+| Request | Implementation | Verification |
+| --- | --- | --- |
+| Staff self-sign-up | `/register`, pending registration separate from live accounts | `registration.test.ts`: no account or access before approval |
+| Organisation requests | Existing organisation or new-name request; super-admin creation/matching | New-organisation permission and approval tests |
+| Resend email verification | Direct email, hashed single-use 24-hour link, credential-protected resend | Expiry, replay, replacement, unavailable provider and delivery failure tests |
+| Admin approval | `/admin/requests`, verified email, organisation-scoped permissions, ordinary staff only | Approval, rejection and repeated decision tests |
+| Organisation reassignment | New appointment, retained history, task handover, session revocation, audit in both companies | Transfer, duplicate destination and permission tests |
+

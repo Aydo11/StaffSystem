@@ -5,6 +5,7 @@ import { type AuthConfig, initAuth, isSignedIn, onAuthChange, signOut } from './
 import { fmtElapsed } from './format.ts';
 import { ADMIN_PERMS, HubCtx, makeHub, type Me, useHub } from './hub.tsx';
 import { Admin } from './pages/Admin.tsx';
+import { Registration, VerifyEmail } from './pages/Registration.tsx';
 import { Attendance, VisitDetail, ActiveVisit, ManualVisit } from './pages/Visits.tsx';
 import { Handover } from './pages/Handover.tsx';
 import { Inbox, Notifications } from './pages/Inbox.tsx';
@@ -38,6 +39,8 @@ export function App() {
   }, []);
   if (signedIn === null) return <main className="content"><Skeleton /></main>;
   if (location.pathname === '/set-password') return <SetPassword />;
+  if (location.pathname === '/register') return <Registration />;
+  if (location.pathname === '/verify-email') return <VerifyEmail />;
   if (!signedIn) return config ? <Login config={config} /> : <main className="content"><div className="notice bad" role="alert">The Hub could not reach its server. Please check your connection and reload.</div></main>;
   return <BrowserRouter><ToastProvider><Session /></ToastProvider></BrowserRouter>;
 }
@@ -386,4 +389,5 @@ function ToastAgentShell() {
     </div>
   );
 }
+
 

@@ -45,7 +45,7 @@ async function analyse(db: Db, a: Access, body: z.infer<typeof importBody>) {
     const key = body.entity === 'people' ? String(raw.email ?? '').toLowerCase() : String(raw.ref ?? '').toUpperCase();
     let duplicate: string | null = null;
     if (seen.has(key)) duplicate = 'Repeated earlier in this file';
-    else if (body.entity === 'people' && (await one('select 1 from people where lower(email) = $1', [key], db))) duplicate = 'Already has a profile — add an appointment to it instead';
+    else if (body.entity === 'people' && (await one('select 1 from people where lower(email) = $1', [key], db))) duplicate = 'Already has a profile — add a role to it instead';
     else if (body.entity === 'properties' && (await one('select 1 from properties where company_id = $1 and upper(ref) = $2', [body.company_id, key], db))) duplicate = 'A property with this reference already exists';
     seen.add(key);
     out.push({ line: i + 2, data: parsed.success ? parsed.data : raw, errors: parsed.success ? [] : parsed.error.issues.map((x) => `${x.path.join('.')}: ${x.message}`), duplicate });
@@ -128,7 +128,7 @@ dataops.post('/people/:id/anonymise', async (req, res) => {
   if (!p) throw notFound();
   if (p.status !== 'left') throw bad('Only people who have left can be anonymised.');
   if (confirm_name !== p.full_name) throw bad('Type the person’s full name exactly to confirm.', { fields: { confirm_name: 'Does not match' } });
-  if (await one(`select 1 from appointments a where a.person_id = $1 and (a.end_date is null or a.end_date >= ${LONDON_TODAY})`, [id])) throw bad('This person still has a current appointment.');
+  if (await one(`select 1 from appointments a where a.person_id = $1 and (a.end_date is null or a.end_date >= ${LONDON_TODAY})`, [id])) throw bad('This person still has a current role.');
   const photoPath = await tx(async (db) => {
     const path = p.photo_path ? await deleteFile(db, p.photo_path) : null;
     await q(`update people set full_name = 'Former staff member ' || staff_ref, preferred_name = null, email = 'removed+' || id || '@invalid', work_phone = null, professional_summary = null,

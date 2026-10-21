@@ -33,7 +33,7 @@ leave.get('/leave', async (req, res) => {
 leave.post('/leave', async (req, res) => {
   const b = parse(z.object({ company_id: uuid, kind: z.enum(['annual', 'sick', 'unpaid', 'training', 'compassionate', 'other']), start_date: isoDate, end_date: isoDate, note: text(500).optional() }), req.body);
   if (b.end_date < b.start_date) throw bad('The leave ends before it starts.', { fields: { end_date: 'Before the start' } });
-  if (!(await one(`select 1 from appointments a where a.person_id = $1 and a.company_id = $2 and ${ACTIVE_APPT('a')}`, [req.person.id, b.company_id]))) throw bad('Choose a company where you currently work.', { fields: { company_id: 'No current appointment' } });
+  if (!(await one(`select 1 from appointments a where a.person_id = $1 and a.company_id = $2 and ${ACTIVE_APPT('a')}`, [req.person.id, b.company_id]))) throw bad('Choose a company where you currently work.', { fields: { company_id: 'No current role' } });
   if (await one(`select 1 from leave_requests where person_id = $1 and status in ('requested','approved') and daterange(start_date, end_date, '[]') && daterange($2::date, $3::date, '[]')`, [req.person.id, b.start_date, b.end_date]))
     throw conflict('You already have leave requested or approved on some of these days.');
   const row = await one(`insert into leave_requests (person_id, company_id, kind, start_date, end_date, note) values ($1,$2,$3,$4,$5,$6) returning *`,

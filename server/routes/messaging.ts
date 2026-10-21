@@ -18,14 +18,14 @@ async function membership(a: Access, conversationId: string, db: Db = pool) {
 }
 async function currentInCompany(db: Db, personIds: string[], companyId: string) {
   const ok = await q<{ person_id: string }>(`select distinct a.person_id from appointments a where a.company_id = $1 and a.person_id = any($2::uuid[]) and ${ACTIVE_APPT('a')}`, [companyId, personIds], db);
-  if (ok.length !== new Set(personIds).size) throw bad('Everyone in a conversation must have a current appointment with its company.');
+  if (ok.length !== new Set(personIds).size) throw bad('Everyone in a conversation must have a current role with its company.');
 }
 
 messaging.get('/conversations', async (req, res) => {
   res.json(await q(`
     select c.id, c.kind, c.title, c.company_id, co.code as company_code, co.name as company_name, c.property_id, p.name as property_name,
-           (select json_agg(json_build_object('id', pe.id, 'name', ${name('pe')}) order by pe.full_name) from conversation_members cm join people pe on pe.id = cm.person_id where cm.conversation_id = c.id and cm.left_at is null) as members,
-           (select json_build_object('body', left(ms.body, 120), 'at', ms.created_at, 'author', ${name('au')}) from messages ms join people au on au.id = ms.author_id where ms.conversation_id = c.id order by ms.created_at desc limit 1) as last,
+           (select json_agg(json_build_object('id', pe.id, 'name', ${name('pe')}, 'has_photo', pe.photo_path is not null) order by pe.full_name) from conversation_members cm join people pe on pe.id = cm.person_id where cm.conversation_id = c.id and cm.left_at is null) as members,
+           (select json_build_object('body', coalesce(nullif(left(ms.body, 120), ''), 'Sent a photo'), 'at', ms.created_at, 'author', ${name('au')}) from messages ms join people au on au.id = ms.author_id where ms.conversation_id = c.id order by ms.created_at desc limit 1) as last,
            (select count(*) from messages ms where ms.conversation_id = c.id and ms.author_id <> $1 and ms.created_at > coalesce(m.last_read_at, '-infinity'))::int as unread
       from conversations c join conversation_members m on m.conversation_id = c.id and m.person_id = $1 and m.left_at is null
       join companies co on co.id = c.company_id left join properties p on p.id = c.property_id
@@ -61,15 +61,21 @@ messaging.post('/conversations', async (req, res) => {
 messaging.get('/conversations/:id/messages', async (req, res) => {
   const c = await membership(req.access, idParam(req.params.id));
   const before = req.query.before ? parse(z.iso.datetime({ offset: true }), req.query.before) : null;
-  const rows = await q(`select ms.id, ms.body, ms.created_at, ms.author_id, ${name('au')} as author_name, ms.file_id, f.original_name as file_name
+  const rows = await q(`select ms.id, ms.body, ms.created_at, ms.author_id, ${name('au')} as author_name, au.photo_path is not null as author_has_photo,
+                                ms.file_id, f.original_name as file_name, f.mime_type as file_type,
+                                coalesce((select json_agg(json_build_object('emoji', r.emoji, 'count', r.n, 'mine', r.mine) order by r.first)
+                                            from (select emoji, count(*)::int n, bool_or(person_id = $3) mine, min(created_at) first from message_reactions where message_id = ms.id group by emoji) r), '[]') as reactions
                           from messages ms join people au on au.id = ms.author_id left join files f on f.id = ms.file_id
-                         where ms.conversation_id = $1 and ($2::timestamptz is null or ms.created_at < $2) order by ms.created_at desc limit 50`, [c.id, before]);
+                         where ms.conversation_id = $1 and ($2::timestamptz is null or ms.created_at < $2) order by ms.created_at desc limit 50`, [c.id, before, req.person.id]);
   await q('update conversation_members set last_read_at = now() where conversation_id = $1 and person_id = $2', [c.id, req.person.id]);
-  res.json({ conversation: c, messages: rows.reverse() });
+  const members = await q(`select pe.id, ${name('pe')} as name, pe.photo_path is not null as has_photo from conversation_members cm join people pe on pe.id = cm.person_id
+                            where cm.conversation_id = $1 and cm.left_at is null order by pe.full_name`, [c.id]);
+  res.json({ conversation: c, members, messages: rows.reverse() });
 });
 messaging.post('/conversations/:id/messages', upload.single('file'), async (req, res) => {
   const c = await membership(req.access, idParam(req.params.id));
-  const b = parse(z.object({ body: text(4000).min(1, 'Write a message'), client_request_id: uuid }), req.body);
+  const b = parse(z.object({ body: text(4000).default(''), client_request_id: uuid }), req.body);
+  if (!b.body && !req.file) throw bad('Write a message or add a photo.', { fields: { body: 'Write a message' } });
   const m = await tx(async (db) => {
     const dup = await one('select id from messages where client_request_id = $1', [b.client_request_id], db);
     if (dup) return dup; // a retried send never posts twice
@@ -78,6 +84,17 @@ messaging.post('/conversations/:id/messages', upload.single('file'), async (req,
   });
   await q('update conversation_members set last_read_at = now() where conversation_id = $1 and person_id = $2', [c.id, req.person.id]);
   res.status(201).json(m);
+});
+// One tap adds a reaction, a second tap on the same emoji removes it.
+export const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🎉', '✅'];
+messaging.post('/messages/:id/reactions', async (req, res) => {
+  const m = await one<{ id: string; conversation_id: string }>('select id, conversation_id from messages where id = $1', [idParam(req.params.id)]);
+  if (!m) throw notFound();
+  await membership(req.access, m.conversation_id);
+  const { emoji } = parse(z.object({ emoji: z.enum(REACTIONS as [string, ...string[]]) }), req.body);
+  const gone = await one('delete from message_reactions where message_id = $1 and person_id = $2 and emoji = $3 returning 1', [m.id, req.person.id, emoji]);
+  if (!gone) await q('insert into message_reactions (message_id, person_id, emoji) values ($1,$2,$3)', [m.id, req.person.id, emoji]);
+  res.json({ reacted: !gone });
 });
 messaging.post('/conversations/:id/members', async (req, res) => {
   const c = await membership(req.access, idParam(req.params.id));

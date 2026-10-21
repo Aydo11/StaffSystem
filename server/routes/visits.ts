@@ -20,12 +20,12 @@ const summary = text(500).min(3, 'Add a brief summary of the work').refine((s) =
 // The viewer's appointment that may be used at this property (see properties.ts MY_APPTS for the same rule).
 async function usableAppointment(db: Db, a: Access, appointmentId: string, propertyId: string) {
   const ap = await one(`select a.* from appointments a where a.id = $1 and a.person_id = $2 and ${ACTIVE_APPT('a')}`, [appointmentId, a.personId], db);
-  if (!ap) throw bad('Choose one of your current appointments.', { fields: { appointment_id: 'Not a current appointment of yours' } });
+  if (!ap) throw bad('Choose one of your current roles.', { fields: { appointment_id: 'Not a current role of yours' } });
   const ok = await one(`select 1 from properties p where p.id = $1 and (
        exists (select 1 from appointment_properties x where x.appointment_id = $2 and x.property_id = p.id and x.to_date is null)
        or ($4 and (p.company_id = $3 or exists (select 1 from property_company_links l where l.property_id = p.id and l.company_id = $3))))`,
     [propertyId, ap.id, ap.company_id, can(a, 'visits.approve', ap.company_id) || can(a, 'properties.manage', ap.company_id)], db);
-  if (!ok) throw bad('This property is not allocated to that appointment. Ask your manager to allocate it.', { fields: { property_id: 'Not allocated' } });
+  if (!ok) throw bad('This property is not allocated to that role. Ask your manager to allocate it.', { fields: { property_id: 'Not allocated' } });
   return ap;
 }
 
@@ -377,7 +377,7 @@ visits.get('/workload', async (req, res) => {
 visits.post('/time-entries', async (req, res) => {
   const b = parse(z.object({ appointment_id: uuid, work_date: isoDate, category: z.enum(['travel', 'administration', 'training', 'supervision', 'coaching', 'other']), minutes: z.coerce.number().int().min(5).max(720), note: text(300).optional() }), req.body);
   const ap = await one(`select * from appointments a where a.id = $1 and a.person_id = $2 and ${ACTIVE_APPT('a')}`, [b.appointment_id, req.person.id]);
-  if (!ap) throw bad('Choose one of your current appointments.');
+  if (!ap) throw bad('Choose one of your current roles.');
   const future = (await one<{ f: boolean }>(`select $1::date > ${LONDON_TODAY} f`, [b.work_date]))!.f;
   if (future) throw bad('Time cannot be logged for a future date.', { fields: { work_date: 'In the future' } });
   const dayTotal = (await one<{ m: number }>(`select coalesce(sum(minutes), 0)::int m from time_entries where person_id = $1 and work_date = $2 and status <> 'rejected'`, [req.person.id, b.work_date]))!.m;
@@ -457,10 +457,10 @@ visits.post('/timesheets', async (req, res) => {
   if (b.period_end < b.period_start) throw bad('The end date is before the start date.');
   if ((Date.parse(b.period_end) - Date.parse(b.period_start)) / 86400000 > 31) throw bad('A timesheet can cover up to 31 days.');
   const ap = await one(`select * from appointments where id = $1 and person_id = $2`, [b.appointment_id, req.person.id]);
-  if (!ap) throw bad('Choose one of your appointments.');
+  if (!ap) throw bad('Choose one of your roles.');
   const row = await tx(async (db) => {
     const overlap = await one(`select id, status from timesheets where appointment_id = $1 and status <> 'rejected' and daterange(period_start, period_end, '[]') && daterange($2, $3, '[]')`, [ap.id, b.period_start, b.period_end], db);
-    if (overlap) throw conflict('A timesheet already covers some of these dates for this appointment.');
+    if (overlap) throw conflict('A timesheet already covers some of these dates for this role.');
     const calc = await timesheetCalc(db, ap.id, b.period_start, b.period_end);
     if (!calc.minutes) throw bad('There are no approved hours in this period yet.');
     const r = await one(`insert into timesheets (person_id, appointment_id, company_id, period_start, period_end, submitted_minutes) values ($1,$2,$3,$4,$5,$6)

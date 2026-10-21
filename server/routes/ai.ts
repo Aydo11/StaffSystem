@@ -36,7 +36,7 @@ type Task = {
 };
 
 async function personInCompany(personId: string, companyId: string) {
-  if (!(await one('select 1 from appointments where person_id = $1 and company_id = $2', [personId, companyId]))) throw bad('This person has no appointment in this company.');
+  if (!(await one('select 1 from appointments where person_id = $1 and company_id = $2', [personId, companyId]))) throw bad('This person has no role in this company.');
 }
 
 const TASKS: Record<string, Task> = {
@@ -96,7 +96,7 @@ const TASKS: Record<string, Task> = {
     gather: async (_a, companyId, input) => {
       const same = await q(`select id, job_title, responsibilities from appointments where company_id = $1 and lower(job_title) = lower($2) and responsibilities is not null limit 3`, [companyId, input.job_title]);
       return [{ id: 'request', type: 'request', title: 'Details from HR', text: `Title: ${input.job_title}\nResponsibilities: ${input.responsibilities}\nReports to: ${input.reporting_to ?? 'not given'}` },
-        ...same.map((s) => ({ id: s.id, type: 'appointment', title: `Existing ${s.job_title} appointment`, text: `Responsibilities: ${s.responsibilities}` }))];
+        ...same.map((s) => ({ id: s.id, type: 'appointment', title: `Existing ${s.job_title} role`, text: `Responsibilities: ${s.responsibilities}` }))];
     },
   },
   quiz_draft: {

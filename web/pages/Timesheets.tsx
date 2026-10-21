@@ -166,16 +166,16 @@ export function Workload() {
   const d = useApi<any[]>(`/workload${hub.q({ week_start: week })}`);
   return (
     <>
-      <PageHead title="Workload" intro="Contracted, planned, recorded and approved hours for each current appointment. More hours do not mean better work." />
+      <PageHead title="Workload" intro="Contracted, planned, recorded and approved hours for each current role. More hours do not mean better work." />
       <div className="row" style={{ marginBottom: 16 }}>
         <Button variant="secondary" onClick={() => setWeek(addDays(week, -7))}>‹ Previous week</Button>
         <h2 style={{ margin: 0 }} aria-live="polite">Week of {fmtDate(week)}</h2>
         <Button variant="secondary" onClick={() => setWeek(addDays(week, 7))}>Next week ›</Button>
       </div>
       {d.error && <LoadError error={d.error} />}
-      {d.loading && !d.data ? <Skeleton /> : (d.data ?? []).length === 0 ? <Empty>No current appointments in view.</Empty> : (
+      {d.loading && !d.data ? <Skeleton /> : (d.data ?? []).length === 0 ? <Empty>No current roles in view.</Empty> : (
         <div className="table-wrap"><table>
-          <caption className="sr-only">Hours by appointment</caption>
+          <caption className="sr-only">Hours by role</caption>
           <thead><tr><th>Person</th><th>Company</th><th className="num">Contracted</th><th className="num">Leave</th><th className="num">Available</th><th className="num">Planned</th><th className="num">Recorded</th><th className="num">Approved</th><th>Planned vs available</th></tr></thead>
           <tbody>{d.data!.map((r) => {
             const contracted = r.contracted_hours_per_week ? Number(r.contracted_hours_per_week) * 60 : null;

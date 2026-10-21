@@ -13,7 +13,7 @@ const CARDS: { title: string; help: string; to?: string; perm?: string; stage?: 
   { title: 'Companies', help: 'Legal details, verification, support-system link, clearance rule.', to: 'companies', perm: 'company.manage' },
   { title: 'Users', help: 'Invite people and manage profiles.', to: '/people', perm: 'staff.create' },
   { title: 'Permissions', help: 'Grant, delegate (with expiry) and revoke roles. Access review.', to: 'access', perm: 'access.manage' },
-  { title: 'Appointments', help: 'Add, change and end appointments from a person’s profile.', to: '/people', perm: 'appointments.manage' },
+  { title: 'Roles', help: 'Add, change and end someone’s roles (job, company and dates) from their profile.', to: '/people', perm: 'appointments.manage' },
   { title: 'Properties', help: 'Add and edit properties, keys and visit plans.', to: '/properties', perm: 'properties.manage' },
   { title: 'Audit', help: 'Who changed what, and when.', to: 'audit', perm: 'audit.view' },
   { title: 'KPI definitions', help: 'Targets, minimum data and wording, kept as dated versions.', to: '/performance?tab=definitions', perm: 'performance.manage' },
@@ -126,7 +126,7 @@ function Access() {
   const role = roles.data?.roles.find((r: any) => r.key === f?.role_key);
   return (
     <>
-      <PageHead title="Permissions and access review" crumbs={[['Admin Centre', '/admin'], ['Permissions']]} intro="Everyone with a current appointment has staff access in that company. Extra roles are granted here. Responsibility for something is separate from access to it."
+      <PageHead title="Permissions and access review" crumbs={[['Admin Centre', '/admin'], ['Permissions']]} intro="Everyone with a current role has staff access in that company. Extra roles are granted here. Responsibility for something is separate from access to it."
         actions={<Button onClick={() => setF({ person_id: '', role_key: 'manager', company_id: cos[0]?.id ?? '', reason: '', expires_at: '' })}>Grant a role</Button>} />
       {grants.error && <LoadError error={grants.error} />}
       <label className="check"><input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Show revoked and expired grants</label>

@@ -42,7 +42,7 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
   req.sessionId = session_id;
   req.access = await loadAccess(person.id);
   // No current appointment and no unexpired role anywhere (for example once a future-dated leaving date has passed).
-  if (!req.access.perms.size && !req.access.agentIds.length && !req.access.superAdmin) throw new HttpError(403, 'no_access', 'You have no current appointment or role in the Hub. If this is wrong, please contact your administrator.');
+  if (!req.access.perms.size && !req.access.agentIds.length && !req.access.superAdmin) throw new HttpError(403, 'no_access', 'You have no current role or access in the Hub. If this is wrong, please contact your administrator.');
   req.mfaRequired = req.access.privileged && aal !== 'aal2';
   // Privileged roles must complete two-step verification before doing anything except loading who they are and setting it up.
   const mfaPaths = req.path === '/me' || req.path.startsWith('/auth/');

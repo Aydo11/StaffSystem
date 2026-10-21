@@ -136,7 +136,7 @@ people.post('/people', async (req, res) => {
   need(req.access, 'staff.create', b.company_id);
   need(req.access, 'appointments.manage', b.company_id);
   const existing = await one('select id from people where lower(email) = lower($1)', [b.email]);
-  if (existing) throw conflict('Someone with this email already has a profile. Add an appointment to their existing profile instead of creating a second one.');
+  if (existing) throw conflict('Someone with this email already has a profile. Add a role to their existing profile instead of creating a second one.');
   const { link, ...result } = await tx(async (db) => {
     const ref = (await one<{ ref: string }>(`select 'VWH-' || lpad((coalesce(max(substring(staff_ref from 5)::int), 0) + 1)::text, 4, '0') as ref from people where staff_ref ~ '^VWH-\\d+$'`, [], db))!.ref;
     const p = await one('insert into people (email, full_name, preferred_name, staff_ref, status) values ($1,$2,$3,$4,$5) returning id, staff_ref', [b.email, b.full_name, b.preferred_name ?? null, ref, 'invited'], db);
@@ -325,6 +325,81 @@ people.put('/people/:id/working-hours', async (req, res) => {
   res.json({ working_hours: b });
 });
 
+// ── My story: the person's own chapters. They choose the readers; only they can write it. ──
+// private = only them; managers = people who manage staff or performance in a company they work for; colleagues = anyone who can see their profile.
+export async function canReadStory(a: Access, personId: string, visibility: string) {
+  if (personId === a.personId || visibility === 'colleagues') return true;
+  if (visibility === 'private') return false;
+  return (await sharedCompanies(a, personId, 'staff.edit')).length > 0 || (await sharedCompanies(a, personId, 'performance.view_all')).length > 0;
+}
+async function ownStory(a: Access, personId: string) {
+  await visiblePerson(a, personId);
+  if (personId !== a.personId) throw forbidden('Only the person can write their own story.');
+}
+const chapterBody = z.object({ title: text(120).min(1, 'Give the chapter a title'), period: text(60).nullable().optional(), body: text(8000).min(1, 'Write something for this chapter') });
+
+people.get('/people/:id/story', async (req, res) => {
+  const id = idParam(req.params.id);
+  const p = await visiblePerson(req.access, id);
+  const self = id === req.access.personId;
+  if (!(await canReadStory(req.access, id, p.story_visibility))) return res.json({ shared: false, can_edit: false });
+  res.json({
+    shared: true, can_edit: self, visibility: p.story_visibility, intro: p.story_intro,
+    chapters: await q('select id, position, title, period, body, photo_file_id, updated_at from story_chapters where person_id = $1 order by position, created_at', [id]),
+  });
+});
+people.put('/people/:id/story', async (req, res) => {
+  const id = idParam(req.params.id);
+  await ownStory(req.access, id);
+  const b = parse(z.object({ visibility: z.enum(['private', 'managers', 'colleagues']), intro: text(1000).nullable().optional() }), req.body);
+  await q('update people set story_visibility = $2, story_intro = $3, updated_at = now() where id = $1', [id, b.visibility, b.intro || null]);
+  res.json({ ok: true });
+});
+people.post('/people/:id/story/chapters', async (req, res) => {
+  const id = idParam(req.params.id);
+  await ownStory(req.access, id);
+  const b = parse(chapterBody, req.body);
+  const n = await one<{ n: number }>('select count(*)::int n from story_chapters where person_id = $1', [id]);
+  if (n!.n >= 40) throw conflict('A story can have up to 40 chapters.');
+  res.status(201).json(await one(`insert into story_chapters (person_id, position, title, period, body) values ($1, $2, $3, $4, $5) returning *`, [id, n!.n, b.title, b.period || null, b.body]));
+});
+async function ownChapter(a: Access, personId: string, chapterId: string) {
+  await ownStory(a, personId);
+  const c = await one('select * from story_chapters where id = $1 and person_id = $2', [chapterId, personId]);
+  if (!c) throw notFound();
+  return c;
+}
+people.patch('/people/:id/story/chapters/:cid', async (req, res) => {
+  const id = idParam(req.params.id);
+  const c = await ownChapter(req.access, id, idParam(req.params.cid));
+  const b = parse(chapterBody, req.body);
+  res.json(await one('update story_chapters set title = $2, period = $3, body = $4, updated_at = now() where id = $1 returning *', [c.id, b.title, b.period || null, b.body]));
+});
+people.delete('/people/:id/story/chapters/:cid', async (req, res) => {
+  const id = idParam(req.params.id);
+  const c = await ownChapter(req.access, id, idParam(req.params.cid));
+  await tx(async (db) => { if (c.photo_file_id) await deleteFile(db, c.photo_file_id); await q('delete from story_chapters where id = $1', [c.id], db); });
+  res.json({ ok: true });
+});
+people.post('/people/:id/story/order', async (req, res) => {
+  const id = idParam(req.params.id);
+  await ownStory(req.access, id);
+  const { ids } = parse(z.object({ ids: z.array(uuid).max(40) }), req.body);
+  await tx(async (db) => { for (const [i, cid] of ids.entries()) await q('update story_chapters set position = $3 where id = $1 and person_id = $2', [cid, id, i], db); });
+  res.json({ ok: true });
+});
+people.post('/people/:id/story/chapters/:cid/photo', upload.single('file'), async (req, res) => {
+  const id = idParam(req.params.id);
+  const c = await ownChapter(req.access, id, idParam(req.params.cid));
+  if (!req.file) throw bad('Choose a photo.');
+  await tx(async (db) => {
+    const f = await saveFile(db, { companyId: null, entityType: 'story', entityId: c.id, name: req.file!.originalname, buf: req.file!.buffer, uploadedBy: req.person.id, imagesOnly: true });
+    await q('update story_chapters set photo_file_id = $2, updated_at = now() where id = $1', [c.id, f.id], db);
+    if (c.photo_file_id) await deleteFile(db, c.photo_file_id);
+  });
+  res.status(201).json({ ok: true });
+});
+
 // ── Proposed profile changes (staff propose; HR verifies) ──
 const proposable = z.object({
   field: z.enum(['preferred_name', 'professional_summary', 'work_phone', 'skills', 'languages', 'development_goals']),
@@ -418,10 +493,10 @@ people.post('/appointments/:id/end', async (req, res) => {
   if (b.end_date < ap.start_date) throw bad('End date cannot be before the start date.', { fields: { end_date: 'Before start date' } });
   const result = await tx(async (db) => {
     const openTasks = (await one<{ n: number }>(`select count(*) n from tasks where company_id = $1 and status <> 'completed' and (owner_id = $2 or reviewer_id = $2)`, [ap.company_id, ap.person_id], db))!.n;
-    if (openTasks && !b.transfer_to) throw new HttpError(409, 'transfer_required', `${openTasks} open task(s) in this company must be transferred before the appointment ends.`, { openTasks });
+    if (openTasks && !b.transfer_to) throw new HttpError(409, 'transfer_required', `${openTasks} open task(s) in this company must be transferred before the role ends.`, { openTasks });
     if (b.transfer_to) {
       const ok = await one(`select 1 from appointments a where a.person_id = $1 and a.company_id = $2 and a.id <> $3 and ${ACTIVE_APPT('a')}`, [b.transfer_to, ap.company_id, id], db);
-      if (!ok || b.transfer_to === ap.person_id) throw bad('Transfer to someone else with a current appointment in this company.', { fields: { transfer_to: 'Not eligible' } });
+      if (!ok || b.transfer_to === ap.person_id) throw bad('Transfer to someone else with a current role in this company.', { fields: { transfer_to: 'Not eligible' } });
       await q(`update tasks set owner_id = case when owner_id = $2 then $3 else owner_id end, reviewer_id = case when reviewer_id = $2 then $3 else reviewer_id end, updated_at = now()
                 where company_id = $1 and status <> 'completed' and (owner_id = $2 or reviewer_id = $2)`, [ap.company_id, ap.person_id, b.transfer_to], db);
     }
@@ -467,11 +542,11 @@ people.post('/appointments/:id/properties', async (req, res) => {
   const id = idParam(req.params.id);
   const ap = await loadAppointment(req.access, id, 'appointments.manage');
   const b = parse(z.object({ property_id: uuid, from_date: isoDate.optional(), override_reason: text(500).min(5).optional() }), req.body);
-  if (!(ap.status === 'active' || ap.status === 'planned')) throw conflict('Only current appointments can be given properties.');
+  if (!(ap.status === 'active' || ap.status === 'planned')) throw conflict('Only current roles can be given properties.');
   const pr = await one(`select p.id from properties p where p.id = $1 and (p.company_id = $2 or exists (select 1 from property_company_links l where l.property_id = p.id and l.company_id = $2))`, [b.property_id, ap.company_id]);
   if (!pr) throw bad('This property is not part of this company or an authorised arrangement.', { fields: { property_id: 'Wrong company' } });
   const out = await tx(async (db) => {
-    const warnings = await clearanceGate(db, req.access, ap.person_id, ap.company_id, `Property allocation (appointment ${id})`, b.override_reason);
+    const warnings = await clearanceGate(db, req.access, ap.person_id, ap.company_id, `Property allocation (role ${id})`, b.override_reason);
     const dup = await one('select 1 from appointment_properties where appointment_id = $1 and property_id = $2 and to_date is null', [id, b.property_id], db);
     if (dup) throw conflict('Already allocated.');
     const row = await one(`insert into appointment_properties (appointment_id, property_id, from_date, created_by) values ($1,$2,coalesce($3::date, ${LONDON_TODAY}),$4) returning *`, [id, b.property_id, b.from_date ?? null, req.person.id], db);
@@ -505,7 +580,7 @@ people.post('/clearance', async (req, res) => {
   if (b.person_id === req.person.id) throw forbidden('You cannot record your own clearance.');
   if (b.status === 'cleared_with_restrictions' && !b.restrictions) throw bad('Describe the restrictions.', { fields: { restrictions: 'Required' } });
   const has = await one('select 1 from appointments where person_id = $1 and company_id = $2', [b.person_id, b.company_id]);
-  if (!has) throw bad('This person has no appointment in this company.');
+  if (!has) throw bad('This person has no role in this company.');
   const row = await one('insert into clearance_decisions (person_id, company_id, status, restrictions, evidence_summary, decided_by, review_date) values ($1,$2,$3,$4,$5,$6,$7) returning *',
     [b.person_id, b.company_id, b.status, b.restrictions ?? null, b.evidence_summary, req.person.id, b.review_date ?? null]);
   await audit(pool, req.person.id, b.company_id, 'clearance_decision', row.id, 'decide', { person_id: b.person_id, status: b.status });

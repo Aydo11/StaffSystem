@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError, patch, post, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtMinutes, label, londonToday } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { Avatar, Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 type Tab = 'kpis' | 'reviews' | 'supervision' | 'recognition' | 'definitions';
 const KPI_STATUS: Record<string, [string, string]> = { met: ['verified', 'Target met'], below: ['action', 'Below target'], insufficient: ['not_required', 'Not enough data'], info: ['info', 'For information'] };
@@ -27,18 +27,43 @@ export function Performance() {
   );
 }
 
+// Everyone in one company side by side; pick a name to open their full KPIs.
+function TeamKpis({ companyId, month, onPick }: { companyId: string; month: string; onPick: (personId: string) => void }) {
+  const d = useApi<any[]>(`/kpis/team?company=${companyId}&month=${month}`);
+  if (d.error) return <LoadError error={d.error} retry={d.reload} />;
+  if (!d.data) return <Skeleton lines={8} />;
+  if (!d.data.length) return <Empty>No current staff in this company.</Empty>;
+  const cols = d.data[0].kpis;
+  const show = (k: any) => k.value === null ? '—' : k.unit === 'percent' ? `${k.value}%` : `${k.value} h`;
+  return (
+    <section className="card" aria-labelledby="team-h">
+      <h2 id="team-h">KPIs for each person</h2>
+      <p className="small muted">Green: target met. Red: below target. Grey: not enough data or no target. Choose a name for their full KPIs, trends and advice.</p>
+      <div className="table-wrap"><table className="kpi-table">
+        <thead><tr><th scope="col">Person</th>{cols.map((k: any) => <th key={k.key} scope="col" className="num">{k.title}</th>)}</tr></thead>
+        <tbody>{d.data.map((p) => (
+          <tr key={p.id}>
+            <th scope="row"><button type="button" className="btn ghost person-cell" onClick={() => onPick(p.id)}><Avatar personId={p.id} name={p.name} hasPhoto={p.has_photo} /><span>{p.name}<br /><span className="small muted">{p.job_title}</span></span></button></th>
+            {p.kpis.map((k: any) => <td key={k.key} className={`num kpi-${k.status}`} title={k.denominator ? `${k.numerator} of ${k.denominator}` : undefined}>{show(k)}<span className="sr-only"> — {KPI_STATUS[k.status][1]}</span></td>)}
+          </tr>
+        ))}</tbody>
+      </table></div>
+    </section>
+  );
+}
+
 // ── KPIs ──
 function Kpis() {
   const hub = useHub();
   const toast = useToast();
   const manager = hub.can('performance.view_all');
   const [month, setMonth] = useState(londonToday().slice(0, 7));
-  const [who, setWho] = useState<'me' | 'company'>('me');
+  const [who, setWho] = useState<'me' | 'company' | 'team'>('me');
   const [person, setPerson] = useState('');
   const companyId = hub.company !== 'all' ? hub.company : null;
   const people = useApi<any[]>(who === 'company' && companyId ? `/people?company=${companyId}` : null);
   const personParam = who === 'me' ? 'me' : person || undefined;
-  const d = useApi<any[]>(`/kpis${hub.q({ month, person: personParam })}`);
+  const d = useApi<any[]>(who === 'team' ? null : `/kpis${hub.q({ month, person: personParam })}`);
   const [about, setAbout] = useState<any>(null);
   const [trend, setTrend] = useState<any>(null);
   const [help, setHelp] = useState<string | null>(null);
@@ -48,16 +73,18 @@ function Kpis() {
     <>
       <div className="row" style={{ marginBottom: 16 }}>
         <div className="field" style={{ margin: 0 }}><label htmlFor="kpi-month">Month</label><input id="kpi-month" type="month" value={month} max={londonToday().slice(0, 7)} onChange={(e) => e.target.value && setMonth(e.target.value)} style={{ width: 200 }} /></div>
-        {manager && <Chips label="Whose measures" value={who} onChange={(v) => { setWho(v); setPerson(''); }} options={[['me', 'Mine'], ['company', 'Company']]} />}
+        {manager && <Chips label="Whose measures" value={who} onChange={(v) => { setWho(v); setPerson(''); }} options={[['me', 'Mine'], ['team', 'Each person'], ['company', 'Company']]} />}
         {who === 'company' && companyId && (
           <div className="field" style={{ margin: 0 }}><label htmlFor="kpi-person">Person</label>
             <select id="kpi-person" value={person} onChange={(e) => setPerson(e.target.value)} style={{ width: 260 }}><option value="">Whole company</option>{people.data?.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></div>
         )}
       </div>
       {who === 'company' && !companyId && <p className="notice">Showing each company separately. Choose a company at the top to look at one person.</p>}
+      {who === 'team' && (companyId ? <TeamKpis companyId={companyId} month={month} onPick={(id) => { setWho('company'); setPerson(id); }} />
+        : <p className="notice">Choose a company at the top to see everyone’s KPIs side by side.</p>)}
       <ErrorSummary error={toAction.error} />
       {d.error && <LoadError error={d.error} retry={d.reload} />}
-      {d.loading && !d.data ? <Skeleton lines={8} /> : (d.data ?? []).length === 0 ? <Empty>No measures to show.</Empty> : d.data!.map((c) => (
+      {who !== 'team' && (d.loading && !d.data ? <Skeleton lines={8} /> : (d.data ?? []).length === 0 ? <Empty>No measures to show.</Empty> : d.data!.map((c) => (
         <section key={c.company_id} className="card" aria-labelledby={`k-${c.company_id}`}>
           <h2 id={`k-${c.company_id}`}><CompanyBadge code={c.company_code} name={c.company_name} /> {c.company_name}</h2>
           <ul className="grid" style={{ listStyle: 'none', padding: 0 }}>
@@ -102,7 +129,7 @@ function Kpis() {
             </>
           )}
         </section>
-      ))}
+      )))}
       <Dialog open={!!about} onClose={() => setAbout(null)} title={about?.title ?? ''}>
         {about && <dl className="facts">
           <dt>Purpose</dt><dd>{about.definition.purpose}</dd>
@@ -321,7 +348,7 @@ function Supervision() {
         <section className="card" aria-labelledby="due-h">
           <div className="row between"><h2 id="due-h">Supervision due</h2><Button onClick={() => setCreating({})}>Record a session</Button></div>
           <p className="small muted">Due 8 weeks after the last completed session unless a next date was agreed.</p>
-          {due.loading && !due.data ? <Skeleton /> : (due.data ?? []).length === 0 ? <Empty>No current appointments in view.</Empty> : (
+          {due.loading && !due.data ? <Skeleton /> : (due.data ?? []).length === 0 ? <Empty>No current roles in view.</Empty> : (
             <ul className="list">{due.data!.map((p) => {
               const overdue = !p.due_on || p.due_on < today;
               return <li key={`${p.person_id}${p.company_id}`}><span><strong>{p.person_name}</strong> <CompanyBadge code={p.company_code} name={p.company_name} /><br /><span className="muted small">{p.job_title} · last {p.last_held ? fmtDate(p.last_held) : 'never recorded'}</span></span>

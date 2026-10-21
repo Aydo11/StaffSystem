@@ -131,7 +131,7 @@ development.post('/people/:id/competency-assessments', async (req, res) => {
   if (!k || !req.access.perms.has(k.company_id)) throw notFound();
   need(req.access, 'competence.assess', k.company_id);
   if (personId === req.person.id) throw forbidden('You cannot assess your own competence.');
-  if (!(await one(`select 1 from appointments a where a.person_id = $1 and a.company_id = $2 and ${ACTIVE_APPT('a')}`, [personId, k.company_id]))) throw bad('They have no current appointment in this competency’s company.');
+  if (!(await one(`select 1 from appointments a where a.person_id = $1 and a.company_id = $2 and ${ACTIVE_APPT('a')}`, [personId, k.company_id]))) throw bad('They have no current role in this competency’s company.');
   if (b.review_due && b.review_due <= b.assessed_on) throw bad('The review date must be after the assessment.', { fields: { review_due: 'Too early' } });
   if ((await one<{ f: boolean }>(`select $1::date > ${LONDON_TODAY} f`, [b.assessed_on]))!.f) throw bad('An assessment cannot be in the future.', { fields: { assessed_on: 'In the future' } });
   const row = await one(`insert into competency_assessments (person_id, competency_id, level, assessor_id, assessed_on, rubric_notes, evidence, review_due) values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
@@ -221,7 +221,7 @@ development.post('/probation-reviews/:id/complete', async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── One person's development: job description status, onboarding, probation and competence, per appointment they can see ──
+// ── One person's development: job description status, onboarding, probation and competence, per role they can see ──
 development.get('/people/:id/development', async (req, res) => {
   const a = req.access;
   const personId = idParam(req.params.id);

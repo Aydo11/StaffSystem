@@ -4,8 +4,8 @@ import { cpdRoadmap } from '../server/routes/people.ts';
 import { A, as, P, pool, prop, resetDb, rid } from './helpers.ts';
 
 beforeEach(resetDb);
-// Two days ago, 10:00 UK time, as the manual form sends it.
-const twoDaysAgo = () => `${new Date(Date.now() - 2 * 86400e3).toLocaleDateString('en-CA', { timeZone: 'Europe/London' })}T10:00`;
+// Two days ago, 05:00 UK time, as the manual form sends it.
+const twoDaysAgo = () => `${new Date(Date.now() - 2 * 86400e3).toLocaleDateString('en-CA', { timeZone: 'Europe/London' })}T05:00`; // early, so it never overlaps the seeded visits
 const manual = (work_category: string, start_local = twoDaysAgo()) => ({ property_id: prop(1), appointment_id: A.samVH, client_request_id: rid(), start_local, minutes: 60, work_category, summary: 'Weekly support session at the property.' });
 
 describe('support work', () => {
@@ -15,7 +15,7 @@ describe('support work', () => {
     expect(s.status).toBe(201);
     expect(s.body.visit.status).toBe('approved');
     expect((await pool.query('select minutes from visit_allocations where visit_id = $1', [s.body.visit.id])).rows).toEqual([{ minutes: 60 }]);
-    const o = await sam.post('/api/visits/manual').send(manual('inspection', twoDaysAgo().replace('T10', 'T13')));
+    const o = await sam.post('/api/visits/manual').send(manual('inspection', twoDaysAgo().replace('T05', 'T07')));
     expect(o.body.visit.status).toBe('submitted');
   });
 });

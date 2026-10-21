@@ -33,6 +33,19 @@ performance.get('/kpis', async (req, res) => {
   res.json(out);
 });
 
+// Every current person in one company, with their own KPIs for the month (managers with performance.view_all).
+// shortcut: one KPI query per person; fine for teams of tens, cache or batch the SQL if a company reaches hundreds.
+performance.get('/kpis/team', async (req, res) => {
+  const company = parse(uuid, req.query.company);
+  need(req.access, 'performance.view_all', company);
+  const m = parse(month, req.query.month);
+  const people = await q(`select distinct on (p.id) p.id, coalesce(p.preferred_name, p.full_name) as name, p.photo_path is not null as has_photo, a.job_title
+                            from appointments a join people p on p.id = a.person_id where a.company_id = $1 and ${ACTIVE_APPT('a')} order by p.id, a.start_date desc`, [company]);
+  const rows: any[] = [];
+  for (const p of people) rows.push({ ...p, kpis: (await computeKpis(pool, company, p.id, `${m}-01`)).map(({ key, title, unit, value, status, numerator, denominator }) => ({ key, title, unit, value, status, numerator, denominator })) });
+  res.json(rows.sort((x, y) => x.name.localeCompare(y.name)));
+});
+
 performance.get('/kpis/series', async (req, res) => {
   const a = req.access;
   const company = parse(uuid, req.query.company);
@@ -123,7 +136,7 @@ performance.post('/reviews', async (req, res) => {
   const b = parse(reviewFields.extend({ company_id: uuid, person_id: uuid, kind: z.enum(['probation', 'periodic', 'annual']), period_start: isoDate, period_end: isoDate }), req.body);
   need(req.access, 'reviews.manage', b.company_id);
   if (b.person_id === req.person.id) throw forbidden('You cannot review yourself.');
-  if (!(await hasAppointment(b.person_id, b.company_id))) throw bad('This person has no appointment in this company.');
+  if (!(await hasAppointment(b.person_id, b.company_id))) throw bad('This person has no role in this company.');
   const r = await one(`insert into reviews (company_id, person_id, author_id, kind, period_start, period_end, objectives, achievements, development, feedback) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`,
     [b.company_id, b.person_id, req.person.id, b.kind, b.period_start, b.period_end, b.objectives ?? null, b.achievements ?? null, b.development ?? null, b.feedback ?? null]);
   await audit(pool, req.person.id, b.company_id, 'review', r.id, 'create', { person_id: b.person_id, kind: b.kind });
@@ -205,7 +218,7 @@ performance.post('/supervisions', async (req, res) => {
   const b = parse(supFields.extend({ company_id: uuid, person_id: uuid, kind: z.enum(['supervision', 'coaching', 'mentoring']), held_on: isoDate, minutes: z.coerce.number().int().min(5).max(480) }), req.body);
   need(req.access, 'supervision.manage', b.company_id);
   if (b.person_id === req.person.id) throw forbidden('You cannot record your own supervision.');
-  if (!(await hasAppointment(b.person_id, b.company_id))) throw bad('This person has no appointment in this company.');
+  if (!(await hasAppointment(b.person_id, b.company_id))) throw bad('This person has no role in this company.');
   const s = await one(`insert into supervisions (company_id, person_id, supervisor_id, kind, held_on, minutes, agenda, shared_notes, restricted_notes, support_agreed, next_due) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
     [b.company_id, b.person_id, req.person.id, b.kind, b.held_on, b.minutes, b.agenda ?? null, b.shared_notes ?? null, b.restricted_notes ?? null, b.support_agreed ?? null, b.next_due ?? null]);
   await audit(pool, req.person.id, b.company_id, 'supervision', s.id, 'create', { person_id: b.person_id, kind: b.kind });
@@ -256,7 +269,7 @@ performance.post('/recognitions', async (req, res) => {
   const b = parse(z.object({ company_id: uuid, person_id: uuid, category: z.enum(['learning', 'quality', 'teamwork', 'improvement']), note: text(1000).min(5) }), req.body);
   if (!req.access.perms.has(b.company_id)) throw forbidden();
   if (b.person_id === req.person.id) throw forbidden('You cannot propose recognition for yourself.');
-  if (!(await hasAppointment(b.person_id, b.company_id))) throw bad('This person has no appointment in this company.');
+  if (!(await hasAppointment(b.person_id, b.company_id))) throw bad('This person has no role in this company.');
   res.status(201).json(await one('insert into recognitions (company_id, person_id, category, note, proposed_by) values ($1,$2,$3,$4,$5) returning *', [b.company_id, b.person_id, b.category, b.note, req.person.id]));
 });
 performance.post('/recognitions/:id/decide', async (req, res) => {
@@ -275,7 +288,7 @@ performance.post('/recognitions/:id/decide', async (req, res) => {
 performance.post('/help-requests', async (req, res) => {
   const b = parse(z.object({ company_id: uuid, message: text(2000).min(5) }), req.body);
   const ap = await one(`select a.manager_person_id from appointments a where a.person_id = $1 and a.company_id = $2 and ${ACTIVE_APPT('a')} and a.manager_person_id is not null limit 1`, [req.person.id, b.company_id]);
-  if (!ap) throw bad('No manager is recorded for your appointment in this company. Please contact HR.');
+  if (!ap) throw bad('No manager is recorded for your role in this company. Please contact HR.');
   const t = await tx(async (db) => {
     const row = await one(`insert into tasks (company_id, title, description, owner_id, created_by, due_on, priority) values ($1, $2, $3, $4, $5, ${LONDON_TODAY} + 2, 'high') returning id`,
       [b.company_id, `Help requested by ${req.person.preferred_name ?? req.person.full_name}`, b.message, ap.manager_person_id, req.person.id], db);

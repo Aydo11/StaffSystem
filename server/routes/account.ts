@@ -58,6 +58,14 @@ authPublic.post('/auth/login', limiter, async (req, res) => {
   const p = await one<{ id: string; staff_ref: string; password_hash: string | null; totp_enabled_at: string | null; locked: boolean; failed_logins: number }>(
     `select id, staff_ref, password_hash, totp_enabled_at, coalesce(locked_until > now(), false) as locked, failed_logins from people where lower(email) = lower($1) and status <> 'left'`, [b.email]);
   const ok = await verifyPassword(b.password, p?.password_hash ?? null); // always runs, so timing does not reveal which emails exist
+  if (!p) {
+    // A sign-up request that is not yet an account: say what is missing, but only to someone who knows its password.
+    const r = await one<{ password_hash: string; email_verified_at: string | null }>(`select password_hash, email_verified_at from staff_registrations where lower(email) = lower($1) and status = 'pending' order by created_at desc limit 1`, [b.email]);
+    if (r && await verifyPassword(b.password, r.password_hash)) {
+      logFail('pending_request', undefined, undefined);
+      throw new HttpError(403, 'pending_request', r.email_verified_at ? 'Your account request is waiting for an administrator to approve it. You will get an email when it is approved.' : 'Please verify your email first: open the link we emailed you, or resend it from the sign-up page.');
+    }
+  }
   if (!p || p.locked || !ok) {
     // The user sees one message for every case; the log says which, for support (no email or password logged).
     logFail(!p ? 'no_account' : p.locked ? 'locked' : !p.password_hash ? 'no_password_set' : 'wrong_password', p?.staff_ref, p ? p.failed_logins + 1 : undefined);

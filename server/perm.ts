@@ -14,10 +14,12 @@ export type Access = {
 export const ACTIVE_APPT = (a: string) => `${a}.status = 'active' and ${a}.start_date <= ${LONDON_TODAY} and (${a}.end_date is null or ${a}.end_date >= ${LONDON_TODAY})`;
 
 export async function loadAccess(personId: string, db: Db = pool): Promise<Access> {
-  // An active appointment implicitly grants the 'staff' role in that company; explicit grants add more.
+  // An active appointment grants the 'staff' role in that company, plus its job role's access level; explicit grants add more.
   const rows = await q<{ company_id: string | null; role_key: string; privileged: boolean; perm: string | null }>(
-    `select a.company_id, 'staff' as role_key, false as privileged, rp.permission_key as perm
-       from appointments a left join role_permissions rp on rp.role_key = 'staff'
+    `select a.company_id, r.key as role_key, r.privileged, rp.permission_key as perm
+       from appointments a left join job_roles jr on jr.key = a.job_role_key
+       join roles r on r.key in ('staff', coalesce(jr.access_role_key, 'staff'))
+       left join role_permissions rp on rp.role_key = r.key
       where a.person_id = $1 and ${ACTIVE_APPT('a')}
      union all
      select g.company_id, g.role_key, r.privileged, rp.permission_key

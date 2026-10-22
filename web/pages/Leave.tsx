@@ -40,11 +40,11 @@ function RequestLeave({ onClose, onSaved }: { onClose: () => void; onSaved: () =
   const hub = useHub();
   const toast = useToast();
   const cos = [...new Map(hub.me.appointments.filter((a: any) => a.status === 'active').map((a: any) => [a.company_id, a.company_name])).entries()];
-  const [f, setF] = useState({ company_id: cos[0]?.[0] ?? '', kind: 'annual', start_date: londonToday(), end_date: londonToday(), note: '' });
+  const [f, setF] = useState({ company_id: cos[0]?.[0] ?? '', kind: 'annual', start_date: londonToday(), end_date: londonToday(), note: '', handover_note: '' });
   const set = (k: keyof typeof f) => (e: any) => setF({ ...f, [k]: e.target.value });
   const save = useSubmit(async () => {
     if (f.end_date < f.start_date) throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields: { end_date: 'Must be on or after the first day' } });
-    await post('/leave', { ...f, note: f.note || undefined });
+    await post('/leave', { ...f, note: f.note || undefined, handover_note: f.handover_note.trim() || undefined });
     toast('Leave requested. Your manager will be asked to approve it.');
     onSaved();
   });
@@ -59,6 +59,7 @@ function RequestLeave({ onClose, onSaved }: { onClose: () => void; onSaved: () =
         <Field label="Last day" error={e.end_date}><input name="end_date" type="date" value={f.end_date} min={f.start_date} onChange={set('end_date')} /></Field>
       </div>
       <Field label="Note for your manager" optional hint="Do not include medical details." error={e.note}><textarea name="note" rows={2} maxLength={500} value={f.note} onChange={set('note')} /></Field>
+      <Field label="Handover: what needs covering while you are away?" optional hint="When your leave is approved, your open tasks are shared out to colleagues who are working. Say who should cover what (for example “Sam knows Oak House”). Your colleagues will see this note." error={e.handover_note}><textarea name="handover_note" rows={4} maxLength={4000} value={f.handover_note} onChange={set('handover_note')} /></Field>
     </Dialog>
   );
 }
@@ -70,7 +71,7 @@ function MyLeave({ l, reload }: { l: any; reload: () => void }) {
   return (
     <li>
       <span className="dated"><Tile d={l.start_date} /><span><strong>{kindLabel(l.kind)}</strong> · {range(l)} <span className="small muted">({days(l)})</span><br />
-        <span className="small muted">{l.company_name}{l.decided_by_name && ` · ${l.status === 'approved' ? 'Approved' : 'Decided'} by ${l.decided_by_name}, ${fmtDateTime(l.decided_at)}`}{l.decision_note && ` · “${l.decision_note}”`}</span></span></span>
+        <span className="small muted">{l.company_name}{l.decided_by_name && ` · ${l.status === 'approved' ? 'Approved' : 'Decided'} by ${l.decided_by_name}, ${fmtDateTime(l.decided_at)}`}{l.decision_note && ` · “${l.decision_note}”`}{l.handed_over > 0 && ` · ${l.handed_over} task${l.handed_over === 1 ? '' : 's'} handed over`}</span></span></span>
       <span className="row"><Status s={l.status} />{canCancel && <Button variant="secondary" busy={cancel.busy} onClick={() => cancel.run()} aria-label={`Cancel leave from ${fmtDate(l.start_date)}`}>Cancel</Button>}</span>
       <ErrorSummary error={cancel.error} />
     </li>
@@ -84,13 +85,16 @@ function Decide({ l, reload }: { l: any; reload: () => void }) {
   const [cover, setCover] = useState<any[] | null>(null);
   const loadCover = useSubmit(async () => setCover((await get(`/leave/${l.id}/cover`)).visits));
   const decide = useSubmit(async (decision: 'approved' | 'rejected') => {
-    await post(`/leave/${l.id}/decide`, { decision, note: note || undefined });
-    toast(decision === 'approved' ? 'Leave approved.' : 'Leave rejected.'); reload();
+    const r = await post(`/leave/${l.id}/decide`, { decision, note: note || undefined });
+    const n = r.handover?.length ?? 0;
+    toast(decision === 'approved' ? `Leave approved.${n ? ` ${n} task${n === 1 ? '' : 's'} handed over: ${r.handover.map((h: any) => `${h.title} → ${h.to_name}`).join('; ')}.` : ''}` : 'Leave rejected.'); reload();
   });
   return (
     <section className="card" aria-labelledby={`lv-${l.id}`}>
       <h2 id={`lv-${l.id}`} style={{ fontSize: '1.125rem' }}>{l.person_name}: {kindLabel(l.kind)}, {range(l)} ({days(l)})</h2>
       <p className="small muted">{l.company_name} · requested {fmtDateTime(l.created_at)}{l.note && <> · “{l.note}”</>}</p>
+      {l.handover_note && <p className="small"><strong>Handover note:</strong> {l.handover_note}</p>}
+      <p className="small muted">Approving shares out their open tasks to colleagues who are working, following the handover note.</p>
       {hub.can('visits.approve', l.company_id) && (cover ? <CoverList visits={cover} reload={() => loadCover.run()} /> : <Button variant="secondary" busy={loadCover.busy} onClick={() => loadCover.run()}>Check planned visits that need cover</Button>)}
       <ErrorSummary error={loadCover.error ?? decide.error} />
       <Field label="Note" optional hint="Required if you reject it." error={decide.error?.fields.note}><input name="note" value={note} onChange={(e) => setNote(e.target.value)} /></Field>

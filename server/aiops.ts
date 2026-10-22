@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { type Db, one, pool, q, tx } from './db.ts';
 import { audit, LONDON_TODAY, notify } from './http.ts';
-import { ACTIVE_APPT } from './perm.ts';
+import { ACTIVE_APPT, type Access, companiesWith, myCompanies } from './perm.ts';
 import { autoRun, type Source } from './routes/ai.ts';
 
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
@@ -138,4 +138,40 @@ export async function dailyReport(companyId: string, force = false) {
 }
 export async function dailyReports() {
   for (const c of await q<{ id: string }>('select id from companies')) await dailyReport(c.id);
+}
+
+// ── "Ask the Hub" on My Day: the person's own day, who is off, and (for managers) their teams' figures ──
+export async function myDaySources(a: Access): Promise<Source[]> {
+  const me = a.personId;
+  const { inboxFor } = await import('./routes/inbox.ts');
+  const offCos = companiesWith(a, 'staff.view');
+  const [tasks, plan, off, myLeave, handover, inbox] = await Promise.all([
+    q(`select t.title, t.due_on::text, t.priority, t.status, c.code, p.name as property from tasks t join companies c on c.id = t.company_id left join properties p on p.id = t.property_id
+        where t.owner_id = $1 and t.status <> 'completed' order by t.due_on nulls last limit 40`, [me]),
+    q(`select (s.planned_start at time zone 'Europe/London')::text as starts, s.planned_minutes, p.name as property, c.code from scheduled_visits s join properties p on p.id = s.property_id join companies c on c.id = s.company_id
+        where s.person_id = $1 and s.status = 'scheduled' and s.planned_start >= now() - interval '12 hours' and s.planned_start < now() + interval '7 days' order by s.planned_start`, [me]),
+    // Who is away: names and dates only, never the type of leave.
+    q(`select distinct ${name('p')} as name, l.start_date::text, l.end_date::text, c.code from leave_requests l join people p on p.id = l.person_id join companies c on c.id = l.company_id
+        where l.status = 'approved' and l.end_date >= ${LONDON_TODAY} and l.start_date <= ${LONDON_TODAY} + 7 and l.company_id = any($1::uuid[]) order by l.start_date::text, name`, [offCos]),
+    q(`select start_date::text, end_date::text, status from leave_requests where person_id = $1 and status in ('requested','approved') and end_date >= ${LONDON_TODAY} order by start_date`, [me]),
+    q(`select h.body, p.name as property, c.code from handover_notes h join companies c on c.id = h.company_id left join properties p on p.id = h.property_id
+        where h.company_id = any($1::uuid[]) and h.for_date = ${LONDON_TODAY} order by h.created_at desc limit 20`, [myCompanies(a)]),
+    inboxFor(a),
+  ]);
+  const today = (await one<{ d: string }>(`select ${LONDON_TODAY}::text d`))!.d;
+  const line = (r: any) => Object.entries(r).filter(([, v]) => v != null).map(([k, v]) => `${readable(k)}: ${v}`).join(', ');
+  const out: Source[] = [
+    { id: 'today', type: 'date', title: 'Today', text: `Today is ${today} (London).` },
+    { id: 'my_tasks', type: 'tasks', title: 'My open tasks', text: tasks.map((t) => `- ${line(t)}`).join('\n') || 'None' },
+    { id: 'my_plan', type: 'planned_visits', title: 'My planned visits (next 7 days)', text: plan.map((v) => `- ${line(v)}`).join('\n') || 'None planned' },
+    { id: 'needs_review', type: 'inbox', title: 'Needs my review', text: inbox.slice(0, 40).map((i: any) => `- ${i.title}${i.due ? ` (due ${i.due})` : ''}`).join('\n') || 'Nothing waiting' },
+    { id: 'who_is_off', type: 'leave', title: 'Colleagues away today or in the next 7 days', text: off.map((l) => `- ${l.name} (${l.code}): ${l.start_date} to ${l.end_date}`).join('\n') || 'Nobody' },
+    { id: 'my_leave', type: 'leave', title: 'My upcoming leave', text: myLeave.map((l) => `- ${l.start_date} to ${l.end_date} (${l.status})`).join('\n') || 'None' },
+    { id: 'handover', type: 'handover', title: "Today's handover notes", text: handover.map((h) => `- ${h.property ? `${h.property}: ` : ''}${h.body}`).join('\n') || 'None' },
+  ];
+  for (const c of companiesWith(a, 'performance.view_all').slice(0, 3)) {
+    const code = (await one<{ code: string }>('select code from companies where id = $1', [c]))!.code;
+    out.push({ ...(await figureSources(pool, c))[0], id: `figures_${code}`, title: `Company figures for ${code}` });
+  }
+  return out;
 }

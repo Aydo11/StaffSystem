@@ -77,8 +77,8 @@ properties.get('/properties/:id', async (req, res) => {
     q(`select f.id, f.original_name, f.uploaded_at, v.id as visit_id, v.started_at, ${name('w')} as person_name from files f join visits v on v.id = f.entity_id join people w on w.id = v.person_id
         where f.entity_type = 'visit' and v.property_id = $1 and v.status <> 'cancelled' and ${visitVisible('v', 2, 3)} order by f.uploaded_at desc limit 24`, [id, a.personId, companiesWith(a, 'visits.view_all')]),
   ]);
-  const [condition, complaints, repairs] = await conditionLists(pool, id);
-  res.json({ property: { ...p, has_photo: !!p.photo_path, photo_path: undefined }, links, keys, allocations, tasks, visits, scheduled, photos, condition, complaints, repairs, my_appointments: mine?.my_appointments ?? [], can: { manage, assign: companiesWith(a, 'appointments.manage').length > 0 } });
+  const [condition, complaints, repairs, repair_history] = await conditionLists(pool, id);
+  res.json({ property: { ...p, has_photo: !!p.photo_path, photo_path: undefined }, links, keys, allocations, tasks, visits, scheduled, photos, condition, complaints, repairs, repair_history, my_appointments: mine?.my_appointments ?? [], can: { manage, assign: companiesWith(a, 'appointments.manage').length > 0 } });
 });
 
 // Any staff member who can see the property can log a complaint; it becomes a task for the complaints lead.

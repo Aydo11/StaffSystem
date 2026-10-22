@@ -61,5 +61,6 @@ export function startWorkers() {
   setInterval(() => run(processOutbox), 30_000).unref();
   setInterval(() => run(queueReminders), 6 * 3600_000).unref();
   setInterval(() => run(async () => (await import('./routes/ai.ts')).purgeAiRuns()), 24 * 3600_000).unref();
+  setInterval(() => run(async () => (await import('./aiops.ts')).dailyReports()), 3600_000).unref(); // at most one report per company per day
   run(queueReminders);
 }

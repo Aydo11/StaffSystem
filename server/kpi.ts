@@ -18,8 +18,18 @@ sv as (select s.*, v.started_at as actual_start from scheduled_visits s left joi
         where s.company_id = $1 and ($2::uuid is null or s.person_id = $2) and s.status <> 'cancelled' and s.planned_start >= w.s and s.planned_start < w.e),
 tk as (select t.*, (t.completed_at at time zone 'Europe/London')::date done_on from tasks t, w
         where t.company_id = $1 and ($2::uuid is null or t.owner_id = $2) and t.due_on >= w.ds and t.due_on < w.de
+          and (t.status = 'completed' or t.due_on < (now() at time zone 'Europe/London')::date)),
+rp as (select r.* from repairs r left join tasks t on t.id = r.task_id, w
+        where r.company_id = $1 and ($2::uuid is null or r.assignee_id = $2 or t.owner_id = $2) and r.due_on >= w.ds and r.due_on < w.de
+          and (r.completed_on is not null or r.due_on < (now() at time zone 'Europe/London')::date)),
+cp as (select t.*, (t.completed_at at time zone 'Europe/London')::date done_on from property_complaints c join tasks t on t.id = c.task_id, w
+        where c.company_id = $1 and ($2::uuid is null or t.owner_id = $2) and t.due_on >= w.ds and t.due_on < w.de
           and (t.status = 'completed' or t.due_on < (now() at time zone 'Europe/London')::date))
 select
+  (select count(*) from rp)::int as repairs_d,
+  (select count(*) from rp where completed_on <= due_on)::int as repairs_n,
+  (select count(*) from cp)::int as complaints_d,
+  (select count(*) from cp where status = 'completed' and done_on <= due_on)::int as complaints_n,
   (select coalesce(sum(va.minutes), 0) from visit_allocations va join visits v on v.id = va.visit_id join appointments a on a.id = va.appointment_id, w
     where va.company_id = $1 and ($2::uuid is null or a.person_id = $2) and v.started_at >= w.s and v.started_at < w.e)::int as approved_minutes,
   (select coalesce(sum(planned_minutes), 0) from sv)::int as planned_minutes,
@@ -49,7 +59,7 @@ select distinct on (key) * from kpi_definitions
  where (company_id = $1 or company_id is null) and effective_from < ($2::date + interval '1 month')
  order by key, (company_id is null), effective_from desc, version desc`;
 
-const ORDER = ['approved_hours', 'on_time_starts', 'visit_coverage', 'tasks_on_time', 'development_actions', 'supervision_on_time', 'clearance', 'training_current', 'coaching_hours'];
+const ORDER = ['approved_hours', 'on_time_starts', 'visit_coverage', 'tasks_on_time', 'development_actions', 'supervision_on_time', 'clearance', 'training_current', 'repairs_on_time', 'complaints_on_time', 'coaching_hours'];
 
 export type Kpi = { key: string; title: string; unit: string; value: number | null; numerator: number | null; denominator: number | null; target: number | null; status: 'met' | 'below' | 'insufficient' | 'info'; definition: any; hours?: Record<string, number> };
 
@@ -59,6 +69,7 @@ export async function computeKpis(db: Db, companyId: string, personId: string | 
   const counts: Record<string, [number, number]> = {
     on_time_starts: [m.on_time_n, m.on_time_d], visit_coverage: [m.coverage_n, m.coverage_d], tasks_on_time: [m.tasks_n, m.tasks_d],
     development_actions: [m.dev_n, m.dev_d], clearance: [m.clearance_n, m.staff_d], supervision_on_time: [m.supervision_n, m.staff_d], training_current: [m.training_n, m.training_d],
+    repairs_on_time: [m.repairs_n, m.repairs_d], complaints_on_time: [m.complaints_n, m.complaints_d],
   };
   return ORDER.filter((k) => defs.has(k)).map((key) => {
     const d = defs.get(key);

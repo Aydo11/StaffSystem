@@ -1,6 +1,6 @@
 import { cloneElement, createContext, type ReactElement, type ReactNode, useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ApiError, blobUrl } from './api.ts';
+import { ApiError, blobUrl, useApi } from './api.ts';
 import { initials, label } from './format.ts';
 
 // ── Icons (inline, decorative: always paired with a visible or sr-only label) ──
@@ -291,4 +291,13 @@ export function PhotoGrid({ photos, caption, onRemove, canRemove = () => true }:
       </Dialog>
     </>
   );
+}
+
+// Job roles come from a fixed list; each carries an access level (e.g. managers get manager access).
+export function JobRoleSelect({ value, onChange, error, showAccess, hint }: { value: string; onChange: (v: string) => void; error?: string; showAccess?: boolean; hint?: ReactNode }) {
+  const roles = useApi<{ key: string; label: string; access_label: string }[]>('/job-roles');
+  return <Field label="Job role" error={error} hint={hint}><select name="job_role_key" required value={value} onChange={(e) => onChange(e.target.value)}>
+    <option value="">Choose a job role</option>
+    {roles.data?.map((r) => <option key={r.key} value={r.key}>{r.label}{showAccess ? ` (${r.access_label} access)` : ''}</option>)}
+  </select></Field>;
 }

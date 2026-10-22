@@ -8,6 +8,7 @@ import { onLeave } from './leave.ts';
 import { propertyVisible, taskVisible, visitVisible } from '../visibility.ts';
 import { upload } from './people.ts';
 import { complaintBody, conditionLists, logComplaint } from '../condition.ts';
+import { pinProperties } from '../geo.ts';
 
 export const properties = Router();
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
@@ -67,7 +68,7 @@ properties.get('/properties/:id', async (req, res) => {
                     from appointment_properties x join appointments ap on ap.id = x.appointment_id join people pp on pp.id = ap.person_id join companies c on c.id = ap.company_id
                    where x.property_id = $1 order by x.to_date is null desc, x.from_date desc`, [id]) : [],
     q(`select t.id, t.title, t.status, t.due_on, t.priority, ${name('o')} as owner_name from tasks t left join people o on o.id = t.owner_id where t.property_id = $1 and ${taskVisible('t', 2, 3)} order by t.status = 'completed', t.due_on nulls last limit 50`, [id, a.personId, companiesWith(a, 'tasks.view_all')]),
-    q(`select v.id, v.started_at, v.ended_at, v.status, v.entry_mode, v.work_category, ${name('w')} as person_name, c.code as company_code from visits v join people w on w.id = v.person_id join companies c on c.id = v.company_id
+    q(`select v.id, v.started_at, v.ended_at, v.status, v.entry_mode, v.work_category, v.start_distance_m, (v.start_lat is not null) as geotagged, ${name('w')} as person_name, c.code as company_code from visits v join people w on w.id = v.person_id join companies c on c.id = v.company_id
         where v.property_id = $1 and ${visitVisible('v', 2, 3)} order by v.started_at desc limit 30`, [id, a.personId, companiesWith(a, 'visits.view_all')]),
     q(`select s.*, ${name('w')} as person_name, c.code as company_code from scheduled_visits s join people w on w.id = s.person_id join companies c on c.id = s.company_id
         where s.property_id = $1 and s.status = 'scheduled' and (s.person_id = $2 or s.company_id = any($3::uuid[])) order by s.planned_start limit 30`, [id, a.personId, companiesWith(a, 'visits.view_all')]),
@@ -107,8 +108,9 @@ const propBody = z.object({
   managing_agent: text(200).nullable().optional(), manager_person_id: uuid.nullable().optional(),
   room_refs: z.array(text(30).regex(/^[\w .\-/]+$/, 'Room labels only — no names')).max(60).optional(),
   notes: text(1000).nullable().optional(),
+  latitude: z.coerce.number().min(-90).max(90).nullable().optional(), longitude: z.coerce.number().min(-180).max(180).nullable().optional(),
 });
-const propCols = ['ref', 'name', 'address_line1', 'address_line2', 'city', 'postcode', 'status', 'managing_agent', 'manager_person_id', 'room_refs', 'notes'] as const;
+const propCols = ['ref', 'name', 'address_line1', 'address_line2', 'city', 'postcode', 'status', 'managing_agent', 'manager_person_id', 'room_refs', 'notes', 'latitude', 'longitude'] as const;
 
 properties.post('/properties', async (req, res) => {
   const b = parse(propBody.extend({ company_id: uuid, status: propBody.shape.status.default('active') }), req.body);
@@ -116,6 +118,8 @@ properties.post('/properties', async (req, res) => {
   const row = await one(`insert into properties (company_id, ${propCols.join(', ')}) values ($1, ${propCols.map((_, i) => `$${i + 2}`).join(', ')}) returning *`,
     [b.company_id, ...propCols.map((k) => (b as any)[k] ?? (k === 'room_refs' ? [] : null))]);
   await audit(pool, req.person.id, b.company_id, 'property', row.id, 'create', { ref: b.ref });
+  if (b.latitude != null) await q(`update properties set location_source = 'manual' where id = $1`, [row.id]);
+  else pinProperties(pool, 5).catch(() => {}); // pin from the postcode in the background
   res.status(201).json(row);
 });
 
@@ -124,9 +128,13 @@ properties.patch('/properties/:id', async (req, res) => {
   const p = await visibleProperty(req.access, id);
   need(req.access, 'properties.manage', p.company_id);
   const b = parse(propBody.partial().strict(), req.body);
+  if ((b.latitude == null) !== (b.longitude == null) && ('latitude' in b || 'longitude' in b)) throw bad('Give both latitude and longitude, or clear both.');
   const keys = Object.keys(b);
   if (!keys.length) throw bad('Nothing to save.');
-  const row = await one(`update properties set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')} where id = $1 returning *`, [id, ...keys.map((k) => (b as any)[k])]);
+  // A hand-placed pin is kept; a new postcode re-pins a postcode-based one.
+  const loc = 'latitude' in b ? `, location_source = ${b.latitude == null ? 'null' : "'manual'"}` : b.postcode && b.postcode !== p.postcode ? `, latitude = case when location_source = 'manual' then latitude end, longitude = case when location_source = 'manual' then longitude end, location_source = case when location_source = 'manual' then 'manual' end` : '';
+  const row = await one(`update properties set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')}${loc} where id = $1 returning *`, [id, ...keys.map((k) => (b as any)[k])]);
+  if (row.latitude == null) pinProperties(pool, 5).catch(() => {});
   await audit(pool, req.person.id, p.company_id, 'property', id, 'update', { before: Object.fromEntries(keys.map((k) => [k, p[k]])), after: b });
   res.json(row);
 });

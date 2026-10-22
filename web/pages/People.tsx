@@ -8,7 +8,7 @@ import { AccessLinkNotice, PersonDataActions, SignInAccess } from './DataTools.t
 import { DevelopmentTab } from './Development.tsx';
 import { ProfileOverview } from './ProfileOverview.tsx';
 import { StoryTab } from './Story.tsx';
-import { Avatar, Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { Avatar, Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, JobRoleSelect, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 export function People() {
   const hub = useHub();
@@ -48,7 +48,7 @@ function AppointmentFields({ f, set, errors, companyId }: { f: any; set: (k: str
   return (
     <>
       <div className="form-grid">
-        <Field label="Job title" error={errors.job_title}><input name="job_title" value={f.job_title} onChange={set('job_title')} /></Field>
+        <JobRoleSelect value={f.job_role_key ?? ''} onChange={(v) => set('job_role_key')({ target: { value: v } })} error={errors.job_role_key} showAccess hint={f.job_title && !f.job_role_key ? `Currently “${f.job_title}”. Choose the matching role.` : undefined} />
         <Field label="Relationship" error={errors.relationship}><select name="relationship" value={f.relationship} onChange={set('relationship')}>{REL.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>
       </div>
       <fieldset className="field" style={{ border: 0, padding: 0 }}>
@@ -69,9 +69,9 @@ function AppointmentFields({ f, set, errors, companyId }: { f: any; set: (k: str
     </>
   );
 }
-const apptBody = (f: any) => ({ relationship: f.relationship, job_title: f.job_title, responsibilities: f.responsibilities || null, manager_person_id: f.manager_person_id || null, start_date: f.start_date,
+const apptBody = (f: any) => ({ relationship: f.relationship, job_role_key: f.job_role_key || undefined, responsibilities: f.responsibilities || null, manager_person_id: f.manager_person_id || null, start_date: f.start_date,
   contracted_hours_per_week: f.contracted_hours_per_week === '' ? null : Number(f.contracted_hours_per_week), legal_employer_company_id: f.legal_employer_company_id || null, legal_employer_name: f.legal_employer_company_id ? null : f.legal_employer_name || null });
-const blankAppt = (companyId = '') => ({ company_id: companyId, relationship: 'employee', job_title: '', responsibilities: '', manager_person_id: '', start_date: londonToday(), contracted_hours_per_week: '', legal_employer_company_id: companyId, legal_employer_name: '' });
+const blankAppt = (companyId = '') => ({ company_id: companyId, relationship: 'employee', job_role_key: '', responsibilities: '', manager_person_id: '', start_date: londonToday(), contracted_hours_per_week: '', legal_employer_company_id: companyId, legal_employer_name: '' });
 
 function InviteDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const hub = useHub();

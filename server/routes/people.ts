@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { clearanceGate, currentClearance } from '../clearance.ts';
 import { one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, HttpError, isoDate, LONDON_TODAY, notFound, notify, parse, text, uuid, idParam } from '../http.ts';
+import { jobRole } from '../jobroles.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith, need } from '../perm.ts';
 import { deleteFile, readFile, saveFile } from '../storage.ts';
 import { issueAccessLink, sendAccessEmail } from './account.ts';
@@ -112,7 +113,8 @@ const apptFields = {
   relationship: z.enum(['employee', 'contractor', 'agency', 'secondment', 'volunteer', 'other']),
   legal_employer_company_id: uuid.nullable().optional(),
   legal_employer_name: text(200).nullable().optional(),
-  job_title: text(120).min(2),
+  job_title: text(120).min(2).optional(), // shortcut: free text only for imports and old clients; the web form sends job_role_key
+  job_role_key: z.string().max(60).optional(),
   responsibilities: text(2000).nullable().optional(),
   manager_person_id: uuid.nullable().optional(),
   start_date: isoDate,
@@ -121,12 +123,14 @@ const apptFields = {
   status: z.enum(['planned', 'active', 'suspended']).default('active'),
 };
 
-async function insertAppointment(db: any, personId: string, companyId: string, b: any, actor: string) {
+async function insertAppointment(db: any, personId: string, companyId: string, b: any, actor: string, a: Access) {
+  if (b.job_role_key) b.job_title = (await jobRole(db, a, b.job_role_key, companyId)).label;
+  else if (!b.job_title) throw bad('Choose a job role.', { fields: { job_role_key: 'Required' } });
   if (!b.legal_employer_company_id && !b.legal_employer_name) throw bad('Say who the legal employer or contracting entity is.', { fields: { legal_employer_name: 'Required' } });
-  const ap = await one(`insert into appointments (person_id, company_id, relationship, legal_employer_company_id, legal_employer_name, job_title, responsibilities, manager_person_id, start_date, end_date, contracted_hours_per_week, status)
-                        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning *`,
-    [personId, companyId, b.relationship, b.legal_employer_company_id ?? null, b.legal_employer_name ?? null, b.job_title, b.responsibilities ?? null, b.manager_person_id ?? null, b.start_date, b.end_date ?? null, b.contracted_hours_per_week ?? null, b.status], db);
-  await audit(db, actor, companyId, 'appointment', ap.id, 'create', { person_id: personId, job_title: b.job_title });
+  const ap = await one(`insert into appointments (person_id, company_id, relationship, legal_employer_company_id, legal_employer_name, job_title, responsibilities, manager_person_id, start_date, end_date, contracted_hours_per_week, status, job_role_key)
+                        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning *`,
+    [personId, companyId, b.relationship, b.legal_employer_company_id ?? null, b.legal_employer_name ?? null, b.job_title, b.responsibilities ?? null, b.manager_person_id ?? null, b.start_date, b.end_date ?? null, b.contracted_hours_per_week ?? null, b.status, b.job_role_key ?? null], db);
+  await audit(db, actor, companyId, 'appointment', ap.id, 'create', { person_id: personId, job_title: b.job_title, job_role_key: b.job_role_key ?? null });
   return ap;
 }
 
@@ -140,7 +144,7 @@ people.post('/people', async (req, res) => {
   const { link, ...result } = await tx(async (db) => {
     const ref = (await one<{ ref: string }>(`select 'VWH-' || lpad((coalesce(max(substring(staff_ref from 5)::int), 0) + 1)::text, 4, '0') as ref from people where staff_ref ~ '^VWH-\\d+$'`, [], db))!.ref;
     const p = await one('insert into people (email, full_name, preferred_name, staff_ref, status) values ($1,$2,$3,$4,$5) returning id, staff_ref', [b.email, b.full_name, b.preferred_name ?? null, ref, 'invited'], db);
-    await insertAppointment(db, p.id, b.company_id, b, req.person.id);
+    await insertAppointment(db, p.id, b.company_id, b, req.person.id, req.access);
     await audit(db, req.person.id, b.company_id, 'person', p.id, 'invite', {});
     return { ...p, link: await issueAccessLink(db, p.id, 'invite') };
   });
@@ -457,7 +461,8 @@ people.post('/appointments', async (req, res) => {
   need(req.access, 'appointments.manage', b.company_id);
   const p = b.person_id ? await one('select id from people where id = $1', [b.person_id]) : b.person_email ? await one('select id from people where lower(email) = lower($1)', [b.person_email]) : null;
   if (!p) throw bad('Choose an existing person, by profile or by email.', { fields: { person_email: 'No profile with this email' } });
-  const ap = await tx((db) => insertAppointment(db, p.id, b.company_id, b, req.person.id));
+  if (p.id === req.person.id && b.job_role_key && !req.access.superAdmin) throw forbidden('You cannot give yourself a job role.');
+  const ap = await tx((db) => insertAppointment(db, p.id, b.company_id, b, req.person.id, req.access));
   await notify(pool, p.id, b.company_id, `New appointment: ${b.job_title}`, '/profile');
   res.status(201).json(ap);
 });
@@ -473,7 +478,11 @@ people.patch('/appointments/:id', async (req, res) => {
   const id = idParam(req.params.id);
   const ap = await loadAppointment(req.access, id, 'appointments.manage');
   if (ap.status === 'ended') throw conflict('This appointment has ended. Create a new appointment instead of changing history.');
-  const b = parse(z.object({ job_title: apptFields.job_title, responsibilities: apptFields.responsibilities, manager_person_id: apptFields.manager_person_id, contracted_hours_per_week: apptFields.contracted_hours_per_week, status: z.enum(['planned', 'active', 'suspended']), legal_employer_company_id: apptFields.legal_employer_company_id, legal_employer_name: apptFields.legal_employer_name, relationship: apptFields.relationship }).partial().strict(), req.body);
+  const b = parse(z.object({ job_title: text(120).min(2), job_role_key: z.string().max(60), responsibilities: apptFields.responsibilities, manager_person_id: apptFields.manager_person_id, contracted_hours_per_week: apptFields.contracted_hours_per_week, status: z.enum(['planned', 'active', 'suspended']), legal_employer_company_id: apptFields.legal_employer_company_id, legal_employer_name: apptFields.legal_employer_name, relationship: apptFields.relationship }).partial().strict(), req.body);
+  if (b.job_role_key) {
+    if (ap.person_id === req.person.id && !req.access.superAdmin) throw forbidden('You cannot change your own job role.');
+    b.job_title = (await jobRole(pool, req.access, b.job_role_key, ap.company_id)).label;
+  } else if (b.job_title && ap.job_role_key) delete b.job_title; // the title follows the chosen job role
   const keys = Object.keys(b);
   if (!keys.length) throw bad('Nothing to save.');
   const row = await tx(async (db) => {

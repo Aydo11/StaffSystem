@@ -1,33 +1,38 @@
 import { useState } from 'react';
 import { post, useApi, useSubmit } from '../api.ts';
 import { useHub } from '../hub.tsx';
-import { Button, ErrorSummary, Field, LoadError, PageHead, Skeleton } from '../ui.tsx';
+import { Button, ErrorSummary, Field, JobRoleSelect, LoadError, PageHead, Skeleton } from '../ui.tsx';
 
 export function RegistrationAdmin() {
   const requests=useApi<any[]>('/admin/registrations');
   return <><PageHead title="Staff & organisation requests" intro="Check each request and its organisation before approval. Staff receive ordinary staff access; additional roles and clearance are managed separately."/>
     {requests.loading && <Skeleton/>}{requests.error && <LoadError error={requests.error} retry={requests.reload}/>}
     {requests.data?.length===0 && <p>No registration requests.</p>}
-    {requests.data?.map(r=><RequestCard key={r.id} r={r} reload={requests.reload}/>)}
+    {requests.data && [...requests.data].sort((a,b)=>rank(a)-rank(b)).map(r=><RequestCard key={r.id} r={r} reload={requests.reload}/>)}
     <Reassignment/>
   </>;
 }
+// Pending requests first, then decided ones.
+const rank=(r:any)=>r.status!=='pending'?1:0;
 function RequestCard({r,reload}:{r:any;reload:()=>void}) {
   const hub=useHub();
-  const [company,setCompany]=useState(r.company_id ?? ''),[name,setName]=useState(r.organisation_name ?? ''),[code,setCode]=useState(''),[note,setNote]=useState(''),[job,setJob]=useState(r.job_title),[relationship,setRelationship]=useState('employee');
+  const [company,setCompany]=useState(r.company_id ?? ''),[name,setName]=useState(r.organisation_name ?? ''),[code,setCode]=useState(''),[note,setNote]=useState(''),[job,setJob]=useState(r.job_role_key ?? ''),[relationship,setRelationship]=useState('employee'),[also,setAlso]=useState<string[]>([]);
   const [delivery,setDelivery]=useState('');
   const decision=useSubmit(async (value:string)=>{
-    const result=await post(`/admin/registrations/${r.id}/decide`,{decision:value,note,job_title:job,relationship,...(company==='new'?{new_organisation:{name,code}}:company?{company_id:company}:{})});
+    const result=await post(`/admin/registrations/${r.id}/decide`,{decision:value,note:note.trim()||(value==='approved'?'Approved by an administrator':note),job_role_key:job||undefined,relationship,also_company_ids:also.filter(c=>c!==company),...(company==='new'?{new_organisation:{name,code}}:company?{company_id:company}:{})});
     setDelivery(result.email==='sent'?'Decision email sent.':'Decision saved. Email was not delivered; contact the applicant.');reload();
   });
   return <section className="card" style={{marginBottom:16}}><h2>{r.full_name}</h2><p>{r.email} · {r.company_name ?? `New organisation: ${r.organisation_name}`}</p>
-    <p>{r.email_verified_at?'Email verified':'Awaiting email verification'} · {r.status}</p><ErrorSummary error={decision.error}/>
+    <p>{r.status!=='pending'?r.status:<strong>Waiting for your decision</strong>} · requested {new Date(r.created_at).toLocaleDateString('en-GB')}</p><ErrorSummary error={decision.error}/>
     {r.status==='pending'?<><Field label="Approve into organisation"><select value={company} onChange={e=>setCompany(e.target.value)}><option value="">Choose an organisation</option>{hub.me.companies.map(c=><option value={c.id} key={c.id}>{c.name}</option>)}{hub.me.superAdmin && <option value="new">Create requested organisation</option>}</select></Field>
+    {hub.me.companies.length>1 && <fieldset style={{border:0,padding:0}}><legend style={{fontWeight:600}}>Also add them to</legend><p className="small muted">For staff who work across organisations. They get the same job role in each.</p>{hub.me.companies.filter(c=>c.id!==company).map(c=><label key={c.id} className="check"><input type="checkbox" checked={also.includes(c.id)} onChange={e=>setAlso(e.target.checked?[...also,c.id]:also.filter(x=>x!==c.id))}/> {c.name}</label>)}</fieldset>}
     {company==='new' && <><Field label="Organisation name"><input value={name} onChange={e=>setName(e.target.value)}/></Field><Field label="Unique organisation code" hint="2–6 uppercase letters"><input maxLength={6} value={code} onChange={e=>setCode(e.target.value.toUpperCase())}/></Field></>}
-    <Field label="Approved job title"><input value={job} onChange={e=>setJob(e.target.value)}/></Field>
+    <JobRoleSelect value={job} onChange={setJob} error={decision.error?.fields.job_role_key} showAccess hint={<>They asked for: {r.job_title}. The job role decides what they can see; manager roles see their team's work.</>}/>
     <Field label="Relationship"><select value={relationship} onChange={e=>setRelationship(e.target.value)}>{['employee','contractor','agency','secondment','volunteer','other'].map(v=><option key={v}>{v}</option>)}</select></Field>
-    <Field label="Decision reason"><textarea value={note} maxLength={500} onChange={e=>setNote(e.target.value)}/></Field>
-    <div className="row"><Button busy={decision.busy} disabled={!r.email_verified_at || !company || note.trim().length<3} onClick={()=>decision.run('approved')}>Approve staff account</Button><Button variant="secondary" disabled={decision.busy || note.trim().length<3} onClick={()=>decision.run('rejected')}>Reject request</Button></div></>:<p>{r.decision_note}</p>}
+    <Field label="Note" optional hint="Needed only if you reject the request."><textarea value={note} maxLength={500} onChange={e=>setNote(e.target.value)}/></Field>
+    <p className="small muted">Their email address has not been checked, so make sure you know who they are before approving.</p>
+    {(!company || !job) && <p className="notice">Choose the organisation and job role to approve them.</p>}
+    <div className="row"><Button busy={decision.busy} disabled={!company || !job} onClick={()=>decision.run('approved')}>Approve staff account</Button><Button variant="secondary" disabled={decision.busy || note.trim().length<3} onClick={()=>decision.run('rejected')}>Reject request</Button></div></>:<p>{r.decision_note}</p>}
     {delivery && <p role="status">{delivery}</p>}
   </section>;
 }

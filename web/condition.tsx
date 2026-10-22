@@ -1,5 +1,5 @@
 // House mood ratings, complaints and maintenance: the visit form sections and the property display.
-import { Field, Icon } from './ui.tsx';
+import { Field, FilePicker, Icon } from './ui.tsx';
 
 export const ASPECTS: [string, string][] = [['kitchen', 'Kitchen'], ['bathroom', 'Bathroom'], ['bedrooms', 'Bedrooms'], ['living_areas', 'Living areas'], ['garden', 'Garden and outside'], ['communal', 'Hallways and communal areas']];
 const TIPS: Record<string, string> = {
@@ -74,7 +74,7 @@ export function ComplaintFields({ value: c, onChange, error }: { value: Extras['
 }
 
 // The three fold-away sections of the visit form.
-export function VisitExtras({ value: x, onChange, ratingError, fieldErrors = {} }: { value: Extras; onChange: (x: Extras) => void; ratingError?: string; fieldErrors?: Record<string, string> }) {
+export function VisitExtras({ value: x, onChange, ratingError, fieldErrors = {}, onRepairPhotos }: { value: Extras; onChange: (x: Extras) => void; ratingError?: string; fieldErrors?: Record<string, string>; onRepairPhotos?: (f: File[]) => void }) {
   const n = ASPECTS.filter(([k]) => x.rating[k] != null).length;
   return (
     <div className="extras">
@@ -100,6 +100,8 @@ export function VisitExtras({ value: x, onChange, ratingError, fieldErrors = {} 
           <Field label="What needs fixing?" error={fieldErrors['repair.title']}><input maxLength={200} value={x.repair.title} onChange={(e) => onChange({ ...x, repair: { ...x.repair, title: e.target.value } })} placeholder="e.g. Kitchen tap leaking" /></Field>
           <Field label="How urgent is it?"><select value={x.repair.urgency} onChange={(e) => onChange({ ...x, repair: { ...x.repair, urgency: e.target.value } })}><option value="routine">Routine (within 28 days)</option><option value="urgent">Urgent (within 7 days)</option><option value="emergency">Emergency (within 24 hours)</option></select></Field>
           <Field label="Details" optional hint="Describe the property issue only, not residents."><textarea rows={2} maxLength={4000} value={x.repair.description} onChange={(e) => onChange({ ...x, repair: { ...x.repair, description: e.target.value } })} /></Field>
+          {onRepairPhotos && <FilePicker label="Photos of the problem" hint="They go on the repair for the repairs manager. Do not photograph residents." accept="image/jpeg,image/png,image/webp" multiple onChange={onRepairPhotos} />}
+          <p className="small muted">It goes to the repairs manager as a task and is kept on the property’s record.</p>
         </div>
       </details>
     </div>

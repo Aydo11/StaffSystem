@@ -7,6 +7,7 @@ import { Button, CompanyBadge, Empty, LoadError, PageHead, Skeleton, Status } fr
 import { RequestHelpDialog } from './Performance.tsx';
 import { DayOverview } from './Activity.tsx';
 import { StartVisitDialog } from './Visits.tsx';
+import { AskHub } from '../askhub.tsx';
 
 export function MyDay() {
   const { me } = useHub();
@@ -27,6 +28,7 @@ export function MyDay() {
   return (
     <>
       <PageHead title={`${greet}, ${me.person.preferred_name ?? me.person.full_name.split(' ')[0]}`} intro={fmtDate(today)} actions={<Button variant="secondary" onClick={() => setHelp(true)}>Request Help</Button>} />
+      <AskHub />
       <DayOverview key={me.person.id} />
       {d.error && <LoadError error={d.error} retry={d.reload} />}
       {d.loading && !d.data ? <Skeleton lines={6} /> : d.data && (

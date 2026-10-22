@@ -12,7 +12,7 @@ import { type Access, can, need } from '../perm.ts';
 
 export const ai = Router();
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
-type Source = { id: string; type: string; title: string; version?: number | string; text: string };
+export type Source = { id: string; type: string; title: string; version?: number | string; text: string };
 
 const cite = z.array(z.object({ source_id: z.string(), note: z.string() }));
 const missing = z.array(z.string());
@@ -152,6 +152,22 @@ const TASKS: Record<string, Task> = {
         { id: 'training', type: 'training', title: 'Completed training', text: tr.map((t) => `- ${t.title} (${t.completed_on})`).join('\n') || 'None recorded' }];
     },
   },
+  analytics_question: {
+    label: 'Ask about your organisation\'s figures',
+    perm: 'performance.view_all',
+    input: z.object({ question: text(1000).min(5) }),
+    output: z.object({ answer: z.string(), key_figures: z.array(z.string()), suggested_actions: z.array(z.string()), citations: cite, missing_evidence: missing }),
+    instruction: 'Answer the manager\'s question using only the figures provided. Quote the figures you used. Point out trends or problems the figures show, and suggest practical next steps. If the figures cannot answer the question, say what data is missing.',
+    gather: async (_a, companyId) => (await import('../aiops.ts')).figureSources(pool, companyId),
+  },
+  property_audit: {
+    label: 'Audit a property\'s records',
+    perm: 'properties.view',
+    input: z.object({ property_id: uuid }),
+    output: z.object({ overall: z.string(), findings: z.array(z.object({ area: z.string(), finding: z.string(), evidence: z.string(), suggestion: z.string() })), priorities: z.array(z.string()), citations: cite, missing_evidence: missing }),
+    instruction: 'Audit this property from its records: house mood ratings, complaints, repairs, visits and tasks. For each area give the finding, the record that shows it and a practical suggestion. List the most urgent priorities first. Do not guess at anything the records do not show.',
+    gather: async (_a, companyId, input) => (await import('../aiops.ts')).propertySources(pool, companyId, input.property_id),
+  },
 };
 
 // The model call is replaceable in tests. In production it uses the official SDK with structured output.
@@ -171,6 +187,27 @@ export const setAiCaller = (c: Caller) => { caller = c; };
 const configured = () => process.env.AI_ENABLED !== 'false' && !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
 
 const xml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const render = (sources: Source[]) => sources.map((x) => `<source id="${xml(x.id)}" type="${x.type}" title="${xml(x.title)}"${x.version ? ` version="${x.version}"` : ''}>\n${xml(x.text)}\n</source>`).join('\n');
+const usedThisMonth = async (companyId: string) => (await one<{ n: number }>(`select coalesce(sum(input_tokens + output_tokens), 0)::int n from ai_runs where company_id = $1 and created_at >= date_trunc('month', now())`, [companyId]))!.n;
+
+// Automatic use (leave handovers, daily reports). Runs only when the company has the assistant switched on and budget left;
+// returns null otherwise or on any failure, so the caller falls back to its own rules. Results are applied, not left as drafts.
+export async function autoRun(companyId: string, personId: string | null, task: string, instruction: string, sources: Source[], schema: z.ZodType<any>) {
+  if (!configured()) return null;
+  const s = await one('select * from ai_settings where company_id = $1', [companyId]);
+  if (!s?.enabled || (await usedThisMonth(companyId)) >= s.monthly_token_limit) return null;
+  const meta = sources.map(({ id, type, title }) => ({ id, type, title }));
+  const run = await one(`insert into ai_runs (company_id, person_id, task, input, sources, model) values ($1,$2,$3,'{}',$4,$5) returning id`, [companyId, personId, task, JSON.stringify(meta), s.model]);
+  try {
+    const r = await caller({ model: s.model, system: RULES, prompt: `${instruction}\n\n${render(sources)}`, schema });
+    if (r.refused || !r.output) throw new Error(r.refused ? 'The model declined this request.' : 'No usable output.');
+    await q(`update ai_runs set output = $2, input_tokens = $3, output_tokens = $4, status = 'accepted', review_note = 'Applied automatically', reviewed_at = now() where id = $1`, [run.id, JSON.stringify(r.output), r.input_tokens, r.output_tokens]);
+    return r.output;
+  } catch (e: any) {
+    await q(`update ai_runs set status = 'failed', error = $2 where id = $1`, [run.id, String(e?.message ?? e).slice(0, 500)]);
+    return null;
+  }
+}
 
 ai.get('/ai/tasks', async (req, res) => {
   const a = req.access;
@@ -193,12 +230,11 @@ ai.post('/ai/runs', async (req, res) => {
   if (!s.allowed_roles.some((r: string) => a.roles.get(b.company_id)?.has(r))) throw forbidden('Your role is not permitted to use the AI assistant in this company.');
   if (!s.allowed_tasks.includes(b.task)) throw forbidden('This task is not switched on for this company.');
   if (task.perm) need(a, task.perm, b.company_id);
-  const used = (await one<{ n: number }>(`select coalesce(sum(input_tokens + output_tokens), 0)::int n from ai_runs where company_id = $1 and created_at >= date_trunc('month', now())`, [b.company_id]))!.n;
-  if (used >= s.monthly_token_limit) throw conflict('This company has reached its monthly AI usage limit. You can still do this task by hand.');
+  if ((await usedThisMonth(b.company_id)) >= s.monthly_token_limit) throw conflict('This company has reached its monthly AI usage limit. You can still do this task by hand.');
   const input = parse(task.input, b.input);
   const sources = await task.gather(a, b.company_id, input);
   if (!sources.length || sources.every((x) => !x.text.trim())) throw bad('There are no records the assistant could use for this. It will not guess.');
-  const prompt = `${task.instruction}\n\n${sources.map((x) => `<source id="${xml(x.id)}" type="${x.type}" title="${xml(x.title)}"${x.version ? ` version="${x.version}"` : ''}>\n${xml(x.text)}\n</source>`).join('\n')}\n\n${b.task === 'policy_question' ? `Question: ${xml(input.question)}` : ''}`;
+  const prompt = `${task.instruction}\n\n${render(sources)}\n\n${input.question ? `Question: ${xml(input.question)}` : ''}`;
   const meta = sources.map(({ id, type, title, version }) => ({ id, type, title, version }));
   const run = await one(`insert into ai_runs (company_id, person_id, task, input, sources, model) values ($1,$2,$3,$4,$5,$6) returning id`, [b.company_id, a.personId, b.task, JSON.stringify(input), JSON.stringify(meta), s.model]);
   try {
@@ -217,8 +253,8 @@ ai.post('/ai/runs', async (req, res) => {
 ai.get('/ai/runs', async (req, res) => {
   const a = req.access;
   const audit_cos = [...a.perms.keys()].filter((c) => can(a, 'ai.configure', c));
-  res.json(await q(`select r.id, r.task, r.status, r.created_at, r.company_id, c.code as company_code, ${name('p')} as person_name, r.person_id, r.input_tokens + r.output_tokens as tokens, r.error
-                      from ai_runs r join companies c on c.id = r.company_id join people p on p.id = r.person_id
+  res.json(await q(`select r.id, r.task, r.status, r.created_at, r.company_id, c.code as company_code, coalesce(${name('p')}, 'Automatic') as person_name, r.person_id, r.input_tokens + r.output_tokens as tokens, r.error
+                      from ai_runs r join companies c on c.id = r.company_id left join people p on p.id = r.person_id
                      where r.person_id = $1 or r.company_id = any($2::uuid[]) order by r.created_at desc limit 200`, [a.personId, audit_cos]));
 });
 ai.get('/ai/runs/:id', async (req, res) => {
@@ -251,6 +287,19 @@ ai.put('/ai/settings/:company', async (req, res) => {
     [companyId, b.enabled, b.model, b.allowed_roles, b.allowed_tasks, b.monthly_token_limit, b.retention_days, req.person.id]);
   await audit(pool, req.person.id, companyId, 'ai_settings', companyId, 'update', b);
   res.json({ ok: true });
+});
+
+// Daily reports: figures every day, with Claude's summary when the assistant is on for the company.
+ai.get('/ai/reports', async (req, res) => {
+  const cos = [...req.access.perms.keys()].filter((c) => can(req.access, 'performance.view_all', c));
+  res.json(await q(`select r.*, c.name as company_name, c.code as company_code from ai_reports r join companies c on c.id = r.company_id
+                     where r.company_id = any($1::uuid[]) order by r.report_date desc, c.name limit 60`, [cos]));
+});
+ai.post('/ai/reports/:company/run', async (req, res) => {
+  const companyId = idParam(req.params.company);
+  need(req.access, 'performance.view_all', companyId);
+  const { dailyReport } = await import('../aiops.ts');
+  res.status(201).json(await dailyReport(companyId, true));
 });
 
 // Retention: drafts and their inputs are removed after the company's retention period (the audit entry remains).

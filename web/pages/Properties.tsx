@@ -148,7 +148,7 @@ export function PropertyPage() {
 
   if (d.error) return <LoadError error={d.error} retry={d.reload} />;
   if (!d.data) return <Skeleton lines={8} />;
-  const { property: p, keys, allocations, tasks, visits, scheduled, links, my_appointments, can, photos, condition, complaints, repairs } = d.data;
+  const { property: p, keys, allocations, tasks, visits, scheduled, links, my_appointments, can, photos, condition, complaints, repairs, repair_history = [] } = d.data;
   const openComplaints = complaints.filter((c: any) => c.task_status !== 'completed');
   const tips = suggestions(condition.aspects, openComplaints.length, repairs.length);
   const current = allocations.filter((a: any) => !a.to_date);
@@ -194,6 +194,8 @@ export function PropertyPage() {
           )}
           <h3 style={{ marginTop: 20 }}>Maintenance</h3>
           {repairs.length === 0 ? <p className="muted">No open repairs.</p> : <details><summary>{repairs.length} open repair{repairs.length === 1 ? '' : 's'}</summary><ul className="list">{repairs.map((r: any) => <li key={r.id}><Link to={`/estates/repairs/${r.id}`}>{r.title}</Link><span className="small muted">{label(r.urgency)} · due {fmtDate(r.due_on)}</span></li>)}</ul></details>}
+          {repair_history.length > 0 && <details><summary>{repair_history.length} fixed repair{repair_history.length === 1 ? '' : 's'} · {repair_history.filter((r: any) => r.on_time).length} on time</summary><ul className="list">{repair_history.map((r: any) => <li key={r.id}><Link to={`/estates/repairs/${r.id}`}>{r.title}</Link><span className="small muted">{label(r.urgency)} · fixed in {r.days_to_fix <= 0 ? 'the same day' : `${r.days_to_fix} day${r.days_to_fix === 1 ? '' : 's'}`} · closed {fmtDateTime(r.verified_at)} <Status s={r.on_time ? 'verified' : 'action'} text={r.on_time ? 'On time' : 'Late'} /></span></li>)}</ul></details>}
+          <p className="small muted">Each repair goes to the repairs manager as a task and completes when it is verified.{hub.can('governance.manage', p.company_id) && <> <Link to="/governance?tab=leads&set=repairs">Choose the repairs manager</Link></>}</p>
         </section>
 
         <section className="card" aria-labelledby="pd-h">

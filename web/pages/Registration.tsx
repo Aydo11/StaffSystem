@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { post, useApi, useSubmit } from '../api.ts';
-import { Button, ErrorSummary, Field, LoadError } from '../ui.tsx';
+import { Button, ErrorSummary, Field, JobRoleSelect, LoadError } from '../ui.tsx';
 import { Frame } from './Login.tsx';
 
 export function Registration() {
@@ -8,7 +8,7 @@ export function Registration() {
   const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[name,setName]=useState(''),[job,setJob]=useState('');
   const [company,setCompany]=useState(''),[organisation,setOrganisation]=useState(''),[sent,setSent]=useState(false);
   const submit=useSubmit(async()=>{
-    await post('/auth/register',{email,password,full_name:name,job_title:job,...(company==='new'?{organisation_name:organisation}:{company_id:company})});
+    await post('/auth/register',{email,password,full_name:name,job_role_key:job,...(company==='new'?{organisation_name:organisation}:{company_id:company})});
     setSent(true);
   });
   return <Frame><h1>{sent?'Request sent':'Join your organisation'}</h1>
@@ -20,7 +20,7 @@ export function Registration() {
       <Field label="Full name" error={submit.error?.fields.full_name}><input name="full_name" required minLength={2} maxLength={120} autoComplete="name" value={name} onChange={e=>setName(e.target.value)}/></Field>
       <Field label="Organisation" error={submit.error?.fields.company_id}><select name="company_id" required value={company} onChange={e=>setCompany(e.target.value)}><option value="">Choose your organisation</option>{orgs.data?.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}<option value="new">Request a new organisation</option></select></Field>
       {company==='new' && <Field label="Organisation name" error={submit.error?.fields.organisation_name}><input name="organisation_name" required minLength={2} maxLength={160} value={organisation} onChange={e=>setOrganisation(e.target.value)}/></Field>}
-      <Field label="Job title" error={submit.error?.fields.job_title}><input name="job_title" required minLength={2} maxLength={120} value={job} onChange={e=>setJob(e.target.value)}/></Field>
+      <JobRoleSelect value={job} onChange={setJob} error={submit.error?.fields.job_role_key} hint="Your administrator confirms this when they approve you."/>
       <Field label="Work email" error={submit.error?.fields.email}><input name="email" required type="email" maxLength={254} autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)}/></Field>
       <Field label="Choose a password" error={submit.error?.fields.password} hint="At least 8 characters. Do not include your email address."><input name="password" required type="password" minLength={8} maxLength={200} autoComplete="new-password" value={password} onChange={e=>setPassword(e.target.value)}/></Field>
       <Button type="submit" busy={submit.busy}>Send account request</Button>

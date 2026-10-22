@@ -1,6 +1,7 @@
 // Leave, cover and availability (§19). Leave belongs to a person; it is approved in one company where they work.
 import { Router } from 'express';
 import { z } from 'zod';
+import { handOverTasks } from '../aiops.ts';
 import { clearanceGate } from '../clearance.ts';
 import { one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, idParam, isoDate, LONDON_TODAY, notFound, notify, parse, text, uuid } from '../http.ts';
@@ -9,7 +10,7 @@ import { ACTIVE_APPT, can, companiesWith, need } from '../perm.ts';
 export const leave = Router();
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
 const COLS = `l.*, ${name('p')} as person_name, c.name as company_name, c.code as company_code, ${name('d')} as decided_by_name,
-              (l.end_date - l.start_date + 1) as days`;
+              (l.end_date - l.start_date + 1) as days, (select count(*)::int from task_handovers h where h.leave_id = l.id) as handed_over`;
 const FROM = `leave_requests l join people p on p.id = l.person_id join companies c on c.id = l.company_id left join people d on d.id = l.decided_by`;
 
 // Someone on approved leave that day (any company: a person cannot work for one company while on leave from another).
@@ -31,13 +32,13 @@ leave.get('/leave', async (req, res) => {
 });
 
 leave.post('/leave', async (req, res) => {
-  const b = parse(z.object({ company_id: uuid, kind: z.enum(['annual', 'sick', 'unpaid', 'training', 'compassionate', 'other']), start_date: isoDate, end_date: isoDate, note: text(500).optional() }), req.body);
+  const b = parse(z.object({ company_id: uuid, kind: z.enum(['annual', 'sick', 'unpaid', 'training', 'compassionate', 'other']), start_date: isoDate, end_date: isoDate, note: text(500).optional(), handover_note: text(4000).optional() }), req.body);
   if (b.end_date < b.start_date) throw bad('The leave ends before it starts.', { fields: { end_date: 'Before the start' } });
   if (!(await one(`select 1 from appointments a where a.person_id = $1 and a.company_id = $2 and ${ACTIVE_APPT('a')}`, [req.person.id, b.company_id]))) throw bad('Choose a company where you currently work.', { fields: { company_id: 'No current role' } });
   if (await one(`select 1 from leave_requests where person_id = $1 and status in ('requested','approved') and daterange(start_date, end_date, '[]') && daterange($2::date, $3::date, '[]')`, [req.person.id, b.start_date, b.end_date]))
     throw conflict('You already have leave requested or approved on some of these days.');
-  const row = await one(`insert into leave_requests (person_id, company_id, kind, start_date, end_date, note) values ($1,$2,$3,$4,$5,$6) returning *`,
-    [req.person.id, b.company_id, b.kind, b.start_date, b.end_date, b.note ?? null]);
+  const row = await one(`insert into leave_requests (person_id, company_id, kind, start_date, end_date, note, handover_note) values ($1,$2,$3,$4,$5,$6,$7) returning *`,
+    [req.person.id, b.company_id, b.kind, b.start_date, b.end_date, b.note ?? null, b.handover_note ?? null]);
   await audit(pool, req.person.id, b.company_id, 'leave', row.id, 'request', { kind: b.kind, start_date: b.start_date, end_date: b.end_date });
   res.status(201).json(row);
 });
@@ -60,7 +61,9 @@ leave.post('/leave/:id/decide', async (req, res) => {
     await notify(db, l.person_id, l.company_id, `Your leave from ${l.start_date} was ${b.decision}`, '/leave', b.note);
     await audit(db, req.person.id, l.company_id, 'leave', l.id, b.decision, {});
   });
-  res.json({ ok: true });
+  // Approved leave hands the person's open tasks to colleagues straight away (AI-matched when the assistant is on).
+  const handover = b.decision === 'approved' ? await handOverTasks(l.id, req.person.id) : [];
+  res.json({ ok: true, handover });
 });
 
 leave.post('/leave/:id/cancel', async (req, res) => {

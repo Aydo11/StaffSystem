@@ -134,3 +134,13 @@ it('lets someone who was rejected send a new request',async()=>{
   expect((await registration()).full_name).toBe('New Staff Again');
   expect((await decide(r.id,{company_id:C.WHM})).status).toBe(200);
 });
+
+it('approves someone into more than one job role, each with its own access', async()=>{
+  await signup();const r=await registration();
+  expect((await decide(r.id,{company_id:C.VH,also_job_role_keys:['housing_officer','support_worker']})).status).toBe(200);
+  const roles=(await pool.query('select job_role_key from appointments a join people p on p.id=a.person_id where p.email=$1 order by job_role_key',[r.email])).rows.map((x:any)=>x.job_role_key);
+  expect(roles).toEqual(['housing_officer','support_worker']); // the duplicate is ignored
+  const login=await publicPost('/api/auth/login').send({email:r.email,password:pw});
+  const me=await request(app).get('/api/me').set('Authorization',`Bearer ${login.body.token}`);
+  expect(JSON.stringify(me.body.companies.find((c:any)=>c.id===C.VH))).toContain('properties.manage'); // housing officer access
+});

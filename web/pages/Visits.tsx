@@ -26,10 +26,11 @@ function WorkType({ value, onChange, error }: { value: string; onChange: (v: str
 }
 
 // Uploads chosen photos one by one after the visit is saved; returns how many failed (the visit itself is already safe).
-async function uploadPhotos(visitId: string, files: File[], onProgress: (n: number | null) => void) {
+// Uploads to a visit's photos, or to any other photo endpoint given as a path (e.g. a repair reported from the visit).
+export async function uploadPhotos(visitId: string, files: File[], onProgress: (n: number | null) => void) {
   let failed = 0;
   for (const [i, f] of files.entries()) {
-    try { await upload(`/visits/${visitId}/photos`, f, f.name, (pct) => onProgress(Math.round(((i + pct / 100) / files.length) * 100))); } catch { failed++; }
+    try { await upload(visitId.startsWith('/') ? visitId : `/visits/${visitId}/photos`, f, f.name, (pct) => onProgress(Math.round(((i + pct / 100) / files.length) * 100))); } catch { failed++; }
   }
   onProgress(null);
   return failed;
@@ -96,6 +97,7 @@ export function ActiveVisit() {
   const [reason, setReason] = useState('');
   const [done, setDone] = useState<any>(null);
   const [photos, setPhotos] = useState<File[]>([]);
+  const [repairPhotos, setRepairPhotos] = useState<File[]>([]);
   const [progress, setProgress] = useState<number | null>(null);
   useEffect(() => { const t = setInterval(() => setNow(serverNow()), 1000); return () => clearInterval(t); }, []);
   useEffect(() => { if (draftKey) try { localStorage.setItem(draftKey, JSON.stringify(draft)); } catch { /* drafts are a convenience */ } }, [draft, draftKey]);
@@ -109,7 +111,7 @@ export function ActiveVisit() {
     const r = await post(`/visits/${v!.id}/finish`, { work_category: draft.work_category, summary: draft.summary, ...extrasPayload(draft.extras), geo: await here() });
     try { localStorage.removeItem(draftKey); } catch { /* ignore */ }
     setReview(false);
-    const failed = photos.length ? await uploadPhotos(r.id, photos, setProgress) : 0;
+    const failed = (photos.length ? await uploadPhotos(r.id, photos, setProgress) : 0) + (r.repair_id && repairPhotos.length ? await uploadPhotos(`/repairs/${r.repair_id}/photos`, repairPhotos, setProgress) : 0);
     setDone({ ...r, photos: photos.length - failed, failed });
     await reloadMe();
   });
@@ -155,7 +157,7 @@ export function ActiveVisit() {
             <textarea name="summary" maxLength={500} value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} />
           </Field>
           <FilePicker label="Photos of the property" hint={PHOTO_HINT} accept="image/jpeg,image/png,image/webp" multiple busy={progress !== null} progress={progress} onChange={setPhotos} />
-          <VisitExtras value={draft.extras} onChange={(x) => setDraft({ ...draft, extras: x })} ratingError={finish.error?.fields.rating} fieldErrors={finish.error?.fields} />
+          <VisitExtras value={draft.extras} onChange={(x) => setDraft({ ...draft, extras: x })} ratingError={finish.error?.fields.rating} fieldErrors={finish.error?.fields} onRepairPhotos={setRepairPhotos} />
         </section>
       </div>
       <Dialog open={review} onClose={() => setReview(false)} title="Check your visit" variant="modal"
@@ -194,6 +196,7 @@ export function ManualVisit() {
   const [extras, setExtras] = useState<Extras>(blankExtras);
   const [confirmUnusual, setConfirmUnusual] = useState(false);
   const [photos, setPhotos] = useState<File[]>([]);
+  const [repairPhotos, setRepairPhotos] = useState<File[]>([]);
   const [progress, setProgress] = useState<number | null>(null);
   const requestId = useRef(crypto.randomUUID());
   const prop = props.data?.find((p) => p.id === f.property_id);
@@ -233,7 +236,7 @@ export function ManualVisit() {
     try {
       const r = await post('/visits/manual', { property_id: f.property_id, appointment_id: f.appointment_id, start_local: `${f.date}T${f.time}`, minutes, work_category: f.work_category, summary: f.summary, client_request_id: requestId.current, confirm_unusual: confirmUnusual || undefined, ...extrasPayload(extras) });
       remember('lastProperty', f.property_id); remember('lastWorkType', f.work_category); remember('lastDuration', f.preset);
-      const failed = photos.length && !r.duplicate ? await uploadPhotos(r.visit.id, photos, setProgress) : 0;
+      const failed = (photos.length && !r.duplicate ? await uploadPhotos(r.visit.id, photos, setProgress) : 0) + (r.visit.repair_id && repairPhotos.length ? await uploadPhotos(`/repairs/${r.visit.repair_id}/photos`, repairPhotos, setProgress) : 0);
       toast(r.duplicate ? 'This visit was already saved.' : failed ? `Visit saved. ${failed} photo${failed === 1 ? '' : 's'} did not upload — add ${failed === 1 ? 'it' : 'them'} again on the visit.` : `Visit saved${photos.length ? ` with ${photos.length} photo${photos.length === 1 ? '' : 's'}` : ''} ${r.visit.status === 'approved' ? 'and approved automatically (support work)' : 'and sent for review'}.`);
       nav(`/visits/${r.visit.id}`);
     } catch (e) {
@@ -272,7 +275,7 @@ export function ManualVisit() {
         <WorkType value={f.work_category} onChange={(v) => setF({ ...f, work_category: v })} error={errs.work_category} />
         <Field label="What did you do?" hint={SUMMARY_HINT} error={errs.summary}><textarea name="summary" maxLength={500} value={f.summary} onChange={set('summary')} /></Field>
         <FilePicker label="Photos of the property" hint={PHOTO_HINT} accept="image/jpeg,image/png,image/webp" multiple busy={progress !== null} progress={progress} onChange={setPhotos} />
-        <VisitExtras value={extras} onChange={setExtras} ratingError={errs.rating} fieldErrors={errs} />
+        <VisitExtras value={extras} onChange={setExtras} ratingError={errs.rating} fieldErrors={errs} onRepairPhotos={setRepairPhotos} />
         {unusual && (
           <div className="notice warn" role="alert">
             <p><strong>{save.error!.message}</strong></p>

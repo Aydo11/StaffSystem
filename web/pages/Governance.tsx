@@ -7,7 +7,7 @@ import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePi
 
 type Tab = 'pack' | 'leads' | 'meetings' | 'decisions' | 'risks' | 'audits' | 'actions' | 'quality' | 'framework';
 const PACK_STATUS: Record<string, [string, string]> = { evidence_missing: ['evidence_missing', 'Evidence Missing'], awaiting_review: ['review', 'Awaiting Review'], action_required: ['action', 'Action Required'], verified: ['verified', 'Verified'], not_applicable: ['not_required', 'Not Applicable'] };
-const AREAS: [string, string][] = [['staffing', 'Staffing'], ['quality', 'Quality'], ['safeguarding_oversight', 'Safeguarding oversight'], ['property_safety', 'Property safety'], ['complaints_oversight', 'Complaints manager'], ['finance', 'Finance'], ['data_protection', 'Data protection']];
+const AREAS: [string, string][] = [['staffing', 'Staffing'], ['quality', 'Quality'], ['safeguarding_oversight', 'Safeguarding oversight'], ['property_safety', 'Property safety'], ['complaints_oversight', 'Complaints manager'], ['repairs', 'Repairs manager'], ['finance', 'Finance'], ['data_protection', 'Data protection']];
 const ACTION_STATUS: Record<string, [string, string]> = { open: ['info', 'Open'], evidence_submitted: ['review', 'Evidence submitted'], verified: ['verified', 'Verified'], closed: ['completed', 'Closed'], reopened: ['action', 'Reopened'] };
 
 function PersonSelect({ companyId, value, onChange, label: l, optional }: { companyId: string; value: string; onChange: (v: string) => void; label: string; optional?: boolean }) {

@@ -14,11 +14,11 @@ import { repairBody, reportRepair } from './estates.ts';
 // Optional extras saved with a visit, all or nothing with the visit itself: a house mood rating, a complaint and a repair.
 const extras = { rating: ratingBody.optional(), complaint: complaintBody.optional(), repair: repairBody.omit({ property_id: true }).optional() };
 async function saveExtras(db: Db, personId: string, v: { id: string; property_id: string }, b: { rating?: any; complaint?: any; repair?: any }) {
-  if (!b.rating && !b.complaint && !b.repair) return;
+  if (!b.rating && !b.complaint && !b.repair) return null;
   const p = await propertyOf(db, v.property_id);
   if (b.rating) await saveRating(db, personId, p, v.id, b.rating);
   if (b.complaint) await logComplaint(db, personId, p, v.id, b.complaint);
-  if (b.repair) await reportRepair(db, personId, p, b.repair);
+  return b.repair ? (await reportRepair(db, personId, p, b.repair)).id as string : null; // the repair id, so the form can add its photos
 }
 
 export const visits = Router();
@@ -124,7 +124,7 @@ visits.post('/visits/:id/finish', async (req, res) => {
     const row = await one(`update visits set ended_at = greatest(now(), started_at + interval '1 second'), status = 'submitted', submitted_at = now(), work_category = $2, summary = $3, finish_lat = $4, finish_lng = $5, finish_accuracy_m = $6, finish_distance_m = $7 where id = $1 returning *, ${MINUTES('visits')} as minutes`, [id, b.work_category, b.summary, ...g], db);
     if (cur.scheduled_visit_id) await q(`update scheduled_visits set status = 'completed', visit_id = $2 where id = $1 and status = 'scheduled'`, [cur.scheduled_visit_id, id], db);
     await audit(db, req.person.id, cur.company_id, 'visit', id, 'finish', {});
-    await saveExtras(db, req.person.id, cur, b);
+    row.repair_id = await saveExtras(db, req.person.id, cur, b);
     if (await autoApproveSupportWork(db, id)) row.status = 'approved';
     return row;
   });
@@ -189,7 +189,7 @@ visits.post('/visits/manual', async (req, res) => {
                          values ($1,$2,$3,$4,'manual','submitted',$5,$6,$7,$8, now(), $9) returning *`,
       [req.person.id, ap.id, ap.company_id, b.property_id, t.s, t.e, b.work_category, b.summary, b.client_request_id], db);
     await audit(db, req.person.id, ap.company_id, 'visit', v.id, 'manual_entry', { minutes: b.minutes });
-    await saveExtras(db, req.person.id, v, b);
+    v.repair_id = await saveExtras(db, req.person.id, v, b);
     if (await autoApproveSupportWork(db, v.id)) v.status = 'approved';
     return { visit: v, warnings };
   });

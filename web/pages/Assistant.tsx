@@ -10,8 +10,11 @@ function TaskInputs({ task, companyId, value, onChange, errors }: { task: string
   const meetings = useApi<any[]>(task === 'meeting_minutes' ? `/meetings?company=${companyId}` : null);
   const courses = useApi<any[]>(task === 'quiz_draft' ? `/courses?company=${companyId}` : null);
   const audits = useApi<any[]>(task === 'quality_check' ? `/audits?company=${companyId}` : null);
+  const props = useApi<any[]>(task === 'property_audit' ? `/properties?company=${companyId}` : null);
   const set = (k: string) => (e: any) => onChange({ ...value, [k]: e.target.value });
   const sel = (k: string, l: string, rows: any[] | null | undefined, text: (r: any) => string) => <Field label={l} error={errors[`input.${k}`]}><select name={k} value={value[k] ?? ''} onChange={set(k)}><option value="">Choose…</option>{rows?.map((r) => <option key={r.id} value={r.id}>{text(r)}</option>)}</select></Field>;
+  if (task === 'analytics_question') return <Field label="Your question" hint="For example: which properties need attention most, or why are tasks going overdue?" error={errors['input.question']}><textarea name="question" value={value.question ?? ''} onChange={set('question')} /></Field>;
+  if (task === 'property_audit') return sel('property_id', 'Property', props.data, (p) => p.name);
   if (task === 'policy_question') return <Field label="Your question" error={errors['input.question']}><textarea name="question" value={value.question ?? ''} onChange={set('question')} /></Field>;
   if (task === 'supervision_prep' || task === 'development_summary') return sel('person_id', 'Person', people.data, (p) => p.full_name);
   if (task === 'meeting_minutes') return <>{sel('meeting_id', 'Meeting', meetings.data, (m) => `${m.title} (${m.held_on})`)}<Field label="Your rough notes" hint="The draft will only contain what your notes say." error={errors['input.rough_notes']}><textarea name="rough_notes" rows={8} value={value.rough_notes ?? ''} onChange={set('rough_notes')} /></Field></>;
@@ -24,7 +27,7 @@ function TaskInputs({ task, companyId, value, onChange, errors }: { task: string
 
 function Output({ value }: { value: any }) {
   if (value === null || value === undefined) return null;
-  if (typeof value === 'string') return <p style={{ whiteSpace: 'pre-wrap' }}>{value}</p>;
+  if (typeof value !== 'object') return <p style={{ whiteSpace: 'pre-wrap' }}>{String(value)}</p>;
   if (Array.isArray(value)) return value.length ? <ul>{value.map((v, i) => <li key={i}>{typeof v === 'object' ? <Output value={v} /> : String(v)}</li>)}</ul> : <p className="muted">None.</p>;
   return <dl className="facts">{Object.entries(value).flatMap(([k, v]) => [<dt key={`${k}t`}>{label(k)}</dt>, <dd key={k}><Output value={v} /></dd>])}</dl>;
 }
@@ -97,6 +100,7 @@ export function Assistant() {
           {['accepted', 'amended'].includes(result.status) && <p><Button variant="secondary" busy={useIt.busy} onClick={() => useIt.run()}>{task === 'meeting_minutes' ? 'Copy into the meeting as draft minutes' : task === 'quiz_draft' ? 'Add questions to the draft course' : 'Copy to clipboard'}</Button></p>}
         </section>
       )}
+      <Reports company={company} />
       <section className="card" aria-labelledby="hist-h"><h2 id="hist-h">History</h2>
         {(runs.data ?? []).length === 0 ? <Empty>No drafts yet.</Empty> : <ul className="list">{runs.data!.map((r) => <li key={r.id}><span>{label(r.task)} <span className="badge co">{r.company_code}</span><br /><span className="small muted">{r.person_name} · {fmtDateTime(r.created_at)} · {r.tokens} tokens{r.error && ` · ${r.error}`}</span></span><Status s={r.status === 'failed' ? 'action' : r.status === 'draft' ? 'review' : 'verified'} text={label(r.status)} /></li>)}</ul>}
       </section>
@@ -104,6 +108,29 @@ export function Assistant() {
         <Field label="Note" optional><textarea name="note" value={note} onChange={(e) => setNote(e.target.value)} /></Field>
       </Dialog>
     </>
+  );
+}
+
+// Daily report for managers: the figures, and Claude's summary when the assistant is on.
+function Reports({ company }: { company: string }) {
+  const hub = useHub();
+  const toast = useToast();
+  const list = useApi<any[]>(hub.can('performance.view_all', company) ? '/ai/reports' : null);
+  const now = useSubmit(async () => { await post(`/ai/reports/${company}/run`, {}); toast('Report updated.'); list.reload(); });
+  if (!hub.can('performance.view_all', company)) return null;
+  const reports = (list.data ?? []).filter((r) => r.company_id === company);
+  const r = reports[0];
+  return (
+    <section className="card" id="reports" aria-labelledby="rep-h">
+      <div className="row between"><h2 id="rep-h">Daily report</h2><Button variant="secondary" busy={now.busy} onClick={() => now.run()}>Refresh now</Button></div>
+      <p className="small muted">Made every morning for managers, who get a notification. With the assistant on, Claude adds a summary; otherwise you see the figures.</p>
+      <ErrorSummary error={now.error ?? list.error} />
+      {!r ? <Empty>No report yet. Press Refresh now to make today's.</Empty> : <>
+        <p className="small muted">{fmtDateTime(r.created_at)}</p>
+        {r.summary && <><p><strong>{r.summary.headline}</strong></p><div className="grid-2"><div><h3>Needs action</h3><Output value={r.summary.priorities} /></div><div><h3>Risks to watch</h3><Output value={r.summary.risks} /></div></div><h3>Going well</h3><Output value={r.summary.going_well} /></>}
+        <details open={!r.summary}><summary>Figures</summary><Output value={r.figures} /></details>
+      </>}
+    </section>
   );
 }
 

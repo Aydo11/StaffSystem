@@ -5,6 +5,7 @@ import { addDays, fmtDate, fmtDateTime, fmtDay, fmtElapsed, fmtMinutes, fmtTime,
 import { useHub } from '../hub.tsx';
 import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, PhotoGrid, Skeleton, Status, useToast } from '../ui.tsx';
 import { blankExtras, EXTRA_LABELS, extrasPayload, rated, VisitExtras, type Extras } from '../condition.tsx';
+import { distanceText, FAR, here, MapEmbed } from '../geo.tsx';
 
 export const CATEGORIES: [string, string][] = [['support_work', 'Support work'], ['inspection', 'Inspection'], ['maintenance', 'Maintenance'], ['cleaning', 'Cleaning'], ['key_handover', 'Key handover'], ['property_check', 'Property check'], ['administration', 'Administration'], ['other', 'Other']];
 const SUMMARY_HINT = 'Property work only, in a sentence or two. Do not record resident names or support matters here — those belong in the support system.';
@@ -59,7 +60,7 @@ export function StartVisitDialog({ property, scheduledVisitId, onClose }: { prop
   const requestId = useRef(crypto.randomUUID()); // same id for retries, so a double tap or network retry makes one visit
   const start = useSubmit(async () => {
     if (!appt) throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields: { appointment_id: 'Choose the company and role' } });
-    await post('/visits/start', { property_id: property.id, appointment_id: appt, client_request_id: requestId.current, planned_minutes: planned === 'none' ? undefined : Number(planned), scheduled_visit_id: scheduledVisitId });
+    await post('/visits/start', { property_id: property.id, appointment_id: appt, client_request_id: requestId.current, planned_minutes: planned === 'none' ? undefined : Number(planned), scheduled_visit_id: scheduledVisitId, geo: await here() });
     await reloadMe();
     onClose();
     nav('/visit');
@@ -68,6 +69,7 @@ export function StartVisitDialog({ property, scheduledVisitId, onClose }: { prop
     <Dialog open onClose={onClose} title={`Start a visit at ${property.name}`}>
       <ErrorSummary error={start.error} labels={{ appointment_id: 'Company and role' }} />
       <ApptChoice appts={appts} value={appt} onChange={setAppt} error={start.error?.fields.appointment_id} />
+      <p className="small muted">Your location is recorded once when you press Start and once when you finish, to show the visit happened at the property. It is not tracked during the visit. If you do not allow location, the visit still starts.</p>
       <fieldset className="field" style={{ border: 0, padding: 0 }}>
         <legend>Expected length <span className="muted">(for planning and lone-worker check-in)</span></legend>
         <span className="hint">This is not your recorded time. Your time is measured from Start to Finish.</span>
@@ -104,7 +106,7 @@ export function ActiveVisit() {
     if (draft.summary.trim().length < 3) fields.summary = 'Add a brief summary of the work';
     if (!rated(draft.extras)) fields.rating = 'Give the house mood rating: rate at least one part of the home';
     if (Object.keys(fields).length) { setReview(false); throw new ApiError(400, 'invalid', 'Please check the highlighted fields.', { fields }); }
-    const r = await post(`/visits/${v!.id}/finish`, { work_category: draft.work_category, summary: draft.summary, ...extrasPayload(draft.extras) });
+    const r = await post(`/visits/${v!.id}/finish`, { work_category: draft.work_category, summary: draft.summary, ...extrasPayload(draft.extras), geo: await here() });
     try { localStorage.removeItem(draftKey); } catch { /* ignore */ }
     setReview(false);
     const failed = photos.length ? await uploadPhotos(r.id, photos, setProgress) : 0;
@@ -284,6 +286,10 @@ export function ManualVisit() {
 }
 
 // ── Visit detail: approval, split, corrections ──
+// "Started 40 m from the property (±12 m)", or why there is no location.
+const where = (lat: number | null, d: number | null, acc: number | null, what: string) => lat == null ? <span className="muted">{what}: location not shared</span>
+  : <span>{what} {d == null ? 'with location recorded (the property has no map pin yet)' : `${distanceText(d)} from the property`}{acc != null && <span className="muted"> (accurate to about {distanceText(acc)})</span>}{d != null && d > FAR && <> <Status s="correction" text="Far from the property" /></>}</span>;
+
 export function VisitDetail() {
   const { id } = useParams();
   const d = useApi<any>(`/visits/${id}`);
@@ -336,12 +342,14 @@ export function VisitDetail() {
             <dt>Recorded</dt><dd>{v.entry_mode === 'live' ? 'Live (Start/Finish)' : <>Manual entry, submitted {fmtDateTime(v.submitted_at)}</>}</dd>
             <dt>Start</dt><dd>{fmtDateTime(v.started_at)}</dd>
             <dt>Finish</dt><dd>{v.ended_at ? fmtDateTime(v.ended_at) : <Status s="correction" text="No finish time recorded" />}</dd>
+            {v.entry_mode === 'live' && <><dt>Location</dt><dd>{where(v.start_lat, v.start_distance_m, v.start_accuracy_m, 'Started')}<br />{v.ended_at && where(v.finish_lat, v.finish_distance_m, v.finish_accuracy_m, 'Finished')}</dd></>}
             <dt>Duration</dt><dd>{v.ended_at ? fmtMinutes(v.minutes) : '—'}{v.planned_minutes && <span className="muted"> (planned {fmtMinutes(v.planned_minutes)})</span>}</dd>
             <dt>Work</dt><dd>{label(v.work_category)}</dd>
             <dt>Summary</dt><dd>{v.summary ?? '—'}</dd>
             {v.decided_by_name && <><dt>Decision</dt><dd>{label(v.status)} by {v.decided_by_name}, {fmtDateTime(v.decided_at)}{v.decision_note && <> — “{v.decision_note}”</>}</dd></>}
           </dl>
         </section>
+        {v.start_lat != null && <section className="card" aria-labelledby="vm-h"><h2 id="vm-h">Where they started</h2><MapEmbed lat={v.start_lat} lng={v.start_lng} title={`Map of where the visit to ${v.property_name} was started`} /></section>}
         <section className="card" aria-labelledby="next-h">
           <h2 id="next-h">What happens next</h2>
           {v.status === 'submitted' && <p>Waiting for a manager in {v.company_name} to approve it. Approved time counts towards timesheets and KPIs.</p>}
@@ -485,7 +493,7 @@ export function Attendance() {
                     {team && <td>{v.person_name}</td>}
                     <td>{v.property_name}</td><td><CompanyBadge code={v.company_code} name={v.company_name} /></td>
                     <td className="num">{v.ended_at ? fmtMinutes(v.minutes) : '—'}</td>
-                    <td><Status s={v.missing_clock_out ? 'correction' : v.status} text={v.missing_clock_out ? 'No finish time' : undefined} />{v.correction_pending && <div><Status s="correction" text="Correction pending" /></div>}</td>
+                    <td><Status s={v.missing_clock_out ? 'correction' : v.status} text={v.missing_clock_out ? 'No finish time' : undefined} />{v.correction_pending && <div><Status s="correction" text="Correction pending" /></div>}{v.entry_mode === 'live' && !v.geotagged && <div className="small muted">Location not shared</div>}{v.start_distance_m > FAR && <div><Status s="correction" text={`Started ${distanceText(v.start_distance_m)} away`} /></div>}</td>
                   </tr>
                 ))}
               </tbody>

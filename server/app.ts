@@ -41,6 +41,7 @@ export function createApp() {
         styleSrc: ["'self'", "'unsafe-inline'"],
         fontSrc: ["'self'", 'data:'],
         frameAncestors: ["'none'"],
+        frameSrc: ['https://www.openstreetmap.org'], // property and visit maps (OpenStreetMap embed)
       },
     },
     crossOriginEmbedderPolicy: false,

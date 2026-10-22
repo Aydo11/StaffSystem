@@ -7,6 +7,7 @@ import { AllocateDialog } from '../allocate.tsx';
 import { Avatar, Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, LoadError, PageHead, PhotoGrid, Skeleton, Status, useToast } from '../ui.tsx';
 import { StartVisitDialog } from './Visits.tsx';
 import { ASPECTS, blankExtras, CATEGORIES, ComplaintFields, ConditionBar, SOURCES, Stars, suggestions, tone } from '../condition.tsx';
+import { MapEmbed } from '../geo.tsx';
 
 function Photo({ id, has, name }: { id: string; has: boolean; name: string }) {
   const [src, setSrc] = useState<string | null>(null);
@@ -212,6 +213,12 @@ export function PropertyPage() {
             <dt>Room references</dt><dd>{p.room_refs?.length ? p.room_refs.join(', ') : '—'}</dd>
             <dt>Notes</dt><dd>{p.notes ?? '—'}</dd>
           </dl>
+        </section>
+
+        <section className="card" aria-labelledby="pm-h">
+          <h2 id="pm-h">Map</h2>
+          <p className="small muted">{p.address_line1}, {p.city} {p.postcode}</p>
+          {p.latitude != null ? <MapEmbed lat={p.latitude} lng={p.longitude} title={`Map showing ${p.name}`} /> : <p className="muted">No map pin yet. It is placed from the postcode within the hour.</p>}
         </section>
 
         <section className="card" aria-labelledby="sv-h">

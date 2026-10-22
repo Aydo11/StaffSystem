@@ -62,5 +62,7 @@ export function startWorkers() {
   setInterval(() => run(queueReminders), 6 * 3600_000).unref();
   setInterval(() => run(async () => (await import('./routes/ai.ts')).purgeAiRuns()), 24 * 3600_000).unref();
   setInterval(() => run(async () => (await import('./aiops.ts')).dailyReports()), 3600_000).unref(); // at most one report per company per day
+  setInterval(() => run(async () => (await import('./geo.ts')).pinProperties()), 3600_000).unref();
   run(queueReminders);
+  run(async () => (await import('./geo.ts')).pinProperties()); // pin properties from their postcodes
 }

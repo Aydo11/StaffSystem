@@ -6,6 +6,7 @@ import { audit, bad, conflict, forbidden, HttpError, isoDate, LONDON_TODAY, loca
 import { ACTIVE_APPT, type Access, can, companiesWith, need, scope } from '../perm.ts';
 import { deleteFile, saveFile } from '../storage.ts';
 import { visitVisible } from '../visibility.ts';
+import { geoBody, geotag } from '../geo.ts';
 import { upload } from './people.ts';
 import { complaintBody, logComplaint, propertyOf, ratingBody, saveRating } from '../condition.ts';
 import { repairBody, reportRepair } from './estates.ts';
@@ -81,7 +82,7 @@ async function noOverlap(db: Db, personId: string, start: string, end: string, e
 
 // ── Live visit ──
 visits.post('/visits/start', async (req, res) => {
-  const b = parse(z.object({ property_id: uuid, appointment_id: uuid, client_request_id: uuid, planned_minutes: z.coerce.number().int().min(5).max(720).optional(), scheduled_visit_id: uuid.optional() }), req.body);
+  const b = parse(z.object({ property_id: uuid, appointment_id: uuid, client_request_id: uuid, planned_minutes: z.coerce.number().int().min(5).max(720).optional(), scheduled_visit_id: uuid.optional(), geo: geoBody }), req.body);
   const prior = await one('select id, person_id from visits where client_request_id = $1', [b.client_request_id]);
   if (prior) { // duplicate tap or retry after a network drop: return the same visit
     if (prior.person_id !== req.person.id) throw conflict('Duplicate request.');
@@ -91,9 +92,11 @@ visits.post('/visits/start', async (req, res) => {
     const ap = await usableAppointment(db, req.access, b.appointment_id, b.property_id);
     const warnings = await clearanceGate(db, req.access, req.person.id, ap.company_id, 'Start visit');
     try {
-      const v = await one(`insert into visits (person_id, appointment_id, company_id, property_id, entry_mode, status, started_at, expected_end_at, planned_minutes, client_request_id, scheduled_visit_id)
-                           values ($1,$2,$3,$4,'live','in_progress', now(), case when $5::int is null then null else now() + make_interval(mins => $5::int) end, $5, $6, $7) returning *`,
-        [req.person.id, ap.id, ap.company_id, b.property_id, b.planned_minutes ?? null, b.client_request_id, b.scheduled_visit_id ?? null], db);
+      // Geotag: where they were when they pressed Start (only then; nothing is tracked during the visit).
+      const g = await geotag(db, b.property_id, b.geo);
+      const v = await one(`insert into visits (person_id, appointment_id, company_id, property_id, entry_mode, status, started_at, expected_end_at, planned_minutes, client_request_id, scheduled_visit_id, start_lat, start_lng, start_accuracy_m, start_distance_m)
+                           values ($1,$2,$3,$4,'live','in_progress', now(), case when $5::int is null then null else now() + make_interval(mins => $5::int) end, $5, $6, $7, $8, $9, $10, $11) returning *`,
+        [req.person.id, ap.id, ap.company_id, b.property_id, b.planned_minutes ?? null, b.client_request_id, b.scheduled_visit_id ?? null, ...g], db);
       await audit(db, req.person.id, ap.company_id, 'visit', v.id, 'start', { property_id: b.property_id });
       return { visit: v, warnings };
     } catch (e: any) {
@@ -113,11 +116,12 @@ async function ownActive(db: Db, a: Access, id: string) {
 
 visits.post('/visits/:id/finish', async (req, res) => {
   const id = idParam(req.params.id);
-  const b = parse(z.object({ work_category: workCategory, summary, ...extras }), req.body);
+  const b = parse(z.object({ work_category: workCategory, summary, ...extras, geo: geoBody }), req.body);
   const v = await tx(async (db) => {
     const cur = await ownActive(db, req.access, id);
+    const g = await geotag(db, cur.property_id, b.geo);
     // The finish time is the server's clock when Save is pressed. A visit under a minute is still stored to the second.
-    const row = await one(`update visits set ended_at = greatest(now(), started_at + interval '1 second'), status = 'submitted', submitted_at = now(), work_category = $2, summary = $3 where id = $1 returning *, ${MINUTES('visits')} as minutes`, [id, b.work_category, b.summary], db);
+    const row = await one(`update visits set ended_at = greatest(now(), started_at + interval '1 second'), status = 'submitted', submitted_at = now(), work_category = $2, summary = $3, finish_lat = $4, finish_lng = $5, finish_accuracy_m = $6, finish_distance_m = $7 where id = $1 returning *, ${MINUTES('visits')} as minutes`, [id, b.work_category, b.summary, ...g], db);
     if (cur.scheduled_visit_id) await q(`update scheduled_visits set status = 'completed', visit_id = $2 where id = $1 and status = 'scheduled'`, [cur.scheduled_visit_id, id], db);
     await audit(db, req.person.id, cur.company_id, 'visit', id, 'finish', {});
     await saveExtras(db, req.person.id, cur, b);
@@ -200,7 +204,7 @@ visits.get('/visits', async (req, res) => {
   const person = req.query.person === 'me' ? a.personId : req.query.person ? parse(uuid, req.query.person) : null;
   const status = req.query.status ? parse(z.enum(['in_progress', 'submitted', 'approved', 'rejected', 'cancelled']), req.query.status) : null;
   res.json(await q(`
-    select v.id, v.started_at, v.ended_at, v.status, v.entry_mode, v.work_category, v.summary, v.submitted_at, v.created_at, v.expected_end_at, ${MINUTES('v')} as minutes,
+    select v.id, v.started_at, v.ended_at, v.status, v.entry_mode, v.work_category, v.summary, v.submitted_at, v.created_at, v.expected_end_at, ${MINUTES('v')} as minutes, v.start_distance_m, (v.start_lat is not null) as geotagged,
            v.person_id, ${name('w')} as person_name, v.company_id, c.name as company_name, c.code as company_code, v.property_id, p.name as property_name, p.ref as property_ref,
            exists (select 1 from visit_corrections vc where vc.visit_id = v.id and vc.status = 'pending') as correction_pending,
            (v.status = 'in_progress' and v.started_at < now() - interval '12 hours') as missing_clock_out
@@ -214,7 +218,7 @@ visits.get('/visits/:id', async (req, res) => {
   const a = req.access;
   const v = await loadVisit(a, idParam(req.params.id));
   const [detail, corrections, allocations, appts, photos] = await Promise.all([
-    one(`select ${name('w')} as person_name, c.name as company_name, c.code as company_code, p.name as property_name, p.ref as property_ref, ${name('d')} as decided_by_name, ap.job_title
+    one(`select ${name('w')} as person_name, c.name as company_name, c.code as company_code, p.name as property_name, p.ref as property_ref, p.latitude as property_lat, p.longitude as property_lng, ${name('d')} as decided_by_name, ap.job_title
            from visits v join people w on w.id = v.person_id join companies c on c.id = v.company_id join properties p on p.id = v.property_id
            join appointments ap on ap.id = v.appointment_id left join people d on d.id = v.decided_by where v.id = $1`, [v.id]),
     q(`select vc.*, ${name('r')} as requested_by_name, ${name('d')} as decided_by_name from visit_corrections vc join people r on r.id = vc.requested_by left join people d on d.id = vc.decided_by where vc.visit_id = $1 order by vc.created_at`, [v.id]),

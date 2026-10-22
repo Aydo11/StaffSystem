@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { type Db, one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, idParam, isoDate, LONDON_TODAY, notFound, notify, parse, text, uuid } from '../http.ts';
-import { type Access, can, companiesWith, need, scope } from '../perm.ts';
+import { ACTIVE_APPT, type Access, can, companiesWith, need, scope } from '../perm.ts';
 import { saveFile } from '../storage.ts';
 import { issueAccessLink, sendAccessEmail } from './account.ts';
 import { propertyVisible } from '../visibility.ts';
@@ -120,18 +120,21 @@ estates.get('/repairs', async (req, res) => {
     [agentProps, a.personId, companiesWith(a, 'properties.view').concat(companiesWith(a, 'repairs.manage')), req.query.company ? parse(uuid, req.query.company) : null, req.query.property ? parse(uuid, req.query.property) : null]));
 });
 export async function loadRepair(a: Access, id: string) {
-  const r = await one(`select r.*, p.name as property_name, c.code as company_code, ${name('as_')} as assignee_name, ag.name as agent_name, ${name('rb')} as reported_by_name
+  const r = await one(`select r.*, p.name as property_name, c.code as company_code, ${name('as_')} as assignee_name, ag.name as agent_name, ${name('rb')} as reported_by_name,
+                                t.owner_id as manager_id, ${name('tm')} as manager_name, t.status as task_status
                          from repairs r join properties p on p.id = r.property_id join companies c on c.id = r.company_id left join people as_ on as_.id = r.assignee_id
-                         left join agents ag on ag.id = r.agent_id join people rb on rb.id = r.reported_by where r.id = $1`, [id]);
+                         left join agents ag on ag.id = r.agent_id join people rb on rb.id = r.reported_by left join tasks t on t.id = r.task_id left join people tm on tm.id = t.owner_id where r.id = $1`, [id]);
   if (!r) throw notFound();
-  const { manage, agent } = await propertyAccess(a, r.property_id, 'repairs.manage');
+  // The repairs manager holding this repair's task runs it, even without repairs.manage or sight of the property otherwise.
+  const mine = r.manager_id === a.personId && a.perms.has(r.company_id);
+  const { manage, agent } = mine ? { manage: true, agent: false } : await propertyAccess(a, r.property_id, 'repairs.manage');
   return { r, manage, agentWork: agent && r.agent_id && a.agentIds.includes(r.agent_id), assignee: r.assignee_id === a.personId };
 }
 estates.get('/repairs/:id', async (req, res) => {
   const { r, manage, agentWork, assignee } = await loadRepair(req.access, idParam(req.params.id));
   res.json({ repair: r, updates: await q(`select u.*, ${name('au')} as author_name from repair_updates u join people au on au.id = u.author_id where u.repair_id = $1 order by u.created_at`, [r.id]),
-    files: await q(`select id, original_name, uploaded_at from files where entity_type = 'repair' and entity_id = $1`, [r.id]),
-    can: { manage, work: manage || agentWork || assignee, next: NEXT[r.status].filter((s) => (s === 'closed' || s === 'triaged' || s === 'assigned') ? manage : true) } });
+    files: await q(`select id, original_name, uploaded_at, mime_type like 'image/%' as is_image from files where entity_type = 'repair' and entity_id = $1 order by uploaded_at`, [r.id]),
+    can: { manage, work: manage || agentWork || assignee, photos: r.reported_by === req.person.id, next: NEXT[r.status].filter((s) => (s === 'closed' || s === 'triaged' || s === 'assigned') ? manage : true) } });
 });
 export const repairBody = z.object({ property_id: uuid, title: text(200).min(3), description: text(4000).nullable().optional(), impact: text(1000).nullable().optional(), urgency: z.enum(['emergency', 'urgent', 'routine']), immediate_action: text(2000).nullable().optional() });
 // Shared with the visit finish form, which can report a repair in the same save.
@@ -140,8 +143,19 @@ export async function reportRepair(db: Db, personId: string, p: { id: string; co
   const r = await one(`insert into repairs (company_id, property_id, title, description, impact, urgency, immediate_action, reported_by, due_on) values ($1,$2,$3,$4,$5,$6,$7,$8,
                          ${LONDON_TODAY} + case $6 when 'emergency' then 1 when 'urgent' then 7 else 28 end) returning *`,
     [p.company_id, p.id, b.title, b.description ?? null, b.impact ?? null, b.urgency, b.immediate_action ?? null, personId], db);
-  if (p.manager_person_id && p.manager_person_id !== personId) await notify(db, p.manager_person_id, p.company_id, `${b.urgency === 'emergency' ? 'EMERGENCY repair' : 'Repair reported'}: ${b.title} at ${p.name}`, `/estates/repairs/${r.id}`);
-  await audit(db, personId, p.company_id, 'repair', r.id, 'report', { urgency: b.urgency });
+  // The repairs manager (Governance → Leads: the lead with the fewest open repair tasks, then a deputy) gets a task, else the property manager.
+  const lead = await one<{ id: string }>(`select g.person_id as id from governance_leads g join appointments a on a.person_id = g.person_id and a.company_id = g.company_id and ${ACTIVE_APPT('a')}
+      where g.company_id = $1 and g.area = 'repairs' and g.to_date is null group by g.person_id, g.role
+      order by g.role = 'deputy', (select count(*) from repairs x join tasks t on t.id = x.task_id where t.owner_id = g.person_id and t.status <> 'completed'), min(g.created_at) limit 1`, [p.company_id], db);
+  const owner = lead?.id ?? p.manager_person_id;
+  const t = await one(`insert into tasks (company_id, property_id, title, description, owner_id, created_by, due_on, priority) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
+    [p.company_id, p.id, `Repair (${b.urgency}) at ${p.name}: ${b.title}`, `${b.description ?? ''}\n\nOpen the repair to assign it and record progress: /estates/repairs/${r.id}\nThis task completes itself when the repair is verified and closed.`.trim(),
+     owner, personId, r.due_on, b.urgency === 'emergency' ? 'urgent' : b.urgency === 'urgent' ? 'high' : 'normal'], db);
+  await q('update repairs set task_id = $2 where id = $1', [r.id, t!.id], db);
+  r.task_id = t!.id;
+  const title = `${b.urgency === 'emergency' ? 'EMERGENCY repair' : 'Repair reported'}: ${b.title} at ${p.name}`;
+  for (const who of new Set([owner, p.manager_person_id])) if (who && who !== personId) await notify(db, who, p.company_id, title, `/estates/repairs/${r.id}`);
+  await audit(db, personId, p.company_id, 'repair', r.id, 'report', { urgency: b.urgency, task_id: t!.id });
   return r;
 }
 estates.post('/repairs', async (req, res) => {
@@ -171,6 +185,8 @@ estates.post('/repairs/:id/status', async (req, res) => {
     await q(`update repairs set status = $2, completed_on = case when $2 = 'awaiting_verification' then ${LONDON_TODAY} else completed_on end,
                                verified_by = case when $2 = 'closed' then $3::uuid else verified_by end, verified_at = case when $2 = 'closed' then now() else verified_at end, updated_at = now() where id = $1`, [r.id, b.status, req.person.id], db);
     await q('insert into repair_updates (repair_id, author_id, body, status_from, status_to) values ($1,$2,$3,$4,$5)', [r.id, req.person.id, b.note, r.status, b.status], db);
+    // Verified and closed: the repairs manager's task is done, time-stamped now.
+    if (b.status === 'closed' && r.task_id) await q(`update tasks set status = 'completed', completed_at = now(), updated_at = now() where id = $1 and status <> 'completed'`, [r.task_id], db);
     await audit(db, req.person.id, r.company_id, 'repair', r.id, b.status, {});
   });
   res.json({ ok: true });
@@ -185,6 +201,17 @@ estates.post('/repairs/:id/updates', upload.single('file'), async (req, res) => 
     if (req.file) await saveFile(db, { companyId: r.company_id, entityType: 'repair', entityId: r.id, name: req.file.originalname, buf: req.file.buffer, uploadedBy: req.person.id });
   });
   res.status(201).json({ ok: true });
+});
+
+// Photos of the problem (from the reporter) and of the finished work (from whoever fixes it).
+estates.post('/repairs/:id/photos', upload.single('file'), async (req, res) => {
+  const { r, manage, agentWork, assignee } = await loadRepair(req.access, idParam(req.params.id));
+  if (!(manage || agentWork || assignee || r.reported_by === req.person.id)) throw forbidden();
+  if (r.status === 'closed' && !manage) throw conflict('This repair is closed.');
+  if (!req.file) throw bad('Choose a photo to upload.');
+  if ((await one<{ n: number }>(`select count(*)::int n from files where entity_type = 'repair' and entity_id = $1`, [r.id]))!.n >= 20) throw conflict('A repair can have up to 20 photos and documents.');
+  const f = await tx((db) => saveFile(db, { companyId: r.company_id, entityType: 'repair', entityId: r.id, name: req.file!.originalname, buf: req.file!.buffer, uploadedBy: req.person.id, imagesOnly: true }));
+  res.status(201).json({ id: f.id });
 });
 
 // ── Managing agents ──

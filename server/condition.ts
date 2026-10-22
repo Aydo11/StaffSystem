@@ -59,4 +59,7 @@ export const conditionLists = (db: Db, propertyId: string) => Promise.all([
        from property_complaints c join people rb on rb.id = c.raised_by left join tasks t on t.id = c.task_id left join people o on o.id = t.owner_id
       where c.property_id = $1 order by (t.status = 'completed'), c.created_at desc limit 50`, [propertyId], db),
   q(`select id, title, urgency, status, due_on from repairs where property_id = $1 and status <> 'closed' order by case urgency when 'emergency' then 0 when 'urgent' then 1 else 2 end, created_at limit 20`, [propertyId], db),
+  // Fixed repairs, with how long they took (reported → work done) and whether that was on time.
+  q(`select id, title, urgency, created_at, completed_on, verified_at, due_on, (completed_on - (created_at at time zone 'Europe/London')::date) as days_to_fix, completed_on <= due_on as on_time
+       from repairs where property_id = $1 and status = 'closed' order by verified_at desc limit 20`, [propertyId], db),
 ]);

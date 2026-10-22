@@ -12,7 +12,7 @@ beforeEach(async()=>{
   vi.stubGlobal('fetch',vi.fn(async (_url,init)=>{emails.push(JSON.parse(init.body));return new Response(JSON.stringify({id:'email-test'}),{status:200,headers:{'Content-Type':'application/json'}});}));
 });
 afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();});
-const signup=(extra:object={})=>publicPost('/api/auth/register').send({email:'new.staff@example.test',password:pw,full_name:'New Staff',company_id:C.VH,job_title:'Support worker',...extra});
+const signup=(extra:object={})=>publicPost('/api/auth/register').send({email:'new.staff@example.test',password:pw,full_name:'New Staff',company_id:C.VH,job_role_key:'support_worker',...extra});
 const registration=async()=> (await pool.query('select * from staff_registrations')).rows[0];
 const decide=async(id:string,body:object)=> (await as('alex')).post(`/api/admin/registrations/${id}/decide`).send({decision:'approved',note:'Employment details checked',...body});
 
@@ -94,4 +94,43 @@ it('serialises simultaneous approvals so one request cannot create two staff acc
   const results=await Promise.all([1,2].map(()=>admin.post(`/api/admin/registrations/${r.id}/decide`).send({decision:'approved',note:'Checked by administrator'})));
   expect(results.map(r=>r.status).sort()).toEqual([200,409]);
   expect((await pool.query('select * from people where email=$1',[r.email])).rowCount).toBe(1);
+});
+
+it('approves someone into several organisations at once',async()=>{
+  await signup();const r=await registration();
+  expect((await decide(r.id,{company_id:C.VH,also_company_ids:[C.WHM,C.VH]})).status).toBe(200);
+  const login=await publicPost('/api/auth/login').send({email:r.email,password:pw});
+  const me=await request(app).get('/api/me').set('Authorization',`Bearer ${login.body.token}`);
+  expect(me.body.companies.map((c:any)=>c.id).sort()).toEqual([C.VH,C.WHM].sort());
+});
+
+it('takes job roles only from the list; the role sets the access level and who may approve it',async()=>{
+  expect((await signup({job_role_key:'made up'})).status).toBe(400);
+  const roles=(await request(app).get('/api/job-roles')).body;expect(roles.find((r:any)=>r.key==='team_leader').access_label).toBe('Manager');
+  await signup({job_role_key:'team_leader'});const r=await registration();expect(r.job_title).toBe('Team leader');
+  const hr=await as('morgan'); // HR can add staff but cannot hand out manager access
+  expect((await hr.post(`/api/admin/registrations/${r.id}/decide`).send({decision:'approved',note:'checked',company_id:C.VH})).status).toBe(403);
+  expect((await hr.post(`/api/admin/registrations/${r.id}/decide`).send({decision:'approved',note:'checked',company_id:C.VH,job_role_key:'director'})).status).toBe(403);
+  expect((await decide(r.id,{company_id:C.VH})).status).toBe(200);
+  const login=await publicPost('/api/auth/login').send({email:r.email,password:pw});
+  const me=await request(app).get('/api/me').set('Authorization',`Bearer ${login.body.token}`);
+  const vh=me.body.companies.find((c:any)=>c.id===C.VH);
+  expect(JSON.stringify(vh)).toContain('visits.approve'); // manager-level access from the job role
+  // Moving them to a support worker role takes the manager access away.
+  const ap=(await pool.query('select a.id from appointments a join people p on p.id=a.person_id where p.email=$1',[r.email])).rows[0];
+  expect((await (await as('alex')).patch(`/api/appointments/${ap.id}`).send({job_role_key:'support_worker'})).status).toBe(200);
+  const me2=await request(app).get('/api/me').set('Authorization',`Bearer ${login.body.token}`);
+  expect(JSON.stringify(me2.body.companies.find((c:any)=>c.id===C.VH))).not.toContain('visits.approve');
+  expect((await pool.query('select job_title from appointments where id=$1',[ap.id])).rows[0].job_title).toBe('Support worker');
+});
+
+it('lets someone who was rejected send a new request',async()=>{
+  await signup();let r=await registration();
+  expect((await (await as('alex')).post(`/api/admin/registrations/${r.id}/decide`).send({decision:'rejected',note:'Wrong organisation chosen'})).status).toBe(200);
+  expect((await signup({company_id:C.WHM,full_name:'New Staff Again'})).status).toBe(202);
+  r=await registration();
+  expect(r.status).toBe('pending');expect(r.company_id).toBe(C.WHM);expect(r.decision_note).toBeNull();expect(r.password_hash).not.toBeNull();
+  await signup({full_name:'Someone else'}); // a pending request is never overwritten
+  expect((await registration()).full_name).toBe('New Staff Again');
+  expect((await decide(r.id,{company_id:C.WHM})).status).toBe(200);
 });

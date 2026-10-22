@@ -14,20 +14,29 @@ export function RegistrationAdmin() {
 }
 // Pending requests first, then decided ones.
 const rank=(r:any)=>r.status!=='pending'?1:0;
+// Extra job roles for someone who does more than one job (e.g. support worker and housing officer). Each becomes its own role.
+function ExtraRoles({main,value,onChange}:{main:string;value:string[];onChange:(v:string[])=>void}) {
+  const roles=useApi<{key:string;label:string;access_label:string}[]>('/job-roles');
+  return <details style={{margin:'8px 0 16px'}} open={value.length>0}><summary>Add more job roles{value.length?` (${value.length} added)`:''}</summary>
+    <fieldset style={{border:0,padding:'8px 0 0'}}><legend className="sr-only">More job roles</legend>
+      {roles.data?.filter(r=>r.key!==main).map(r=><label key={r.key} className="check"><input type="checkbox" checked={value.includes(r.key)} onChange={e=>onChange(e.target.checked?[...value,r.key]:value.filter(x=>x!==r.key))}/> {r.label} <span className="small muted">({r.access_label} access)</span></label>)}
+    </fieldset></details>;
+}
 function RequestCard({r,reload}:{r:any;reload:()=>void}) {
   const hub=useHub();
-  const [company,setCompany]=useState(r.company_id ?? ''),[name,setName]=useState(r.organisation_name ?? ''),[code,setCode]=useState(''),[note,setNote]=useState(''),[job,setJob]=useState(r.job_role_key ?? ''),[relationship,setRelationship]=useState('employee'),[also,setAlso]=useState<string[]>([]);
+  const [company,setCompany]=useState(r.company_id ?? ''),[name,setName]=useState(r.organisation_name ?? ''),[code,setCode]=useState(''),[note,setNote]=useState(''),[job,setJob]=useState(r.job_role_key ?? ''),[relationship,setRelationship]=useState('employee'),[also,setAlso]=useState<string[]>([]),[moreRoles,setMoreRoles]=useState<string[]>([]);
   const [delivery,setDelivery]=useState('');
   const decision=useSubmit(async (value:string)=>{
-    const result=await post(`/admin/registrations/${r.id}/decide`,{decision:value,note:note.trim()||(value==='approved'?'Approved by an administrator':note),job_role_key:job||undefined,relationship,also_company_ids:also.filter(c=>c!==company),...(company==='new'?{new_organisation:{name,code}}:company?{company_id:company}:{})});
+    const result=await post(`/admin/registrations/${r.id}/decide`,{decision:value,note:note.trim()||(value==='approved'?'Approved by an administrator':note),job_role_key:job||undefined,relationship,also_company_ids:also.filter(c=>c!==company),also_job_role_keys:moreRoles.filter(k=>k!==job),...(company==='new'?{new_organisation:{name,code}}:company?{company_id:company}:{})});
     setDelivery(result.email==='sent'?'Decision email sent.':'Decision saved. Email was not delivered; contact the applicant.');reload();
   });
   return <section className="card" style={{marginBottom:16}}><h2>{r.full_name}</h2><p>{r.email} · {r.company_name ?? `New organisation: ${r.organisation_name}`}</p>
     <p>{r.status!=='pending'?r.status:<strong>Waiting for your decision</strong>} · requested {new Date(r.created_at).toLocaleDateString('en-GB')}</p><ErrorSummary error={decision.error}/>
     {r.status==='pending'?<><Field label="Approve into organisation"><select value={company} onChange={e=>setCompany(e.target.value)}><option value="">Choose an organisation</option>{hub.me.companies.map(c=><option value={c.id} key={c.id}>{c.name}</option>)}{hub.me.superAdmin && <option value="new">Create requested organisation</option>}</select></Field>
-    {hub.me.companies.length>1 && <fieldset style={{border:0,padding:0}}><legend style={{fontWeight:600}}>Also add them to</legend><p className="small muted">For staff who work across organisations. They get the same job role in each.</p>{hub.me.companies.filter(c=>c.id!==company).map(c=><label key={c.id} className="check"><input type="checkbox" checked={also.includes(c.id)} onChange={e=>setAlso(e.target.checked?[...also,c.id]:also.filter(x=>x!==c.id))}/> {c.name}</label>)}</fieldset>}
+    {hub.me.companies.length>1 && <fieldset style={{border:0,padding:0}}><legend style={{fontWeight:600}}>Also add them to</legend><p className="small muted">For staff who work across organisations. They get the same job roles in each.</p>{hub.me.companies.filter(c=>c.id!==company).map(c=><label key={c.id} className="check"><input type="checkbox" checked={also.includes(c.id)} onChange={e=>setAlso(e.target.checked?[...also,c.id]:also.filter(x=>x!==c.id))}/> {c.name}</label>)}</fieldset>}
     {company==='new' && <><Field label="Organisation name"><input value={name} onChange={e=>setName(e.target.value)}/></Field><Field label="Unique organisation code" hint="2–6 uppercase letters"><input maxLength={6} value={code} onChange={e=>setCode(e.target.value.toUpperCase())}/></Field></>}
     <JobRoleSelect value={job} onChange={setJob} error={decision.error?.fields.job_role_key} showAccess hint={<>They asked for: {r.job_title}. The job role decides what they can see; manager roles see their team's work.</>}/>
+    <ExtraRoles main={job} value={moreRoles} onChange={setMoreRoles}/>
     <Field label="Relationship"><select value={relationship} onChange={e=>setRelationship(e.target.value)}>{['employee','contractor','agency','secondment','volunteer','other'].map(v=><option key={v}>{v}</option>)}</select></Field>
     <Field label="Note" optional hint="Needed only if you reject the request."><textarea value={note} maxLength={500} onChange={e=>setNote(e.target.value)}/></Field>
     <p className="small muted">Their email address has not been checked, so make sure you know who they are before approving.</p>

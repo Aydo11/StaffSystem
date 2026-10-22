@@ -66,14 +66,14 @@ registrationPublic.post('/auth/verify-email', limit, async (req, res) => {
 registrationAdmin.get('/admin/registrations', async (req,res) => {
   const cs = companiesWith(req.access, 'staff.create').filter(c => req.access.perms.get(c)?.has('appointments.manage'));
   if (!cs.length && !req.access.superAdmin) throw forbidden();
-  res.json(await q(`select r.id,r.email,r.full_name,r.company_id,r.organisation_name,r.job_title,r.status,r.email_verified_at,r.created_at,r.decision_note,c.name as company_name
+  res.json(await q(`select r.id,r.email,r.full_name,r.company_id,r.organisation_name,r.job_title,r.job_role_key,r.status,r.email_verified_at,r.created_at,r.decision_note,c.name as company_name
     from staff_registrations r left join companies c on c.id=r.company_id
     where r.company_id=any($1::uuid[]) or $2 order by r.created_at desc limit 200`, [cs,req.access.superAdmin]));
 });
 
 registrationAdmin.post('/admin/registrations/:id/decide', async (req,res) => {
   const id=idParam(req.params.id);
-  const b=parse(z.object({ decision:z.enum(['approved','rejected']), company_id:uuid.optional(), new_organisation:z.object({name:text(160).min(2),code:z.string().regex(/^[A-Z]{2,6}$/)}).optional(), note:text(500).min(3), job_role_key:z.string().max(60).optional(), relationship:z.enum(['employee','contractor','agency','secondment','volunteer','other']).default('employee'), also_company_ids:z.array(uuid).max(10).default([]) }),req.body);
+  const b=parse(z.object({ decision:z.enum(['approved','rejected']), company_id:uuid.optional(), new_organisation:z.object({name:text(160).min(2),code:z.string().regex(/^[A-Z]{2,6}$/)}).optional(), note:text(500).min(3), job_role_key:z.string().max(60).optional(), relationship:z.enum(['employee','contractor','agency','secondment','volunteer','other']).default('employee'), also_company_ids:z.array(uuid).max(10).default([]), also_job_role_keys:z.array(z.string().max(60)).max(10).default([]) }),req.body);
   const result=await tx(async db => {
     const r=await one('select * from staff_registrations where id=$1 for update',[id],db);
     if (!r) throw notFound();
@@ -94,20 +94,19 @@ registrationAdmin.post('/admin/registrations/:id/decide', async (req,res) => {
       if (!req.access.superAdmin) { need(req.access,'staff.create',companyId); need(req.access,'appointments.manage',companyId); }
       const roleKey=b.job_role_key ?? r.job_role_key;
       if (!roleKey) throw bad('Choose their job role.',{fields:{job_role_key:'Required'}});
-      const jr=await jobRole(db,req.access,roleKey,companyId);
       const p=await one(`insert into people(email,full_name,staff_ref,password_hash,status)
         values($1,$2,$3,$4,'active') returning id`,[r.email,r.full_name,`S-${newToken().slice(0,16)}`,r.password_hash],db);
-      const ap=await one(`insert into appointments(person_id,company_id,relationship,legal_employer_company_id,job_title,job_role_key,start_date)
-        values($1,$2,$3,$2,$4,$5,${LONDON_TODAY}) returning id`,[p.id,companyId,b.relationship,jr.label,jr.key],db);
       r.person_id=p.id;
-      await audit(db,req.person.id,companyId,'appointment',ap.id,'create_from_registration',{person_id:p.id,registration_id:id});
-      // People can work for several organisations: one role in each extra organisation chosen.
-      for (const extra of new Set(b.also_company_ids.filter(c=>c!==companyId))) {
-        if (!req.access.superAdmin) { need(req.access,'staff.create',extra); need(req.access,'appointments.manage',extra); }
-        await jobRole(db,req.access,jr.key,extra);
-        const ap2=await one(`insert into appointments(person_id,company_id,relationship,legal_employer_company_id,job_title,job_role_key,start_date)
-          values($1,$2,$3,$2,$4,$5,${LONDON_TODAY}) returning id`,[p.id,extra,b.relationship,jr.label,jr.key],db);
-        await audit(db,req.person.id,extra,'appointment',ap2.id,'create_from_registration',{person_id:p.id,registration_id:id});
+      // People can hold several job roles and work for several organisations: one role (appointment) for each job role in each organisation chosen.
+      const roleKeys=[...new Set([roleKey,...b.also_job_role_keys])];
+      for (const co of [companyId,...new Set(b.also_company_ids.filter(c=>c!==companyId))]) {
+        if (!req.access.superAdmin) { need(req.access,'staff.create',co); need(req.access,'appointments.manage',co); }
+        for (const key of roleKeys) {
+          const jr=await jobRole(db,req.access,key,co);
+          const ap=await one(`insert into appointments(person_id,company_id,relationship,legal_employer_company_id,job_title,job_role_key,start_date)
+            values($1,$2,$3,$2,$4,$5,${LONDON_TODAY}) returning id`,[p.id,co,b.relationship,jr.label,jr.key],db);
+          await audit(db,req.person.id,co,'appointment',ap.id,'create_from_registration',{person_id:p.id,registration_id:id});
+        }
       }
     }
     await q(`update staff_registrations set status=$2,decided_by=$3,decided_at=now(),decision_note=$4,person_id=$5,

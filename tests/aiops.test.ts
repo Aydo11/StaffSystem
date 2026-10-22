@@ -80,3 +80,21 @@ describe('daily report and new assistant tasks', () => {
     expect(prompt).toContain('<source id="repairs"');
   });
 });
+
+describe('ask the hub', () => {
+  it('lets any staff member ask about their own day once the assistant is on', async () => {
+    let prompt = '';
+    reply = (p) => { prompt = p; return { answer: 'Test the fire alarm first.', key_points: [], citations: [], missing_evidence: [] }; };
+    const sam = await as('sam');
+    const ask = () => sam.post('/api/ai/runs').send({ task: 'ask_hub', company_id: C.VH, input: { question: 'What do I need to do today?' } });
+    expect((await ask()).status).toBe(409); // switched off by default
+    await pool.query(`update ai_settings set enabled = true where company_id = $1`, [C.VH]);
+    const r = await ask();
+    expect(r.status).toBe(201); // staff are not in the allowed roles, but this task only reads their own day
+    expect(prompt).toContain('Test fire alarm call point');
+    expect(prompt).toContain('<source id="who_is_off"');
+    expect(prompt).toContain('Question: What do I need to do today?');
+    expect(prompt).not.toMatch(/annual|sick/i); // never the type of leave
+    expect((await sam.post('/api/ai/runs').send({ task: 'policy_question', company_id: C.VH, input: { question: 'What is the lone working policy?' } })).status).toBe(403); // other tasks still follow the role list
+  });
+});

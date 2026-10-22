@@ -28,6 +28,7 @@ Rules you must follow:
 
 type Task = {
   label: string;
+  openToAll?: boolean;           // any staff member may use it (it only reads their own day), when the task is switched on
   perm?: string;                 // permission needed in the company, beyond being allowed to use the assistant
   input: z.ZodType<any>;
   output: z.ZodType<any>;
@@ -152,6 +153,14 @@ const TASKS: Record<string, Task> = {
         { id: 'training', type: 'training', title: 'Completed training', text: tr.map((t) => `- ${t.title} (${t.completed_on})`).join('\n') || 'None recorded' }];
     },
   },
+  ask_hub: {
+    label: 'Ask about your day',
+    openToAll: true,
+    input: z.object({ question: text(500).min(3) }),
+    output: z.object({ answer: z.string(), key_points: z.array(z.string()), citations: cite, missing_evidence: missing }),
+    instruction: 'Answer the staff member\'s question about their work using only the records provided: their tasks, planned visits, items needing their review, who is away, handover notes and (for managers) company figures. Be brief and practical: lead with what to do first, list items with dates, and say plainly if something is not in the records. Do not guess why anyone is away.',
+    gather: async (a) => (await import('../aiops.ts')).myDaySources(a),
+  },
   analytics_question: {
     label: 'Ask about your organisation\'s figures',
     perm: 'performance.view_all',
@@ -215,7 +224,7 @@ ai.get('/ai/tasks', async (req, res) => {
   res.json({
     configured: configured(),
     companies: settings.map((s) => ({ company_id: s.company_id, enabled: s.enabled && configured(), allowed: s.allowed_roles.some((r: string) => a.roles.get(s.company_id)?.has(r)) })),
-    tasks: Object.entries(TASKS).map(([key, t]) => ({ key, label: t.label, companies: settings.filter((s) => s.allowed_tasks.includes(key) && (!t.perm || can(a, t.perm, s.company_id))).map((s) => s.company_id) })),
+    tasks: Object.entries(TASKS).map(([key, t]) => ({ key, label: t.label, openToAll: !!t.openToAll, companies: settings.filter((s) => s.allowed_tasks.includes(key) && (!t.perm || can(a, t.perm, s.company_id))).map((s) => s.company_id) })),
   });
 });
 
@@ -227,7 +236,7 @@ ai.post('/ai/runs', async (req, res) => {
   const s = await one('select * from ai_settings where company_id = $1', [b.company_id]);
   if (!configured()) throw new HttpError(409, 'ai_not_configured', 'The AI assistant is not set up on this server. You can still do this task by hand.');
   if (!s?.enabled) throw new HttpError(409, 'ai_disabled', 'The AI assistant is switched off for this company. You can still do this task by hand.');
-  if (!s.allowed_roles.some((r: string) => a.roles.get(b.company_id)?.has(r))) throw forbidden('Your role is not permitted to use the AI assistant in this company.');
+  if (!task.openToAll && !s.allowed_roles.some((r: string) => a.roles.get(b.company_id)?.has(r))) throw forbidden('Your role is not permitted to use the AI assistant in this company.');
   if (!s.allowed_tasks.includes(b.task)) throw forbidden('This task is not switched on for this company.');
   if (task.perm) need(a, task.perm, b.company_id);
   if ((await usedThisMonth(b.company_id)) >= s.monthly_token_limit) throw conflict('This company has reached its monthly AI usage limit. You can still do this task by hand.');

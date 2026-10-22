@@ -118,7 +118,7 @@ function PropertyForm({ existing, onClose, onSaved }: { existing?: any; onClose:
         <Field label="Town or city" error={e.city}><input name="city" value={f.city} onChange={set('city')} /></Field>
         <Field label="Postcode" error={e.postcode}><input name="postcode" value={f.postcode} onChange={set('postcode')} /></Field>
       </div>
-      <Field label="Status"><select name="status" value={f.status} onChange={set('status')}>{['active', 'void', 'under_works', 'offboarded'].map((s) => <option key={s} value={s}>{label(s)}</option>)}</select></Field>
+      <Field label="Status"><select name="status" value={f.status} onChange={set('status')}>{['active', 'awaiting_approval', 'void', 'under_works', 'offboarded'].map((s) => <option key={s} value={s}>{label(s)}</option>)}</select></Field>
       <Field label="Managing agent" optional><input name="managing_agent" value={f.managing_agent ?? ''} onChange={set('managing_agent')} /></Field>
       <Field label="Room references" optional hint="Labels only, separated by commas (for example Room A, Room B). Never resident names." error={e['room_refs.0'] ?? e.room_refs}><input name="room_refs" value={f.room_refs} onChange={set('room_refs')} /></Field>
       <Field label="Operational notes" optional hint="Property information only. Do not record access codes or resident details."><textarea name="notes" value={f.notes ?? ''} onChange={set('notes')} /></Field>

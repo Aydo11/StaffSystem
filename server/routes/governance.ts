@@ -30,7 +30,7 @@ governance.get('/governance/leads', async (req, res) => {
 });
 // Any number of leads and deputies per area; adding one never removes another.
 governance.post('/governance/leads', async (req, res) => {
-  const b = parse(z.object({ company_id: uuid, area: z.enum(['staffing', 'quality', 'safeguarding_oversight', 'property_safety', 'complaints_oversight', 'finance', 'data_protection']), person_id: uuid, role: z.enum(['lead', 'deputy']), delegated_authority: text(2000).nullable().optional() }), req.body);
+  const b = parse(z.object({ company_id: uuid, area: z.enum(['staffing', 'quality', 'safeguarding_oversight', 'property_safety', 'complaints_oversight', 'repairs', 'finance', 'data_protection']), person_id: uuid, role: z.enum(['lead', 'deputy']), delegated_authority: text(2000).nullable().optional() }), req.body);
   need(req.access, 'governance.manage', b.company_id);
   if (!(await one('select 1 from appointments where person_id = $1 and company_id = $2', [b.person_id, b.company_id]))) throw bad('This person has no role in this company.', { fields: { person_id: 'Not in this company' } });
   const r = await tx(async (db) => {

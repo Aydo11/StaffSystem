@@ -42,8 +42,25 @@ export const post = <T = any>(url: string, body: unknown = {}) => api<T>('POST',
 export const patch = <T = any>(url: string, body: unknown) => api<T>('PATCH', url, body);
 export const put = <T = any>(url: string, body: unknown) => api<T>('PUT', url, body);
 
+// Phone photos are often 4000px and several MB: resize to at most 1600px (JPEG) before upload so they upload fast,
+// stay under the size limit and load quickly. Small images, PDFs and anything that cannot be decoded are sent unchanged.
+export async function shrinkImage(file: Blob, name: string): Promise<[Blob, string]> {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || typeof createImageBitmap !== 'function') return [file, name];
+  try {
+    const img = await createImageBitmap(file, { imageOrientation: 'from-image' } as any);
+    const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+    if (scale === 1 && file.size < 1_500_000) return [file, name];
+    const c = Object.assign(document.createElement('canvas'), { width: Math.round(img.width * scale), height: Math.round(img.height * scale) });
+    const g = c.getContext('2d')!; g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); // JPEG has no transparency
+    g.drawImage(img, 0, 0, c.width, c.height);
+    const out = await new Promise<Blob | null>((r) => c.toBlob(r, 'image/jpeg', 0.85));
+    return out && out.size < file.size ? [out, name.replace(/\.\w+$/, '') + '.jpg'] : [file, name];
+  } catch { return [file, name]; }
+}
+
 // Upload with real progress (fetch cannot report upload progress).
 export async function upload<T = any>(url: string, file: Blob | null, name: string, onProgress?: (pct: number) => void, fields: Record<string, string> = {}): Promise<T> {
+  if (file) [file, name] = await shrinkImage(file, name);
   const h = await headers(false);
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();

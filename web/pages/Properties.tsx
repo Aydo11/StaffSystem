@@ -4,8 +4,9 @@ import { ApiError, blobUrl, patch, post, upload, useApi, useSubmit } from '../ap
 import { fmtDate, fmtDateTime, fmtDay, fmtMinutes, fmtTime, label, londonLocal } from '../format.ts';
 import { useHub } from '../hub.tsx';
 import { AllocateDialog } from '../allocate.tsx';
-import { Avatar, Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, LoadError, PageHead, PhotoGrid, Skeleton, Status, useToast } from '../ui.tsx';
+import { Avatar, Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, LoadError, PageHead, PhotoGrid, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 import { StartVisitDialog } from './Visits.tsx';
+import { ReportRepair } from './Estates.tsx';
 import { ASPECTS, blankExtras, CATEGORIES, ComplaintFields, ConditionBar, SOURCES, Stars, suggestions, tone } from '../condition.tsx';
 import { MapEmbed } from '../geo.tsx';
 
@@ -125,16 +126,21 @@ function PropertyForm({ existing, onClose, onSaved }: { existing?: any; onClose:
   );
 }
 
+type PTab = 'overview' | 'condition' | 'repairs' | 'visits' | 'tasks' | 'people';
+
 export function PropertyPage() {
   const { id } = useParams();
   const hub = useHub();
   const d = useApi<any>(`/properties/${id}`);
   const toast = useToast();
-  const [dlg, setDlg] = useState<null | 'start' | 'edit' | 'key' | 'issue' | 'schedule' | 'assign' | 'complaint'>(null);
+  const [dlg, setDlg] = useState<null | 'start' | 'edit' | 'key' | 'issue' | 'schedule' | 'assign' | 'complaint' | 'repair'>(null);
   const [complaint, setComplaint] = useState(blankExtras().complaint);
   const [keyId, setKeyId] = useState('');
   const [form, setForm] = useState<any>({});
   const [progress, setProgress] = useState<number | null>(null);
+  const [params, setParams] = useSearchParams();
+  const tab = (params.get('tab') as PTab) ?? 'overview';
+  const setTab = (t: PTab) => setParams(t === 'overview' ? {} : { tab: t }, { replace: true });
   const people = useApi<any[]>(dlg === 'issue' && d.data ? `/people?company=${d.data.property.company_id}` : null);
 
   const keyAction = useSubmit(async (kid: string, action: string, body: any = {}) => { await post(`/keys/${kid}/${action}`, body); setDlg(null); toast(`Key ${action === 'issue' ? 'issued' : action === 'return' ? 'returned' : 'reported lost'}.`); d.reload(); });
@@ -154,6 +160,9 @@ export function PropertyPage() {
   const current = allocations.filter((a: any) => !a.to_date);
   const canPlan = hub.can('visits.approve', p.company_id);
 
+  const tabs: [PTab, string][] = [['overview', 'Overview'], ['condition', `House mood & complaints${openComplaints.length ? ` (${openComplaints.length})` : ''}`], ['repairs', `Repairs${repairs.length ? ` (${repairs.length})` : ''}`],
+    ['visits', 'Visits & photos'], ['tasks', `Tasks${tasks.filter((t: any) => t.status !== 'completed').length ? ` (${tasks.filter((t: any) => t.status !== 'completed').length})` : ''}`], ['people', 'Staff & keys']];
+  const next = scheduled[0];
   return (
     <>
       <PageHead title={p.name} crumbs={[['Properties', '/properties'], [p.name]]} intro={<><CompanyBadge code={p.company_code} name={p.company_name} /> {p.ref} · {p.address_line1}, {p.city} {p.postcode}</>}
@@ -161,7 +170,48 @@ export function PropertyPage() {
           {my_appointments.length > 0 && <><Button variant="go" disabled={!!hub.me.activeVisit} onClick={() => setDlg('start')}>Start Visit</Button><Link className="btn secondary" to={`/visits/new?property=${p.id}`}>Log Completed Visit</Link></>}
           {can.manage && <Button variant="secondary" onClick={() => setDlg('edit')}>Edit</Button>}
         </>} />
-      <div className="grid-2">
+
+      <section className={`card prop-hero glow-${tone(condition.score)}`} aria-label="Summary">
+        <div className="prop-hero-photo">
+          <Photo id={p.id} has={p.has_photo} name={p.name} />
+          {can.manage && <div className="prop-hero-upload"><FilePicker compact label={p.has_photo ? 'Change the photo' : 'Add a photo'} accept="image/jpeg,image/png,image/webp" instant busy={photo.busy} progress={progress} buttonText={p.has_photo ? 'Change photo' : 'Add a photo'} onChange={(fs) => photo.run(fs[0])} /></div>}
+        </div>
+        <div className="prop-hero-body">
+          <ConditionBar score={condition.score} />
+          <ul className="prop-stats">
+            <li><button type="button" onClick={() => setTab('repairs')}><strong>{repairs.length}</strong><span>Open repairs</span></button></li>
+            <li><button type="button" onClick={() => setTab('condition')}><strong>{openComplaints.length}</strong><span>Open complaints</span></button></li>
+            <li><button type="button" onClick={() => setTab('tasks')}><strong>{tasks.filter((t: any) => t.status !== 'completed').length}</strong><span>Open tasks</span></button></li>
+            <li><button type="button" onClick={() => setTab('visits')}><strong>{next ? fmtDay(next.planned_start) : '—'}</strong><span>Next visit</span></button></li>
+          </ul>
+          <p className="small muted" style={{ margin: 0 }}><Status s={p.status} /> · {current.length ? `${current.length} staff allocated` : 'No staff allocated'}{p.managing_agent ? ` · Managing agent: ${p.managing_agent}` : ''}</p>
+          <ErrorSummary error={photo.error} />
+        </div>
+      </section>
+
+      <Tabs label="Property sections" tabs={tabs} value={tab} onChange={setTab} />
+
+      {tab === 'overview' && <div className="grid-2">
+        <section className="card" aria-labelledby="pd-h">
+          <h2 id="pd-h">Details</h2>
+          <dl className="facts">
+            <dt>Status</dt><dd><Status s={p.status} /></dd>
+            <dt>Company</dt><dd>{p.company_name}</dd>
+            {links.length > 0 && <><dt>Also worked by</dt><dd>{links.map((l: any) => <div key={l.company_id}><CompanyBadge code={l.company_code} name={l.company_name} /> {l.arrangement}</div>)}</dd></>}
+            <dt>Managing agent</dt><dd>{p.managing_agent ?? '—'}</dd>
+            <dt>Room references</dt><dd>{p.room_refs?.length ? p.room_refs.join(', ') : '—'}</dd>
+            <dt>Notes</dt><dd>{p.notes ?? '—'}</dd>
+          </dl>
+        </section>
+        <section className="card" aria-labelledby="pm-h">
+          <h2 id="pm-h">Map</h2>
+          <p className="small muted">{p.address_line1}, {p.city} {p.postcode}</p>
+          {p.latitude != null ? <MapEmbed lat={p.latitude} lng={p.longitude} title={`Map showing ${p.name}`} /> : <p className="muted">No map pin yet. It is placed from the postcode within the hour.</p>}
+        </section>
+
+      </div>}
+
+      {tab === 'condition' && <div className="grid-2">
         <section className={`card cond-card glow-${tone(condition.score)}`} aria-labelledby="hc-h">
           <h2 id="hc-h">House mood</h2>
           <ConditionBar score={condition.score} />
@@ -192,37 +242,18 @@ export function PropertyPage() {
               ))}</ul>
             </details>
           )}
-          <h3 style={{ marginTop: 20 }}>Maintenance</h3>
-          {repairs.length === 0 ? <p className="muted">No open repairs.</p> : <details><summary>{repairs.length} open repair{repairs.length === 1 ? '' : 's'}</summary><ul className="list">{repairs.map((r: any) => <li key={r.id}><Link to={`/estates/repairs/${r.id}`}>{r.title}</Link><span className="small muted">{label(r.urgency)} · due {fmtDate(r.due_on)}</span></li>)}</ul></details>}
+        </section>
+
+      </div>}
+
+      {tab === 'repairs' && <section className="card" aria-labelledby="pr-h">
+          <div className="row between"><h2 id="pr-h">Repairs</h2><Button variant="secondary" onClick={() => setDlg('repair')}><Icon name="plus" size={18} />Report a repair</Button></div>
+          {repairs.length === 0 ? <p className="muted">No open repairs.</p> : <details open><summary>{repairs.length} open repair{repairs.length === 1 ? '' : 's'}</summary><ul className="list">{repairs.map((r: any) => <li key={r.id}><Link to={`/estates/repairs/${r.id}`}>{r.title}</Link><span className="small muted">{label(r.urgency)} · due {fmtDate(r.due_on)}</span></li>)}</ul></details>}
           {repair_history.length > 0 && <details><summary>{repair_history.length} fixed repair{repair_history.length === 1 ? '' : 's'} · {repair_history.filter((r: any) => r.on_time).length} on time</summary><ul className="list">{repair_history.map((r: any) => <li key={r.id}><Link to={`/estates/repairs/${r.id}`}>{r.title}</Link><span className="small muted">{label(r.urgency)} · fixed in {r.days_to_fix <= 0 ? 'the same day' : `${r.days_to_fix} day${r.days_to_fix === 1 ? '' : 's'}`} · closed {fmtDateTime(r.verified_at)} <Status s={r.on_time ? 'verified' : 'action'} text={r.on_time ? 'On time' : 'Late'} /></span></li>)}</ul></details>}
           <p className="small muted">Each repair goes to the repairs manager as a task and completes when it is verified.{hub.can('governance.manage', p.company_id) && <> <Link to="/governance?tab=leads&set=repairs">Choose the repairs manager</Link></>}</p>
-        </section>
+        </section>}
 
-        <section className="card" aria-labelledby="pd-h">
-          <h2 id="pd-h">Details</h2>
-          <Photo id={p.id} has={p.has_photo} name={p.name} />
-          {can.manage && (
-            <div style={{ marginTop: 12 }}>
-              <FilePicker label="Property photo" accept="image/jpeg,image/png,image/webp" instant busy={photo.busy} progress={progress} buttonText={p.has_photo ? 'Replace photo' : 'Add a photo'} onChange={(fs) => photo.run(fs[0])} />
-              <ErrorSummary error={photo.error} />
-            </div>
-          )}
-          <dl className="facts" style={{ marginTop: 16 }}>
-            <dt>Status</dt><dd><Status s={p.status} /></dd>
-            <dt>Company</dt><dd>{p.company_name}</dd>
-            {links.length > 0 && <><dt>Also worked by</dt><dd>{links.map((l: any) => <div key={l.company_id}><CompanyBadge code={l.company_code} name={l.company_name} /> {l.arrangement}</div>)}</dd></>}
-            <dt>Managing agent</dt><dd>{p.managing_agent ?? '—'}</dd>
-            <dt>Room references</dt><dd>{p.room_refs?.length ? p.room_refs.join(', ') : '—'}</dd>
-            <dt>Notes</dt><dd>{p.notes ?? '—'}</dd>
-          </dl>
-        </section>
-
-        <section className="card" aria-labelledby="pm-h">
-          <h2 id="pm-h">Map</h2>
-          <p className="small muted">{p.address_line1}, {p.city} {p.postcode}</p>
-          {p.latitude != null ? <MapEmbed lat={p.latitude} lng={p.longitude} title={`Map showing ${p.name}`} /> : <p className="muted">No map pin yet. It is placed from the postcode within the hour.</p>}
-        </section>
-
+      {tab === 'visits' && <div className="grid-2">
         <section className="card" aria-labelledby="sv-h">
           <div className="row between"><h2 id="sv-h">Planned visits</h2>{canPlan && <Button variant="secondary" onClick={() => { setForm({ planned_start: londonLocal(), planned_minutes: '60' }); setDlg('schedule'); }}>Plan a visit</Button>}</div>
           {scheduled.length === 0 ? <Empty>No visits planned.</Empty> : <ul className="list">{scheduled.map((s: any) => <li key={s.id}><span>{fmtDay(s.planned_start)} {fmtTime(s.planned_start)} · {s.person_name}</span><span className="muted">{fmtMinutes(s.planned_minutes)} planned</span></li>)}</ul>}
@@ -230,10 +261,40 @@ export function PropertyPage() {
           {visits.length === 0 ? <Empty>No visits recorded.</Empty> : <ul className="list">{visits.slice(0, 8).map((v: any) => <li key={v.id}><Link to={`/visits/${v.id}`}>{fmtDate(v.started_at)} · {v.person_name}</Link><Status s={v.status} /></li>)}</ul>}
         </section>
 
-        <section className="card" aria-labelledby="pt-h">
+        {photos.length > 0 ? (
+          <section className="card" aria-labelledby="pp-h">
+            <h2 id="pp-h">Visit photos</h2>
+            <p className="small muted">The latest photos taken on visits, newest first. Open a photo to see it full size.</p>
+            <PhotoGrid photos={photos} caption={(ph) => <>{ph.person_name}, {fmtDate(ph.started_at)} · <Link to={`/visits/${ph.visit_id}`}>visit</Link></>} />
+          </section>
+        ) : <section className="card"><h2>Visit photos</h2><Empty>No photos yet. They are added when staff finish a visit.</Empty></section>}
+      </div>}
+
+      {tab === 'tasks' && <section className="card" aria-labelledby="pt-h">
           <div className="row between"><h2 id="pt-h">Tasks</h2><Link to={`/tasks?new=1&property=${p.id}&company=${p.company_id}`}>New task here</Link></div>
           {tasks.length === 0 ? <Empty>No tasks.</Empty> : <ul className="list">{tasks.map((t: any) => <li key={t.id}><span><Link to={`/tasks/${t.id}`}>{t.title}</Link><br /><span className="muted small">{t.owner_name ?? 'Unassigned'} · due {fmtDate(t.due_on)}</span></span><Status s={t.status} /></li>)}</ul>}
-        </section>
+        </section>}
+
+      {tab === 'people' && <div className="grid-2">
+        {(allocations.length > 0 || can.assign) && (
+          <section className="card" aria-labelledby="pa-h">
+            <div className="row between"><h2 id="pa-h">Staff</h2>{can.assign && <Button variant="secondary" onClick={() => setDlg('assign')}><Icon name="plus" size={18} />Assign staff</Button>}</div>
+            {current.length === 0 ? <Empty>No one is allocated to this property.</Empty> : (
+              <ul className="list">{current.map((a: any) => (
+                <li key={a.id}>
+                  <span className="row"><Avatar personId={a.person_id} name={a.person_name} /><span><Link to={`/people/${a.person_id}`}>{a.person_name}</Link> <CompanyBadge code={a.company_code} /><br /><span className="muted small">{a.job_title} · since {fmtDate(a.from_date)}</span></span></span>
+                  {hub.can('appointments.manage', a.company_id) && <Button variant="ghost" busy={endAlloc.busy} onClick={() => endAlloc.run(a.id)}>End allocation</Button>}
+                </li>
+              ))}</ul>
+            )}
+            <ErrorSummary error={endAlloc.error} />
+            {allocations.length > current.length && (
+              <details style={{ marginTop: 12 }}><summary>Earlier allocations ({allocations.length - current.length})</summary>
+                <ul className="list">{allocations.filter((a: any) => a.to_date).map((a: any) => <li key={a.id}><span><Link to={`/people/${a.person_id}`}>{a.person_name}</Link> <CompanyBadge code={a.company_code} /><br /><span className="muted small">{a.job_title}</span></span><span className="small">{fmtDate(a.from_date)} – {fmtDate(a.to_date)}</span></li>)}</ul>
+              </details>
+            )}
+          </section>
+        )}
 
         {keys.length > 0 || can.manage ? (
           <section className="card" aria-labelledby="pk-h">
@@ -256,34 +317,7 @@ export function PropertyPage() {
           </section>
         ) : null}
 
-        {(allocations.length > 0 || can.assign) && (
-          <section className="card" aria-labelledby="pa-h">
-            <div className="row between"><h2 id="pa-h">Staff</h2>{can.assign && <Button variant="secondary" onClick={() => setDlg('assign')}><Icon name="plus" size={18} />Assign staff</Button>}</div>
-            {current.length === 0 ? <Empty>No one is allocated to this property.</Empty> : (
-              <ul className="list">{current.map((a: any) => (
-                <li key={a.id}>
-                  <span className="row"><Avatar personId={a.person_id} name={a.person_name} /><span><Link to={`/people/${a.person_id}`}>{a.person_name}</Link> <CompanyBadge code={a.company_code} /><br /><span className="muted small">{a.job_title} · since {fmtDate(a.from_date)}</span></span></span>
-                  {hub.can('appointments.manage', a.company_id) && <Button variant="ghost" busy={endAlloc.busy} onClick={() => endAlloc.run(a.id)}>End allocation</Button>}
-                </li>
-              ))}</ul>
-            )}
-            <ErrorSummary error={endAlloc.error} />
-            {allocations.length > current.length && (
-              <details style={{ marginTop: 12 }}><summary>Earlier allocations ({allocations.length - current.length})</summary>
-                <ul className="list">{allocations.filter((a: any) => a.to_date).map((a: any) => <li key={a.id}><span><Link to={`/people/${a.person_id}`}>{a.person_name}</Link> <CompanyBadge code={a.company_code} /><br /><span className="muted small">{a.job_title}</span></span><span className="small">{fmtDate(a.from_date)} – {fmtDate(a.to_date)}</span></li>)}</ul>
-              </details>
-            )}
-          </section>
-        )}
-
-        {photos.length > 0 && (
-          <section className="card" aria-labelledby="pp-h">
-            <h2 id="pp-h">Visit photos</h2>
-            <p className="small muted">The latest photos taken on visits, newest first. Open a photo to see it full size.</p>
-            <PhotoGrid photos={photos} caption={(ph) => <>{ph.person_name}, {fmtDate(ph.started_at)} · <Link to={`/visits/${ph.visit_id}`}>visit</Link></>} />
-          </section>
-        )}
-      </div>
+      </div>}
 
       {dlg === 'assign' && (
         <AllocateDialog title={`Assign staff to ${p.name}`} searchLabel="Search staff" loading={assignable.loading}
@@ -294,6 +328,7 @@ export function PropertyPage() {
         <ErrorSummary error={logComplaint.error} />
         <ComplaintFields value={complaint} onChange={setComplaint} error={logComplaint.error?.fields.summary} />
       </Dialog>
+      {dlg === 'repair' && <ReportRepair properties={[p]} onClose={() => setDlg(null)} onSaved={() => { setDlg(null); d.reload(); }} />}
       {dlg === 'start' && <StartVisitDialog property={{ ...p, my_appointments }} onClose={() => setDlg(null)} />}
       {dlg === 'edit' && <PropertyForm existing={p} onClose={() => setDlg(null)} onSaved={() => { setDlg(null); d.reload(); }} />}
       <Dialog open={dlg === 'key'} onClose={() => setDlg(null)} title="Add a key or item" variant="modal" footer={<Button busy={addKey.busy} onClick={() => addKey.run()}>Add</Button>}>

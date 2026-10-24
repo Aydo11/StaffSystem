@@ -7,13 +7,25 @@ beforeEach(resetDb);
 const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c6360000000020001e221bc330000000049454e44ae426082', 'hex');
 
 describe('news', () => {
+  it('adds Valor information with current publication dates without inventing operational records', async () => {
+    const count = async () => (await pool.query('select (select count(*) from meetings)::int meetings, (select count(*) from visits)::int visits, (select count(*) from decisions)::int decisions')).rows[0];
+    const before = await count();
+    const migration = readFileSync(new URL('../db/migrations/027_valor_company_information.sql', import.meta.url), 'utf8');
+    await pool.query(migration);
+    await pool.query(migration);
+    const posts = (await pool.query("select * from news_posts where title in ('Valor Housing: who we are and how we work', 'Our operating history from August 2026', 'Fortnightly meetings: a practical guide for the team')")).rows;
+    expect(posts).toHaveLength(3);
+    expect(posts.every(p => p.company_ids.length === 1 && p.company_ids[0] === C.VH)).toBe(true);
+    expect(posts.every(p => p.summary.length <= 300 && Date.now() - new Date(p.published_at).getTime() < 60000)).toBe(true);
+    expect(await count()).toEqual(before);
+  });
   it('publishes welcome guides with local covers and preserves staff edits to sample posts', async () => {
     // In production the previous migration and company records already exist.
     const samples = readFileSync(new URL('../db/migrations/017_news.sql', import.meta.url), 'utf8');
     await pool.query(samples.slice(samples.indexOf('insert into news_posts')));
     await pool.query("update news_posts set body = 'Our own revised guidance.' where title = 'Sample: Chat is here'");
     await pool.query('alter table news_posts drop column cover_asset');
-    await pool.query(readFileSync(new URL('../db/migrations/022_staff_welcome_news.sql', import.meta.url), 'utf8'));
+    await pool.query(readFileSync(new URL('../db/migrations/025_staff_welcome_news.sql', import.meta.url), 'utf8'));
     const sam = await as('sam');
     const posts = (await sam.get('/api/news')).body;
     const guides = posts.filter((p: any) => p.cover_asset);

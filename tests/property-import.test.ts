@@ -9,7 +9,7 @@ it('imports the supplied properties once, preserves existing addresses and keeps
     "insert into properties (company_id, ref, name, address_line1, city, postcode, notes) values ($1, 'OWN-REF', 'Our existing property', '62 LANSDOWNE ROAD', 'Birmingham', 'B219AT', 'Keep our notes') returning id",
     [C.WHS],
   )).rows[0];
-  const migration = readFileSync(new URL('../db/migrations/023_wellbeing_housing_properties.sql', import.meta.url), 'utf8');
+  const migration = readFileSync(new URL('../db/migrations/026_wellbeing_housing_properties.sql', import.meta.url), 'utf8');
   await pool.query(migration);
   const imported = (await pool.query("select * from properties where company_id = $1 and notes like 'Imported from properties_list_221026_1817.csv%'", [C.WHS])).rows;
   expect(imported).toHaveLength(7);

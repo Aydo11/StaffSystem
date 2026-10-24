@@ -11,12 +11,15 @@ const ICON: Record<string, string> = { update: 'bell', announcement: 'note', tra
 const excerpt = (n: any) => n.summary || (n.body.length > 160 ? `${n.body.slice(0, 160).trimEnd()}…` : n.body);
 const paras = (t: string) => t.split(/\n{2,}/).map((p, i) => <p key={i}>{p}</p>);
 const canEdit = (hub: ReturnType<typeof useHub>, n: any) => n.company_ids.every((c: string) => hub.can('news.publish', c));
+const COVER_ASSETS: Record<string, string> = { welcome: '/images/news/welcome.png', 'daily-work': '/images/news/daily-work.png', learning: '/images/news/learning.png' };
 
 // Cover photo, or a coloured panel for the category when there is none.
 function Cover({ n, className }: { n: any; className: string }) {
   return n.image_file_id
     ? <AuthImage url={`/files/${n.image_file_id}`} alt={n.image_alt ?? ''} className={`${className} news-img`} />
-    : <span className={`${className} news-ph cat-${n.category}`} aria-hidden="true"><Icon name={ICON[n.category] ?? 'note'} size={40} /></span>;
+    : COVER_ASSETS[n.cover_asset]
+      ? <img src={COVER_ASSETS[n.cover_asset]} alt={n.image_alt ?? ''} className={`${className} news-img`} loading="lazy" />
+      : <span className={`${className} news-ph cat-${n.category}`} aria-hidden="true"><Icon name={ICON[n.category] ?? 'note'} size={40} /></span>;
 }
 function Meta({ n }: { n: any }) {
   return (
@@ -40,7 +43,7 @@ export function News() {
   const [lead, ...rest] = live;
   return (
     <>
-      <PageHead title="News & updates" intro="What is happening across the companies you work with."
+      <PageHead title="News & updates" intro="Start here: get to know the Hub, find practical staff guides and catch up on company news."
         actions={cos.length > 0 && <Button onClick={() => setEditing(blank(cos[0].id))}><Icon name="plus" size={18} />Write a post</Button>} />
       <Chips label="Show" value={cat} onChange={setCat} options={[['all', 'All'], ...CATS]} />
       {d.error ? <LoadError error={d.error} retry={d.reload} /> : d.loading && !d.data ? <Skeleton lines={6} /> : (
@@ -113,7 +116,7 @@ export function NewsArticle() {
         <span className="news-cat">{ONE[n.category]} · {n.company_codes.join(', ')}</span>
         <Meta n={n} />
       </div>
-      {n.image_file_id && <AuthImage url={`/files/${n.image_file_id}`} alt={n.image_alt ?? ''} className="news-hero news-img" />}
+      {(n.image_file_id || COVER_ASSETS[n.cover_asset]) && <Cover n={n} className="news-hero" />}
       {n.summary && <p className="news-standfirst">{n.summary}</p>}
       <div className="news-body">{paras(n.body)}</div>
       {n.photos.length > 0 && (
@@ -161,7 +164,7 @@ function NewsEditor({ post: p, companies, onClose, onSaved }: { post: any; compa
       <Field label="Story" error={save.error?.fields.body} hint="Leave a blank line between paragraphs. No resident details."><textarea name="body" rows={10} value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} /></Field>
       <div className="news-cover-edit">
         {(f.cover || f.image_file_id) && <span className="small muted">{f.cover ? 'New cover photo chosen.' : 'Current cover photo:'}</span>}
-        {!f.cover && f.image_file_id && <AuthImage url={`/files/${f.image_file_id}`} alt={f.image_alt ?? ''} className="news-edit-thumb" />}
+        {!f.cover && (f.image_file_id || COVER_ASSETS[f.cover_asset]) && <Cover n={f} className="news-edit-thumb" />}
         <FilePicker label={f.image_file_id ? 'Replace the cover photo' : 'Cover photo'} hint="A wide (landscape) photo looks best. JPEG, PNG or WebP." accept="image/jpeg,image/png,image/webp" onChange={(fs) => setF({ ...f, cover: fs[0] ?? null })} />
         {f.cover && <Field label="Describe the cover photo"><input name="cover_alt" maxLength={300} value={f.cover_alt} onChange={(e) => setF({ ...f, cover_alt: e.target.value })} placeholder="e.g. The team outside Alder House after the garden clear-up" /></Field>}
       </div>

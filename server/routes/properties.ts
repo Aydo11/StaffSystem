@@ -104,7 +104,7 @@ properties.get('/properties/:id/assignable', async (req, res) => {
 
 const propBody = z.object({
   ref: text(20).min(2), name: text(120).min(2), address_line1: text(200).min(2), address_line2: text(200).nullable().optional(),
-  city: text(80).min(2), postcode: text(10).min(3), status: z.enum(['active', 'void', 'under_works', 'offboarded']),
+  city: text(80).min(2), postcode: text(10).min(3), status: z.enum(['active', 'awaiting_approval', 'void', 'under_works', 'offboarded']),
   managing_agent: text(200).nullable().optional(), manager_person_id: uuid.nullable().optional(),
   room_refs: z.array(text(30).regex(/^[\w .\-/]+$/, 'Room labels only — no names')).max(60).optional(),
   notes: text(1000).nullable().optional(),

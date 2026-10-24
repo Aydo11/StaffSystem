@@ -42,11 +42,11 @@ This is an overview of the operating history reported by the director. It was en
 
 Support delivery
 
-Support has been ongoing during this period. Individual activity needs to be recorded against the correct date, worker and property using the appropriate system. This overview does not give a total for visits, residents supported, hours delivered or completed outcomes because the underlying activity records have not yet been supplied for import.
+Support has been ongoing during this period. Individual activity needs to be recorded against the correct date, worker and property using the appropriate system. The supplied workbooks now provide activity records and monthly totals. See the dated operations updates for each source separately; their different coverage means the figures should not be added together.
 
 Fortnightly meetings
 
-The reported meeting cycle is every two weeks from August. Each meeting record should contain its actual date, attendance, agenda, discussion, decisions and agreed actions. The recurrence alone is not a record of who attended or what was agreed. Exact historical meeting dates and minutes will be added from the team''s records.
+The reported meeting cycle is every two weeks from August. Each meeting record should contain its actual date, attendance, agenda, discussion, decisions and agreed actions. The recurrence alone is not a record of who attended or what was agreed. Historical meeting dates and minute summaries are being prepared from the supplied workbook.
 
 Bringing the history into the Hub
 

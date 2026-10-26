@@ -302,7 +302,7 @@ function ReviewPanel({ id, onClose }: { id: string; onClose: () => void }) {
           <p><CompanyBadge code={r.company_code} name={r.company_name} /> {fmtDate(r.period_start)} – {fmtDate(r.period_end)} · by {r.author_name} · {r.status === 'draft' ? <Status s="planned" text="Draft" /> : <Status s="verified" text={`Published ${fmtDate(r.published_at)}`} />}</p>
           <ErrorSummary error={save.error ?? publish.error ?? respond.error} />
           {REVIEW_FIELDS.map(([k, t]) => draft ? (
-            <Field key={k} label={t} optional><textarea name={k} value={draft[k] ?? ''} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} /></Field>
+            <Field key={k} label={t} hint="Required before publishing. Drafts can be saved unfinished." error={publish.error?.fields[k]}><textarea name={k} value={draft[k] ?? ''} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} /></Field>
           ) : (
             <div key={k} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1rem', margin: 0 }}>{t}</h3><p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{r[k] ?? <span className="muted">Not written yet.</span>}</p></div>
           ))}

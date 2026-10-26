@@ -5,6 +5,7 @@ import { enqueue } from '../outbox.ts';
 import { type Db, one, pool, q, tx } from '../db.ts';
 import { audit, bad, forbidden, idParam, isoDate, LONDON_TODAY, notFound, notify, parse, text, uuid } from '../http.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith, myCompanies, need, scope } from '../perm.ts';
+import { missingFields, REVIEW_FIELDS, SUPERVISION_FIELDS } from '../record-completeness.ts';
 
 export const performance = Router();
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
@@ -113,7 +114,7 @@ async function loadReview(a: Access, id: string) {
   const r = await one(`select r.*, ${name('p')} as person_name, ${name('au')} as author_name, c.name as company_name, c.code as company_code
                          from reviews r join people p on p.id = r.person_id join people au on au.id = r.author_id join companies c on c.id = r.company_id where r.id = $1`, [id]);
   if (!r) throw notFound();
-  const manage = r.author_id === a.personId || can(a, 'reviews.manage', r.company_id);
+  const manage = r.person_id !== a.personId && (r.author_id === a.personId || can(a, 'reviews.manage', r.company_id));
   const own = r.person_id === a.personId && r.status === 'published';
   if (!manage && !own) throw notFound();
   return { r, manage: manage && r.person_id !== a.personId };
@@ -129,12 +130,13 @@ performance.get('/reviews', async (req, res) => {
 });
 performance.get('/reviews/:id', async (req, res) => {
   const { r, manage } = await loadReview(req.access, idParam(req.params.id));
-  res.json({ review: r, actions: await q(actionsSql.replace('%s', 'review_id'), [r.id]), can: { edit: manage && r.status === 'draft', publish: manage && r.status === 'draft', addAction: manage, respond: r.person_id === req.person.id } });
+  res.json({ review: r, actions: await q(actionsSql.replace('%s', 'review_id'), [r.id]), can: { edit: manage && r.status === 'draft', publish: manage && r.status === 'draft', addAction: manage, respond: r.person_id === req.person.id && r.status === 'published' } });
 });
 const reviewFields = z.object({ objectives: text(4000).nullable(), achievements: text(4000).nullable(), development: text(4000).nullable(), feedback: text(4000).nullable() }).partial();
 performance.post('/reviews', async (req, res) => {
   const b = parse(reviewFields.extend({ company_id: uuid, person_id: uuid, kind: z.enum(['probation', 'periodic', 'annual']), period_start: isoDate, period_end: isoDate }), req.body);
   need(req.access, 'reviews.manage', b.company_id);
+  if (b.period_end < b.period_start) throw bad('The review period must end on or after its start.', { fields: { period_end: 'Must be on or after the start date' } });
   if (b.person_id === req.person.id) throw forbidden('You cannot review yourself.');
   if (!(await hasAppointment(b.person_id, b.company_id))) throw bad('This person has no role in this company.');
   const r = await one(`insert into reviews (company_id, person_id, author_id, kind, period_start, period_end, objectives, achievements, development, feedback) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`,
@@ -153,6 +155,10 @@ performance.patch('/reviews/:id', async (req, res) => {
 performance.post('/reviews/:id/publish', async (req, res) => {
   const { r, manage } = await loadReview(req.access, idParam(req.params.id));
   if (!manage || r.status !== 'draft') throw forbidden();
+  const missing = missingFields(r, REVIEW_FIELDS);
+  if (missing.length) throw bad('Complete objectives, achievements, development and feedback before publishing.', { fields: Object.fromEntries(missing.map(f => [f, 'Required before publishing'])) });
+  const today = (await one(`select ${LONDON_TODAY}::text as today`))!.today;
+  if (r.period_end > today) throw bad('The review period has not ended yet. Keep it as a draft.');
   await tx(async (db) => {
     await q(`update reviews set status = 'published', published_at = now(), updated_at = now() where id = $1`, [r.id], db);
     await audit(db, req.person.id, r.company_id, 'review', r.id, 'publish', {});
@@ -163,7 +169,7 @@ performance.post('/reviews/:id/publish', async (req, res) => {
 });
 performance.post('/reviews/:id/respond', async (req, res) => {
   const { r } = await loadReview(req.access, idParam(req.params.id));
-  if (r.person_id !== req.person.id) throw forbidden();
+  if (r.person_id !== req.person.id || r.status !== 'published') throw forbidden();
   const b = parse(z.object({ staff_response: text(4000).nullable().optional(), acknowledge: z.boolean().optional() }), req.body);
   await q(`update reviews set staff_response = coalesce($2, staff_response), acknowledged_at = case when $3 then coalesce(acknowledged_at, now()) else acknowledged_at end, updated_at = now() where id = $1`,
     [r.id, b.staff_response ?? null, !!b.acknowledge]);
@@ -242,6 +248,10 @@ performance.patch('/supervisions/:id', async (req, res) => {
 performance.post('/supervisions/:id/complete', async (req, res) => {
   const { s, manage } = await loadSupervision(req.access, idParam(req.params.id));
   if (!manage || s.status !== 'draft') throw forbidden();
+  const missing = missingFields(s, SUPERVISION_FIELDS);
+  if (missing.length) throw bad('Add the agenda and shared session notes before completing.', { fields: Object.fromEntries(missing.map(f => [f, 'Required before completion'])) });
+  const today = (await one(`select ${LONDON_TODAY}::text as today`))!.today;
+  if (s.held_on > today) throw bad('This session is in the future. Keep it as a draft until it has happened.');
   await tx(async (db) => {
     await q(`update supervisions set status = 'completed', updated_at = now() where id = $1`, [s.id], db);
     await audit(db, req.person.id, s.company_id, 'supervision', s.id, 'complete', {});

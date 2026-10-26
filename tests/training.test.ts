@@ -81,6 +81,33 @@ describe('11 · quizzes', () => {
 });
 
 describe('11 · policies and handbooks', () => {
+  it('retains an original Word policy behind policy access and independent approval', async () => {
+    const author = await as('morgan'), reader = await as('sam');
+    const draft = (await author.post('/api/policies').send({ company_id: C.VH, kind: 'policy', title: 'Source policy attachment' })).body;
+    const docx = Buffer.concat([Buffer.from([0x50,0x4b,0x03,0x04]),Buffer.from('word/document.xml')]);
+    const upload = await author.post(`/api/policies/${draft.id}/file`).attach('file',docx,'Original policy.docx');
+    expect(upload.status).toBe(201);
+    const detail = (await author.get(`/api/policies/${draft.id}`)).body;
+    expect(detail.file).toMatchObject({id:upload.body.id,original_name:'Original policy.docx',mime_type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+    expect((await reader.get(`/api/files/${upload.body.id}`)).status).toBe(404);
+    expect((await author.post(`/api/policies/${draft.id}/approve`).send({company_id:C.VH})).status).toBe(403);
+    await author.patch(`/api/policies/${draft.id}`).send({effective_on:'2000-01-01',review_on:'2099-01-01'});
+    expect((await (await as('alex')).post(`/api/policies/${draft.id}/approve`).send({company_id:C.VH})).status).toBe(200);
+    const file = await reader.get(`/api/files/${upload.body.id}`);
+    expect(file.status).toBe(200);
+    expect(file.headers['content-type']).toContain('wordprocessingml');
+    expect((await author.post(`/api/policies/${draft.id}/file`).attach('file',docx,'Replacement.docx')).status).toBe(403);
+  });
+  it('rejects unsupported policy attachments without leaving files or blobs behind', async () => {
+    const author = await as('morgan');
+    const draft = (await author.post('/api/policies').send({company_id:C.VH,kind:'policy',title:'Attachment validation'})).body;
+    const counts = async () => (await pool.query('select (select count(*)::int from files) files,(select count(*)::int from file_blobs) blobs')).rows[0];
+    const before = await counts();
+    expect((await author.post(`/api/policies/${draft.id}/file`).attach('file',Buffer.from('PK\x03\x04 not a Word document'),'bad.docx')).status).toBe(400);
+    const png = Buffer.from('89504e470d0a1a0a','hex');
+    expect((await author.post(`/api/policies/${draft.id}/file`).attach('file',png,'picture.png')).status).toBe(400);
+    expect(await counts()).toEqual(before);
+  });
   it('records supplied, opened and acknowledged separately', async () => {
     const sam = await as('sam');
     const lib = (await sam.get('/api/policies')).body;

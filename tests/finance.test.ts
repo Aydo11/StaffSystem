@@ -85,8 +85,8 @@ describe('15 · notifications handle failures', () => {
     process.env.RESEND_API_KEY = 'test'; process.env.EMAIL_FROM = 'hub@example.test';
     try {
       const priya = await as('priya');
-      const rev = (await priya.post('/api/reviews').send({ company_id: C.VH, person_id: P.sam, kind: 'periodic', period_start: '2026-07-01', period_end: '2026-09-30' })).body;
-      await priya.post(`/api/reviews/${rev.id}/publish`);
+      const rev = (await priya.post('/api/reviews').send({ company_id: C.VH, person_id: P.sam, kind: 'periodic', period_start: '2026-07-01', period_end: '2026-09-30', objectives: 'Deliver agreed support.', achievements: 'Support records reviewed.', development: 'Continue reflective practice.', feedback: 'Progress discussed.' })).body;
+      expect((await priya.post(`/api/reviews/${rev.id}/publish`)).status).toBe(200);
       const rows = (await pool.query(`select id, status from outbound_messages where category = 'feedback_ready'`)).rows;
       expect(rows).toEqual([{ id: rows[0].id, status: 'queued' }]);
       let calls = 0;
@@ -102,15 +102,15 @@ describe('15 · notifications handle failures', () => {
   });
   it('without an email provider, messages are recorded as not configured — never as sent', async () => {
     const priya = await as('priya');
-    const rev = (await priya.post('/api/reviews').send({ company_id: C.VH, person_id: P.sam, kind: 'periodic', period_start: '2026-07-01', period_end: '2026-09-30' })).body;
-    await priya.post(`/api/reviews/${rev.id}/publish`);
+    const rev = (await priya.post('/api/reviews').send({ company_id: C.VH, person_id: P.sam, kind: 'periodic', period_start: '2026-07-01', period_end: '2026-09-30', objectives: 'Deliver agreed support.', achievements: 'Support records reviewed.', development: 'Continue reflective practice.', feedback: 'Progress discussed.' })).body;
+    expect((await priya.post(`/api/reviews/${rev.id}/publish`)).status).toBe(200);
     expect((await pool.query(`select status from outbound_messages where category = 'feedback_ready'`)).rows[0].status).toBe('not_configured');
   });
   it('respects a person switching email off', async () => {
     await (await as('sam')).put('/api/me/preferences').send({ email_enabled: false, categories: [] });
     const priya = await as('priya');
-    const rev = (await priya.post('/api/reviews').send({ company_id: C.VH, person_id: P.sam, kind: 'periodic', period_start: '2026-07-01', period_end: '2026-09-30' })).body;
-    await priya.post(`/api/reviews/${rev.id}/publish`);
+    const rev = (await priya.post('/api/reviews').send({ company_id: C.VH, person_id: P.sam, kind: 'periodic', period_start: '2026-07-01', period_end: '2026-09-30', objectives: 'Deliver agreed support.', achievements: 'Support records reviewed.', development: 'Continue reflective practice.', feedback: 'Progress discussed.' })).body;
+    expect((await priya.post(`/api/reviews/${rev.id}/publish`)).status).toBe(200);
     expect((await pool.query(`select count(*)::int n from outbound_messages`)).rows[0].n).toBe(0);
   });
 });

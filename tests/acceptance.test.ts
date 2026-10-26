@@ -159,8 +159,10 @@ describe('6 · live and manual visits', () => {
   it('handles a visit across the October clock change and attributes it to the start day', async () => {
     const sam = await as('sam');
     // 25 Oct 2026: clocks go back at 02:00 BST. 00:30 for 180 real minutes.
-    const r = await sam.post('/api/visits/manual').send({ property_id: prop(1), appointment_id: A.samVH, work_category: 'property_check', summary: 'Night check.', client_request_id: rid(), start_local: '2026-10-25T00:30', minutes: 180 });
-    // 25 Oct is in the future relative to 20 Oct 2026, so it must be refused; use the March change instead.
+      const autumn = await pool.query(`select to_char((($1::timestamp at time zone 'Europe/London') + interval '180 minutes') at time zone 'Europe/London', 'YYYY-MM-DD HH24:MI') as local_end`, ['2026-10-25T00:30']);
+      expect(autumn.rows[0].local_end).toBe('2026-10-25 02:30');
+      const r = await sam.post('/api/visits/manual').send({ property_id: prop(1), appointment_id: A.samVH, work_category: 'property_check', summary: 'Night check.', client_request_id: rid(), start_local: '2099-10-25T00:30', minutes: 180 });
+      // Future visits must be refused independently of when this test runs.
     expect(r.status).toBe(400);
     await pool.query(`insert into appointment_rates (appointment_id, rate_type, amount, effective_from, effective_to) values ($1, 'hourly', 12.00, '2025-03-01', '2025-09-30')`, ['00000000-0000-4000-8000-000000000b04']);
     const v = await pool.query(`select round(extract(epoch from (($2::timestamp at time zone 'Europe/London') - ($1::timestamp at time zone 'Europe/London'))) / 60)::int m`, ['2026-03-29T00:30', '2026-03-29T03:30']);

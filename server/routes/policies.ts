@@ -84,7 +84,7 @@ policies.get('/policies/:id', async (req, res) => {
     q(`select p.id, p.version, p.status, p.revision_summary, p.effective_on, (select json_agg(json_build_object('company_code', co.code, 'approved_at', pp.approved_at)) from policy_publications pp join companies co on co.id = pp.company_id where pp.policy_id = p.id) as publications
          from policies p where p.root_id = $1 order by p.version desc`, [p.root_id]),
     q(`select pp.*, co.code as company_code, co.name as company_name, ${name('ap')} as approved_by_name from policy_publications pp join companies co on co.id = pp.company_id join people ap on ap.id = pp.approved_by where pp.policy_id = $1`, [p.id]),
-    p.file_id ? one('select id, original_name, size_bytes from files where id = $1', [p.file_id]) : null,
+    p.file_id ? one('select id, original_name, mime_type, size_bytes from files where id = $1', [p.file_id]) : null,
     q(`select distinct on (root_id) id, title, language from policies where translation_of_root = $1 and status = 'approved' order by root_id, version desc`, [p.root_id]),
     companyId ? one('select * from policy_receipts where policy_id = $1 and company_id = $2 and person_id = $3', [p.id, companyId, a.personId]) : null,
   ]);
@@ -117,15 +117,16 @@ policies.patch('/policies/:id', async (req, res) => {
   res.json(await one(`update policies set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1 returning *`,
     [p.id, ...keys.map((k) => (k === 'chapters' ? JSON.stringify((b as any)[k]) : (b as any)[k]))]));
 });
-// Import: a PDF is attached to the draft and must still be previewed and approved by someone else before staff see it.
+// Source documents stay attached to the draft; publication still requires independent approval.
 policies.post('/policies/:id/file', upload.single('file'), async (req, res) => {
   const { p } = await loadPolicy(req.access, idParam(req.params.id), null);
   if (!canManage(req.access, p.company_id) || p.status !== 'draft') throw forbidden();
-  if (!req.file) throw bad('Choose a PDF.');
+  if (!req.file) throw bad('Choose a PDF or Word (.docx) document.');
   const f = await tx(async (db) => {
-    const saved = await saveFile(db, { companyId: p.company_id, entityType: 'policy', entityId: p.root_id, name: req.file!.originalname, buf: req.file!.buffer, uploadedBy: req.person.id });
-    if (saved.mime_type !== 'application/pdf') throw bad('Policies can only have a PDF attached.');
+    const saved = await saveFile(db, { companyId: p.company_id, entityType: 'policy', entityId: p.root_id, name: req.file!.originalname, buf: req.file!.buffer, uploadedBy: req.person.id, allowWord: true });
+    if (!['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(saved.mime_type)) throw bad('Policies can only have a PDF or Word (.docx) document attached.');
     await q('update policies set file_id = $2, updated_at = now() where id = $1', [p.id, saved.id], db);
+    await audit(db, req.person.id, p.company_id, 'policy', p.id, 'attach_source', { file_id: saved.id, mime_type: saved.mime_type });
     return saved;
   });
   res.status(201).json({ id: f.id });
@@ -139,7 +140,7 @@ policies.post('/policies/:id/approve', async (req, res) => {
     if (!can(req.access, 'policies.approve', b.company_id)) throw forbidden();
     if (p.company_id && p.company_id !== b.company_id) throw bad('This document belongs to another company.');
     if (p.created_by === req.person.id) throw forbidden('Someone other than the author must review and approve it.');
-    if (!p.chapters.length && !p.file_id) throw bad('Add content or attach a PDF before approving.');
+    if (!p.chapters.length && !p.file_id) throw bad('Add content or attach a source document before approving.');
     if (!p.effective_on || !p.review_on) throw bad('Set the effective date and the review date.', { fields: { effective_on: p.effective_on ? undefined : 'Required', review_on: p.review_on ? undefined : 'Required' } });
     if (p.status === 'draft') await q(`update policies set status = 'approved', updated_at = now() where id = $1`, [p.id], db);
     await q('insert into policy_publications (policy_id, company_id, approved_by, note) values ($1,$2,$3,$4)', [p.id, b.company_id, req.person.id, b.note ?? null], db);

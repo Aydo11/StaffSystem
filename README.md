@@ -46,6 +46,8 @@ Tests reset the `hub_test` database before each test. They refuse to run against
 
 See [docs/ADMIN.md](docs/ADMIN.md) for Render setup, sign-in, environments, backups and the first administrator.
 
+See [record verification](docs/record-verification.md) for the read-only completeness audit and rules for source documents, reviews and supervision records.
+
 ## Project layout
 
 ```

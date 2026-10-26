@@ -98,7 +98,7 @@ export function PolicyPage() {
       <PageHead title={p.title} crumbs={[['Policies and handbooks', '/policies'], [p.title]]}
         intro={<>{label(p.kind)} · version {p.version}{p.company_code ? <> · <CompanyBadge code={p.company_code} name={p.company_name} /></> : ' · shared'} · {label(p.status)}</>}
         actions={<>
-          {file && <Button variant="secondary" onClick={() => download(`/files/${file.id}`, file.original_name)}>Download PDF</Button>}
+          {file && <Button variant="secondary" onClick={() => download(`/files/${file.id}`, file.original_name)}>Download {file.mime_type === 'application/pdf' ? 'PDF' : 'Word document'}</Button>}
           {!file && p.chapters.length > 0 && <Button variant="secondary" onClick={() => print()}>Print or save as PDF</Button>}
           {can.newVersion && <Button variant="secondary" busy={newVersion.busy} onClick={() => newVersion.run()}>Create a new version</Button>}
         </>} />
@@ -157,7 +157,7 @@ function PolicyEditor({ p, reload }: { p: any; reload: () => void }) {
   const [f, setF] = useState<any>({ title: p.title, audience: p.audience ?? '', revision_summary: p.revision_summary ?? '', effective_on: p.effective_on ?? '', review_on: p.review_on ?? '', chapters: p.chapters });
   const [progress, setProgress] = useState<number | null>(null);
   const save = useSubmit(async () => { await patch(`/policies/${p.id}`, { ...f, audience: f.audience || null, revision_summary: f.revision_summary || null, effective_on: f.effective_on || null, review_on: f.review_on || null }); toast('Draft saved.'); reload(); });
-  const pdf = useSubmit(async (file: File) => { setProgress(0); try { await upload(`/policies/${p.id}/file`, file, file.name, setProgress); toast('PDF attached. Preview it before approval.'); reload(); } finally { setProgress(null); } });
+  const pdf = useSubmit(async (file: File) => { setProgress(0); try { await upload(`/policies/${p.id}/file`, file, file.name, setProgress); toast('Source document attached. Read it before approval.'); reload(); } finally { setProgress(null); } });
   const setCh = (i: number, k: string, v: string) => setF({ ...f, chapters: f.chapters.map((c: any, j: number) => (j === i ? { ...c, [k]: v } : c)) });
   const move = (i: number, by: number) => { const c = [...f.chapters]; const j = i + by; if (j < 0 || j >= c.length) return; [c[i], c[j]] = [c[j], c[i]]; setF({ ...f, chapters: c }); };
   return (
@@ -171,7 +171,7 @@ function PolicyEditor({ p, reload }: { p: any; reload: () => void }) {
         <Field label="Review by" error={save.error?.fields.review_on}><input name="review_on" type="date" value={f.review_on} onChange={(e) => setF({ ...f, review_on: e.target.value })} /></Field>
       </div>
       <Field label="What changed in this version" optional><textarea name="revision_summary" value={f.revision_summary} onChange={(e) => setF({ ...f, revision_summary: e.target.value })} /></Field>
-      <FilePicker label="Attach a PDF version" hint="Optional. Readable chapters below are better for search and screen readers." accept="application/pdf" instant busy={pdf.busy} progress={progress} onChange={(fs) => pdf.run(fs[0])} />
+      <FilePicker label="Attach the source document" hint="PDF or Word (.docx). Keep readable chapters below for search and screen readers." accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" instant busy={pdf.busy} progress={progress} onChange={(fs) => pdf.run(fs[0])} />
       <h2 style={{ fontSize: '1.25rem' }}>Chapters</h2>
       {f.chapters.map((c: any, i: number) => (
         <details key={i} className="card" open={f.chapters.length < 4}>

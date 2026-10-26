@@ -48,6 +48,41 @@ describe('9 · approved records update KPIs', () => {
 });
 
 describe('10 · staff act on feedback and request support', () => {
+  it('keeps incomplete and future reviews in draft and validates the period before saving', async () => {
+    const manager = await as('priya');
+    const body = { company_id: C.VH, person_id: P.sam, kind: 'periodic', period_start: '2000-01-01', period_end: '2000-01-31' };
+    expect((await manager.post('/api/reviews').send({ ...body, period_end: '1999-12-31' })).status).toBe(400);
+    const created = await manager.post('/api/reviews').send(body);
+    expect(created.status).toBe(201);
+    const id = created.body.id;
+    const incomplete = await manager.post(`/api/reviews/${id}/publish`);
+    expect(incomplete.status).toBe(400);
+    expect(incomplete.body.details.fields).toHaveProperty('objectives');
+    expect((await pool.query('select status,published_at from reviews where id=$1', [id])).rows[0]).toEqual({status:'draft',published_at:null});
+    await manager.patch(`/api/reviews/${id}`).send({ objectives: 'Agreed objectives.', achievements: 'Reviewed work examples.', development: 'Development actions discussed.', feedback: 'Feedback recorded.' });
+    expect((await manager.post(`/api/reviews/${id}/publish`)).status).toBe(200);
+    const future = await manager.post('/api/reviews').send({ ...body, period_start: '2099-01-01', period_end: '2099-01-31', objectives: 'Plan', achievements: 'Pending', development: 'Plan', feedback: 'Pending' });
+    expect((await manager.post(`/api/reviews/${future.body.id}/publish`)).status).toBe(400);
+  });
+  it('a manager cannot read or acknowledge their own draft review', async () => {
+    const created = await (await as('alex')).post('/api/reviews').send({ company_id: C.VH, person_id: P.priya, kind: 'periodic', period_start: '2000-01-01', period_end: '2000-01-31' });
+    expect(created.status).toBe(201);
+    const subject = await as('priya');
+    expect((await subject.get(`/api/reviews/${created.body.id}`)).status).toBe(404);
+    expect((await subject.post(`/api/reviews/${created.body.id}/respond`).send({ acknowledge: true })).status).toBe(404);
+    expect((await pool.query('select acknowledged_at from reviews where id=$1', [created.body.id])).rows[0].acknowledged_at).toBeNull();
+  });
+  it('a supervision needs session content and cannot be completed before it happens', async () => {
+    const manager = await as('priya');
+    const created = await manager.post('/api/supervisions').send({ company_id: C.VH, person_id: P.sam, kind: 'supervision', held_on: '2099-01-01', minutes: 90 });
+    expect(created.status).toBe(201);
+    const id = created.body.id;
+    expect((await manager.post(`/api/supervisions/${id}/complete`)).status).toBe(400);
+    await manager.patch(`/api/supervisions/${id}`).send({ agenda: 'Caseload and support.', shared_notes: 'Discussion and agreed outcomes recorded.' });
+    expect((await manager.post(`/api/supervisions/${id}/complete`)).status).toBe(400);
+    await manager.patch(`/api/supervisions/${id}`).send({ held_on: '2000-01-01' });
+    expect((await manager.post(`/api/supervisions/${id}/complete`)).status).toBe(200);
+  });
   it('drafts are hidden from the person; published reviews can be answered and acknowledged without agreeing', async () => {
     expect((await (await as('casey')).get(`/api/reviews/${DRAFT}`)).status).toBe(404);
     const sam = await as('sam');

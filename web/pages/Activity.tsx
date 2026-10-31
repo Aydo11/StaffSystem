@@ -153,7 +153,7 @@ export function ActivityPage() {
 
 function VisitRows({ rows, team }: { rows: any[]; team: boolean }) {
   return rows.length ? <div className="table-wrap"><table><thead><tr><th>When</th>{team && <th>Who</th>}<th>Property &amp; work</th><th>Duration</th><th>Status</th></tr></thead><tbody>{rows.map(v => <tr key={v.id}>
-    <td><Link to={`/visits/${v.id}`}>{fmtDate(v.started_at)}<br />{fmtTime(v.started_at)}–{v.ended_at ? fmtTime(v.ended_at) : 'ongoing'}</Link><div className="small muted">{v.entry_mode === 'manual' ? 'Logged afterwards' : 'Live timer'}</div></td>
+    <td><Link to={`/visits/${v.id}`}>{fmtDate(v.started_at)}{v.entry_mode !== 'schedule' && <><br />{fmtTime(v.started_at)}–{v.ended_at ? fmtTime(v.ended_at) : 'ongoing'}</>}</Link><div className="small muted">{v.entry_mode === 'schedule' ? 'From weekly schedule' : v.entry_mode === 'manual' ? 'Logged afterwards' : 'Live timer'}</div></td>
     {team && <td>{v.person_name}<br /><CompanyBadge code={v.company_code} /></td>}
     <td><Link to={`/properties/${v.property_id}`}>{v.property_name}</Link><div className="small muted">{label(v.work_category)}</div><div className="small">{v.summary}</div></td><td>{v.ended_at ? fmtMinutes(v.minutes) : 'In progress'}</td><td><Status s={v.status} /></td>
   </tr>)}</tbody></table></div> : <Empty>No visits match this period and search.</Empty>;

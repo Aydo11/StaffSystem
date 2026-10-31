@@ -342,9 +342,10 @@ export function VisitDetail() {
             <dt>Worker</dt><dd>{v.person_name} — {v.job_title}</dd>
             <dt>Company</dt><dd>{v.company_name}</dd>
             <dt>Property</dt><dd><Link to={`/properties/${v.property_id}`}>{v.property_name}</Link> ({v.property_ref})</dd>
-            <dt>Recorded</dt><dd>{v.entry_mode === 'live' ? 'Live (Start/Finish)' : <>Manual entry, submitted {fmtDateTime(v.submitted_at)}</>}</dd>
+            <dt>Recorded</dt><dd>{v.entry_mode === 'live' ? 'Live (Start/Finish)' : v.entry_mode === 'schedule' ? 'From the weekly support schedule (not individually logged; times not recorded)' : <>Manual entry, submitted {fmtDateTime(v.submitted_at)}</>}</dd>
+            {v.entry_mode === 'schedule' ? <><dt>Date</dt><dd>{fmtDate(v.started_at)}</dd><dt>Hours</dt><dd>{fmtMinutes(v.minutes)}</dd></> : <>
             <dt>Start</dt><dd>{fmtDateTime(v.started_at)}</dd>
-            <dt>Finish</dt><dd>{v.ended_at ? fmtDateTime(v.ended_at) : <Status s="correction" text="No finish time recorded" />}</dd>
+            <dt>Finish</dt><dd>{v.ended_at ? fmtDateTime(v.ended_at) : <Status s="correction" text="No finish time recorded" />}</dd></>}
             {v.entry_mode === 'live' && <><dt>Location</dt><dd>{where(v.start_lat, v.start_distance_m, v.start_accuracy_m, 'Started')}<br />{v.ended_at && where(v.finish_lat, v.finish_distance_m, v.finish_accuracy_m, 'Finished')}</dd></>}
             <dt>Duration</dt><dd>{v.ended_at ? fmtMinutes(v.minutes) : '—'}{v.planned_minutes && <span className="muted"> (planned {fmtMinutes(v.planned_minutes)})</span>}</dd>
             <dt>Work</dt><dd>{label(v.work_category)}</dd>
@@ -492,7 +493,7 @@ export function Attendance() {
                 {missed.map((s) => <tr key={s.id}><td>{fmtDay(s.planned_start)} {fmtTime(s.planned_start)}</td>{team && <td>{s.person_name}</td>}<td>{s.property_name}</td><td><CompanyBadge code={s.company_code} name={s.company_name} /></td><td className="num">planned {fmtMinutes(s.planned_minutes)}</td><td><Status s="missed" /></td></tr>)}
                 {rows.map((v) => (
                   <tr key={v.id}>
-                    <td><Link to={`/visits/${v.id}`}>{fmtDay(v.started_at)} {fmtTime(v.started_at)}–{v.ended_at ? fmtTime(v.ended_at) : '…'}</Link>{v.entry_mode === 'manual' && <div className="muted small">Manual entry</div>}</td>
+                    <td><Link to={`/visits/${v.id}`}>{fmtDay(v.started_at)}{v.entry_mode !== 'schedule' && <> {fmtTime(v.started_at)}–{v.ended_at ? fmtTime(v.ended_at) : '…'}</>}</Link>{v.entry_mode === 'manual' && <div className="muted small">Manual entry</div>}{v.entry_mode === 'schedule' && <div className="muted small">From weekly schedule</div>}</td>
                     {team && <td>{v.person_name}</td>}
                     <td>{v.property_name}</td><td><CompanyBadge code={v.company_code} name={v.company_name} /></td>
                     <td className="num">{v.ended_at ? fmtMinutes(v.minutes) : '—'}</td>

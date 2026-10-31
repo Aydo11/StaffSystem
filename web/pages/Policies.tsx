@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { download, get, patch, post, upload, useApi, useSubmit } from '../api.ts';
+import { api, download, get, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtDateTime, label } from '../format.ts';
 import { useHub } from '../hub.tsx';
 import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
@@ -87,6 +87,8 @@ export function PolicyPage() {
   const ack = useSubmit(async () => { await post(`/policies/${id}/acknowledge`, { company_id: company }); toast('Acknowledged. Thank you.'); d.reload(); hub.reloadMe(); });
   const approve = useSubmit(async (companyId: string) => { const r = await post(`/policies/${id}/approve`, { company_id: companyId }); toast(`Approved and supplied to ${r.supplied} people.`); d.reload(); });
   const newVersion = useSubmit(async () => { const r = await post(`/policies/${id}/new-version`); nav(`/policies/${r.id}`); });
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const remove = useSubmit(async () => { await api('DELETE', `/policies/${id}`); toast('Draft deleted.'); nav('/policies'); });
   useEffect(() => { if (d.data && !company && d.data.can.edit) setTab('edit'); }, [d.data, company]);
   useEffect(() => { if (d.data && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView(); }, [d.data]);
   if (d.error) return <LoadError error={d.error} />;
@@ -101,8 +103,13 @@ export function PolicyPage() {
           {file && <Button variant="secondary" onClick={() => download(`/files/${file.id}`, file.original_name)}>Download {file.mime_type === 'application/pdf' ? 'PDF' : 'Word document'}</Button>}
           {!file && p.chapters.length > 0 && <Button variant="secondary" onClick={() => print()}>Print or save as PDF</Button>}
           {can.newVersion && <Button variant="secondary" busy={newVersion.busy} onClick={() => newVersion.run()}>Create a new version</Button>}
+          {can.edit && <Button variant="danger" onClick={() => setConfirmDelete(true)}>Delete draft</Button>}
         </>} />
       <ErrorSummary error={ack.error ?? approve.error ?? newVersion.error} />
+      <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} title="Delete this draft?" variant="modal" footer={<Button variant="danger" busy={remove.busy} onClick={() => remove.run()}>Delete draft</Button>}>
+        <p>“{p.title}” version {p.version} will be deleted. It cannot be undone.{p.version > 1 ? ' Earlier approved versions are kept.' : ''}</p>
+        <ErrorSummary error={remove.error} />
+      </Dialog>
       {can.approve.length > 0 && (
         <div className="notice warn no-print">
           <strong>{p.status === 'draft' ? 'Review this draft, then approve it for a company.' : 'This shared document is approved elsewhere. Adopt it to publish it to a company’s staff.'}</strong>

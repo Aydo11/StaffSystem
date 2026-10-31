@@ -8,7 +8,7 @@ import { AccessLinkNotice, PersonDataActions, SignInAccess } from './DataTools.t
 import { DevelopmentTab } from './Development.tsx';
 import { ProfileOverview } from './ProfileOverview.tsx';
 import { StoryTab } from './Story.tsx';
-import { Avatar, Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, JobRoleSelect, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { Avatar, Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, JobRoleSelect, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 export function People() {
   const hub = useHub();
@@ -17,15 +17,20 @@ export function People() {
   useEffect(() => { const t = setTimeout(() => setQ(term), 250); return () => clearTimeout(t); }, [term]);
   const list = useApi<any[]>(`/people${hub.q({ q: q.length >= 2 ? q : undefined })}`);
   const [inviting, setInviting] = useState(false);
+  const [leavers, setLeavers] = useState<'current' | 'all'>('current');
+  const shown = (list.data ?? []).filter((p) => leavers === 'all' || p.status !== 'left');
   const canInvite = hub.me.companies.some((c) => c.perms.includes('staff.create'));
   return (
     <>
       <PageHead title="People" intro="Professional profiles of colleagues in your companies. Personal and HR details are restricted." actions={canInvite && <Button onClick={() => setInviting(true)}>Invite a person</Button>} />
-      <div className="field" style={{ maxWidth: 420 }}><label htmlFor="people-q">Find a person</label><input id="people-q" type="search" value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Name or staff reference" /></div>
+      <div className="row between" style={{ alignItems: 'flex-end', flexWrap: 'wrap', gap: 12 }}>
+        <div className="field" style={{ maxWidth: 420, flex: '1 1 260px', margin: 0 }}><label htmlFor="people-q">Find a person</label><input id="people-q" type="search" value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Name or staff reference" /></div>
+        <Chips label="Who to show" value={leavers} onChange={setLeavers} options={[['current', 'Current staff'], ['all', `Include people who have left (${(list.data ?? []).filter((p) => p.status === 'left').length})`]]} />
+      </div>
       {list.error && <LoadError error={list.error} retry={list.reload} />}
-      {list.loading && !list.data ? <Skeleton lines={6} /> : (list.data ?? []).length === 0 ? <Empty>No people found.</Empty> : (
-        <ul className="grid" style={{ listStyle: 'none', padding: 0 }}>
-          {list.data!.map((p) => (
+      {list.loading && !list.data ? <Skeleton lines={6} /> : shown.length === 0 ? <Empty>No people found.</Empty> : (
+        <ul className="grid" style={{ listStyle: 'none', padding: 0, marginTop: 16 }}>
+          {shown.map((p) => (
             <li key={p.id}><Link to={`/people/${p.id}`} className="card card-link" style={{ display: 'flex', gap: 12 }}>
               <Avatar personId={p.id} name={p.full_name} hasPhoto={p.has_photo} />
               <span><strong>{p.full_name}</strong> {p.status !== 'active' && <Status s={p.status} />}<br /><span className="muted small">{p.staff_ref}</span>
@@ -42,7 +47,7 @@ export function People() {
 
 const REL: [string, string][] = [['employee', 'Employee'], ['contractor', 'Contractor'], ['agency', 'Agency worker'], ['secondment', 'Secondment'], ['volunteer', 'Volunteer'], ['other', 'Other']];
 
-function AppointmentFields({ f, set, errors, companyId }: { f: any; set: (k: string) => (e: any) => void; errors: Record<string, string>; companyId: string }) {
+function AppointmentFields({ f, set, errors, companyId, editing }: { f: any; set: (k: string) => (e: any) => void; errors: Record<string, string>; companyId: string; editing?: boolean }) {
   const hub = useHub();
   const managers = useApi<any[]>(companyId ? `/people?company=${companyId}` : null);
   return (
@@ -64,6 +69,7 @@ function AppointmentFields({ f, set, errors, companyId }: { f: any; set: (k: str
       <div className="form-grid">
         <Field label="Manager" optional><select name="manager_person_id" value={f.manager_person_id} onChange={set('manager_person_id')}><option value="">None</option>{managers.data?.map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}</select></Field>
         <Field label="Start date" error={errors.start_date}><input name="start_date" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
+        {editing && <Field label="End date" optional hint="Leave empty if the role is ongoing. Use End role to finish a role and hand over tasks." error={errors.end_date}><input name="end_date" type="date" value={f.end_date ?? ''} onChange={set('end_date')} /></Field>}
         <Field label="Contracted or agreed hours per week" optional error={errors.contracted_hours_per_week}><input name="contracted_hours_per_week" type="number" step="0.5" min={0} max={168} value={f.contracted_hours_per_week} onChange={set('contracted_hours_per_week')} /></Field>
       </div>
     </>
@@ -116,6 +122,7 @@ export function PersonPage({ self }: { self?: boolean }) {
   const [tab, setTabState] = useState<PTab>(() => (new URLSearchParams(location.search).get('tab') as PTab) || 'overview');
   const setTab = (t: PTab) => { setTabState(t); history.replaceState(null, '', `${location.pathname}?tab=${t}`); };
   const [photo, setPhoto] = useState(false);
+  const [removing, setRemoving] = useState(false);
   if (d.error) return <LoadError error={d.error} retry={d.reload} />;
   if (!d.data) return <Skeleton lines={8} />;
   const { person: p, can, clearance, restricted, checks, appointments } = d.data;
@@ -140,9 +147,11 @@ export function PersonPage({ self }: { self?: boolean }) {
         <div className="hero-actions no-print">
           <Link className="btn secondary" to={`/people/${id}/resume`}><Icon name="file" size={18} />{isMe ? 'My resume' : 'Professional profile'}</Link>
           {(isMe || restricted) && <PersonDataActions person={p} />}
+          {!isMe && p.status !== 'left' && current.length > 0 && current.every((a: any) => can.manageAppointments.includes(a.company_id)) && <Button variant="danger" onClick={() => setRemoving(true)}>Remove from the Hub</Button>}
           <SignInAccess person={p} isMe={isMe} />
         </div>
       </section>
+      {removing && <RemovePerson person={p} roles={current} onClose={() => setRemoving(false)} onDone={() => { setRemoving(false); d.reload(); }} />}
       <Tabs label="Profile sections" tabs={tabs} value={tab} onChange={setTab} />
       <div role="tabpanel">
         {tab === 'overview' && <>
@@ -338,7 +347,7 @@ function AppointmentsTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: (
   const colleagues = useApi<any[]>(dlg?.kind === 'end' ? `/people?company=${dlg.appt.company_id}` : null);
   const close = (msg: string) => { setDlg(null); toast(msg); reload(); };
   const create = useSubmit(async () => { await post('/appointments', { person_id: p.id, company_id: f.company_id, ...apptBody(f) }); close('Role added.'); });
-  const edit = useSubmit(async () => { const b = apptBody(f); delete (b as any).start_date; await patch(`/appointments/${dlg!.appt.id}`, b); close('Role updated. The previous values are kept in the audit history.'); });
+  const edit = useSubmit(async () => { await patch(`/appointments/${dlg!.appt.id}`, { ...apptBody(f), end_date: f.end_date || null }); close('Role updated.'); });
   const end = useSubmit(async () => {
     const r = await post(`/appointments/${dlg!.appt.id}/end`, { end_date: f.end_date, reason: f.reason, transfer_to: f.transfer_to || undefined });
     close(`Role ended.${r.keysStillHeld.length ? ` ${r.keysStillHeld.length} key(s) still need returning.` : ''}${r.leaver ? ' This was their last role, so their sign-in has ended.' : r.accessEndsOn ? ` This company’s roles end after ${fmtDate(r.accessEndsOn)}. Other roles are unchanged.` : ' Their other roles are unchanged.'}`);
@@ -356,8 +365,8 @@ function AppointmentsTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: (
           <div className="row between">
             <h3 id={`ap-${a.id}`} style={{ margin: 0 }}><CompanyBadge code={a.company_code} name={a.company_name} /> {a.job_title}</h3>
             <span className="row"><Status s={a.is_current ? 'active' : a.status} text={a.is_current ? 'Current' : undefined} />
-              {manageable(a.company_id) && a.status !== 'ended' && <><Button variant="secondary" onClick={() => { setF({ ...a, legal_employer_company_id: a.legal_employer_company_id ?? '', legal_employer_name: a.legal_employer_name ?? '', manager_person_id: a.manager_person_id ?? '', responsibilities: a.responsibilities ?? '', contracted_hours_per_week: a.contracted_hours_per_week ?? '' }); setDlg({ kind: 'edit', appt: a }); }}>Edit</Button>
-                <Button variant="secondary" onClick={() => { setF({ end_date: londonToday(), reason: '', transfer_to: '' }); setDlg({ kind: 'end', appt: a }); }}>End role</Button></>}</span>
+              {manageable(a.company_id) && <Button variant="secondary" onClick={() => { setF({ ...a, legal_employer_company_id: a.legal_employer_company_id ?? '', legal_employer_name: a.legal_employer_name ?? '', manager_person_id: a.manager_person_id ?? '', responsibilities: a.responsibilities ?? '', contracted_hours_per_week: a.contracted_hours_per_week ?? '', end_date: a.end_date ?? '' }); setDlg({ kind: 'edit', appt: a }); }}>{a.status === 'ended' ? 'Correct' : 'Edit'}</Button>}
+              {manageable(a.company_id) && a.status !== 'ended' && <Button variant="secondary" onClick={() => { setF({ end_date: londonToday(), reason: '', transfer_to: '' }); setDlg({ kind: 'end', appt: a }); }}>End role</Button>}</span>
           </div>
           <dl className="facts" style={{ marginTop: 12 }}>
             <dt>Company</dt><dd>{a.company_name}</dd>
@@ -388,7 +397,8 @@ function AppointmentsTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: (
       </Dialog>
       <Dialog open={dlg?.kind === 'edit'} onClose={() => setDlg(null)} title="Edit role" footer={<Button busy={edit.busy} onClick={() => edit.run()}>Save Changes</Button>}>
         <ErrorSummary error={edit.error} />
-        {dlg?.kind === 'edit' && <AppointmentFields f={f} set={set} errors={edit.error?.fields ?? {}} companyId={dlg.appt.company_id} />}
+        <p className="small muted">Fix anything entered wrongly, including the dates. Changes replace what was there.</p>
+        {dlg?.kind === 'edit' && <AppointmentFields f={f} set={set} errors={edit.error?.fields ?? {}} companyId={dlg.appt.company_id} editing />}
       </Dialog>
       <Dialog open={dlg?.kind === 'end'} onClose={() => setDlg(null)} title={`End ${dlg?.appt?.job_title ?? ''} role`} footer={<Button variant="danger" busy={end.busy} onClick={() => end.run()}>End role</Button>}>
         <p>This ends only this role with {dlg?.appt?.company_name}. Other roles stay as they are. Property allocations and this company’s access end on the date given.</p>
@@ -413,6 +423,27 @@ function AppointmentsTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: (
           onClose={() => setDlg(null)} onDone={() => { setDlg(null); reload(); }} />
       )}
     </>
+  );
+}
+
+// Takes someone off the Hub: every current role ends, open tasks become unassigned, and they are signed out. Past work stays.
+function RemovePerson({ person: p, roles, onClose, onDone }: { person: any; roles: any[]; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const hub = useHub();
+  const [f, setF] = useState({ end_date: londonToday(), reason: '' });
+  const go = useSubmit(async () => {
+    const r = await post(`/people/${p.id}/remove`, f);
+    toast(`${p.full_name} has been removed. ${r.rolesEnded} role${r.rolesEnded === 1 ? '' : 's'} ended.${r.unassignedTasks ? ` ${r.unassignedTasks} open task${r.unassignedTasks === 1 ? ' is' : 's are'} now unassigned.` : ''}${r.keysStillHeld.length ? ` ${r.keysStillHeld.length} key(s) still need returning.` : ''}`);
+    onDone();
+  });
+  return (
+    <Dialog open onClose={onClose} title={`Remove ${p.full_name} from the Hub`} variant="modal" footer={<Button variant="danger" busy={go.busy} onClick={() => go.run()}>Remove</Button>}>
+      <p>This ends {roles.length === 1 ? 'their role' : `all ${roles.length} of their roles`} ({roles.map((a) => `${a.company_code} ${a.job_title}`).join(', ')}), signs them out and stops them signing in. Their open tasks become unassigned. Visits, timesheets and other past work stay.</p>
+      <p className="small muted">They are hidden from People unless you choose to include people who have left.{hub.me.superAdmin ? ' You can then anonymise them from their profile to remove their personal details.' : ''}</p>
+      <ErrorSummary error={go.error} />
+      <Field label="Last day" error={go.error?.fields.end_date}><input name="end_date" type="date" max={londonToday()} value={f.end_date} onChange={(e) => setF({ ...f, end_date: e.target.value })} /></Field>
+      <Field label="Reason" error={go.error?.fields.reason}><input name="reason" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} placeholder="For example: left the company" /></Field>
+    </Dialog>
   );
 }
 

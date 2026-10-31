@@ -33,6 +33,7 @@ The full specification is in the original prompt (42 sections). **Agreed scope f
 - Visits: on approval create a single allocation for the full duration; splitting replaces allocations and must sum to the duration. Approved correction → visit back to `submitted`, allocations cleared.
 - No self-approval of visits, corrections, timesheets.
 - Ending an appointment: require task transfer target if open tasks exist, end property allocations, revoke that company's grants if no other active appointment there. Other appointments untouched.
+- Corrections (31 Oct 2026, owner request): `PATCH /appointments/:id` also takes `start_date`/`end_date` and works on ended roles; the end date decides `status` (reopening clears `ended_reason` and brings a leaver back). `POST /people/:id/remove` (`endAppointment` for every current role, open tasks unassigned, sessions and links deleted, status `left`); People hides leavers unless asked. Tests: `tests/people-tidy.test.ts`.
 - Clearance: company `clearance_rule` warn/block; override needs `clearance.override` + reason → `clearance_exceptions`.
 - Timesheet cost = per-day minutes × effective rate, computed in SQL numeric; labelled "estimate — not payroll".
 - Future migrations must re-run the RLS/revoke block for new tables.

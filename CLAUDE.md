@@ -32,6 +32,7 @@ The full specification is in the original prompt (42 sections). **Agreed scope f
 - `DEV_AUTH=true` (never in production; refuse to boot) enables a dev sign-in for seeded fictional users, for local demo and Playwright.
 - Visits: on approval create a single allocation for the full duration; splitting replaces allocations and must sum to the duration. Approved correction → visit back to `submitted`, allocations cleared.
 - No self-approval of visits, corrections, timesheets.
+- Migration 030 (31 Oct 2026, owner request): visits with `entry_mode = 'schedule'` are hours added from Valor's weekly support schedule for 1 Aug–30 Oct 2026 (not individually logged). Approved with allocations so timesheets count them; excluded from KPIs (`kpi.ts`), the monthly pack and AI figures; the UI shows date and hours only. `add_schedule_visits(name, ref, dow, minutes, slot, from, to)` is idempotent and skips people/properties not on the Hub, so call it again in a later migration once missing staff are added.
 - Ending an appointment: require task transfer target if open tasks exist, end property allocations, revoke that company's grants if no other active appointment there. Other appointments untouched.
 - Clearance: company `clearance_rule` warn/block; override needs `clearance.override` + reason → `clearance_exceptions`.
 - Timesheet cost = per-day minutes × effective rate, computed in SQL numeric; labelled "estimate — not payroll".

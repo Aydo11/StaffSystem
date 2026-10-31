@@ -31,7 +31,8 @@ export function Frame({ children }: { children: React.ReactNode }) {
       <section className="auth-form-side" aria-label="Account access"><div className="auth-form-inner">
         <div className="auth-eyebrow" style={{ color: 'var(--teal-text)' }}>Welcome to your Hub</div>
         <div className="card">{children}</div>
-        <p className="auth-footer">For Valor Housing Ltd, Wellbeing Homes Ltd and Wellbeing Housing Ltd staff. New accounts require email verification and administrator approval.</p>
+        <p className="auth-footer">For Valor Housing Ltd, Wellbeing Homes Ltd and Wellbeing Housing Ltd staff. New accounts require email verification and administrator approval. <a href="/privacy">Privacy notice</a>.</p>
+        <p className="auth-footer">Valor Housing Ltd, registered in England and Wales, company number 16175322. Registered office: 63 Grove Lane, Handsworth, Birmingham B21 9ES.</p>
       </div></section>
     </main>
   );

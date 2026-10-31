@@ -698,3 +698,8 @@ a.news-lead:hover h2, a.news-card:hover h3 { color: var(--teal-text); text-decor
   .prop-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .prop-stats li:last-child strong { font-size: 1.05rem; }
+
+/* Privacy notice and other long text */
+.prose { max-width: 72ch; }
+.prose h2 { margin-top: var(--s5, 24px); font-size: 1.15rem; }
+.prose > h2:first-child { margin-top: 0; }

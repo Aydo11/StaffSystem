@@ -23,6 +23,7 @@ export function Registration() {
       <JobRoleSelect value={job} onChange={setJob} error={submit.error?.fields.job_role_key} hint="Your administrator confirms this when they approve you."/>
       <Field label="Work email" error={submit.error?.fields.email}><input name="email" required type="email" maxLength={254} autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)}/></Field>
       <Field label="Choose a password" error={submit.error?.fields.password} hint="At least 8 characters. Do not include your email address."><input name="password" required type="password" minLength={8} maxLength={200} autoComplete="new-password" value={password} onChange={e=>setPassword(e.target.value)}/></Field>
+      <p className="small">We use the details you give here to check and set up your account. <a href="/privacy" target="_blank" rel="noopener noreferrer">Read how we use your information<span className="sr-only"> (opens in a new tab)</span></a>.</p>
       <Button type="submit" busy={submit.busy}>Send account request</Button>
     </form>}
     <p><a href="/">Back to sign in</a></p>

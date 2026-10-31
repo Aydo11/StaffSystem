@@ -10,6 +10,7 @@ import { Attendance, VisitDetail, ActiveVisit, ManualVisit } from './pages/Visit
 import { Handover } from './pages/Handover.tsx';
 import { Inbox, Notifications } from './pages/Inbox.tsx';
 import { Login, MfaGate, SetPassword } from './pages/Login.tsx';
+import { PrivacyPage, PublicPrivacy } from './pages/Privacy.tsx';
 import { ActivityPage } from './pages/Activity.tsx';
 import { MyDay } from './pages/MyDay.tsx';
 import { People, PersonPage, Resume } from './pages/People.tsx';
@@ -42,6 +43,7 @@ export function App() {
   if (location.pathname === '/set-password') return <SetPassword />;
   if (location.pathname === '/register') return <Registration />;
   if (location.pathname === '/verify-email') return <VerifyEmail />;
+  if (!signedIn && location.pathname === '/privacy') return <PublicPrivacy />;
   if (!signedIn) return config ? <Login config={config} /> : <main className="content"><div className="notice bad" role="alert">The Hub could not reach its server. Please check your connection and reload.</div></main>;
   return <BrowserRouter><ToastProvider><Session /></ToastProvider></BrowserRouter>;
 }
@@ -155,6 +157,7 @@ function Shell() {
         </nav>
         <div className="sidebar-foot">
           {isAdmin && <NavLink to="/admin" className="nav-link nav-admin"><Icon name="settings" /><span className="nav-label">Admin Centre</span></NavLink>}
+          <NavLink to="/privacy" className="nav-link"><Icon name="shield" /><span className="nav-label">Privacy notice</span></NavLink>
           <button type="button" className="nav-link" style={{ background: 'none', border: 0, width: '100%', font: 'inherit', cursor: 'pointer' }} onClick={toggleNav} aria-expanded={!collapsed}>
             <Icon name="menu" /><span className="nav-label">{collapsed ? 'Expand menu' : 'Collapse menu'}</span>
           </button>
@@ -215,6 +218,7 @@ function Shell() {
             <Route path="/news/:id" element={<NewsArticle />} />
             <Route path="/assistant" element={<Assistant />} />
             <Route path="/install" element={<InstallPage />} />
+            <Route path="/privacy" element={<PrivacyPage />} />
             <Route path="/governance/actions/:id" element={<ActionPage />} />
             <Route path="/concerns" element={<Concerns />} />
             <Route path="/concerns/:id" element={<CasePage />} />

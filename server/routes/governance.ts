@@ -361,7 +361,7 @@ async function pack(db: Db, a: Access, companyId: string, month: string): Promis
       (select count(*) from appointments a, w where a.company_id = $1 and a.status = 'active' and a.start_date <= w.snap and (a.end_date is null or a.end_date >= w.snap)
          and not exists (select 1 from supervisions s where s.person_id = a.person_id and s.company_id = $1 and s.status = 'completed' and s.held_on > w.snap - 56))::int supervision_overdue,
       (select coalesce(sum(contracted_hours_per_week), 0) from appointments a, w where a.company_id = $1 and a.status = 'active' and a.start_date <= w.snap and (a.end_date is null or a.end_date >= w.snap))::numeric contracted_week,
-      (select count(*) from visits v, w where v.company_id = $1 and (v.started_at at time zone 'Europe/London')::date >= w.ds and (v.started_at at time zone 'Europe/London')::date < w.de and v.status in ('submitted','approved'))::int visits,
+      (select count(*) from visits v, w where v.company_id = $1 and v.entry_mode <> 'schedule' and (v.started_at at time zone 'Europe/London')::date >= w.ds and (v.started_at at time zone 'Europe/London')::date < w.de and v.status in ('submitted','approved'))::int visits,
       (select count(*) from visits v where v.company_id = $1 and v.status = 'submitted')::int visits_awaiting,
       (select count(*) from visits v where v.company_id = $1 and v.status = 'in_progress' and v.started_at < now() - interval '12 hours')::int missing_finish,
       (select count(*) from scheduled_visits s, w where s.company_id = $1 and s.status = 'scheduled' and s.planned_start >= w.ds and s.planned_start < w.de and s.planned_start + make_interval(mins => s.planned_minutes) < now())::int missed,

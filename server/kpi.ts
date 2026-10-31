@@ -13,7 +13,8 @@ appts as (
      and a.start_date <= w.snap and (a.end_date is null or a.end_date >= w.snap) and a.status in ('active','suspended','ended')
 ),
 vm as (select v.*, round(extract(epoch from (v.ended_at - v.started_at)) / 60)::int m from visits v, w
-        where v.company_id = $1 and ($2::uuid is null or v.person_id = $2) and v.started_at >= w.s and v.started_at < w.e),
+        where v.company_id = $1 and ($2::uuid is null or v.person_id = $2) and v.started_at >= w.s and v.started_at < w.e
+          and v.entry_mode <> 'schedule'), -- hours added from the weekly schedule are not evidence for KPIs
 sv as (select s.*, v.started_at as actual_start from scheduled_visits s left join visits v on v.id = s.visit_id, w
         where s.company_id = $1 and ($2::uuid is null or s.person_id = $2) and s.status <> 'cancelled' and s.planned_start >= w.s and s.planned_start < w.e),
 tk as (select t.*, (t.completed_at at time zone 'Europe/London')::date done_on from tasks t, w
@@ -30,7 +31,7 @@ select
   (select count(*) from rp where completed_on <= due_on)::int as repairs_n,
   (select count(*) from cp)::int as complaints_d,
   (select count(*) from cp where status = 'completed' and done_on <= due_on)::int as complaints_n,
-  (select coalesce(sum(va.minutes), 0) from visit_allocations va join visits v on v.id = va.visit_id join appointments a on a.id = va.appointment_id, w
+  (select coalesce(sum(va.minutes), 0) from visit_allocations va join visits v on v.id = va.visit_id and v.entry_mode <> 'schedule' join appointments a on a.id = va.appointment_id, w
     where va.company_id = $1 and ($2::uuid is null or a.person_id = $2) and v.started_at >= w.s and v.started_at < w.e)::int as approved_minutes,
   (select coalesce(sum(planned_minutes), 0) from sv)::int as planned_minutes,
   (select coalesce(sum(m), 0) from vm where status in ('submitted','approved'))::int as recorded_minutes,

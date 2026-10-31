@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { type Db, one, pool, q, tx } from '../db.ts';
 import { audit, bad, forbidden, idParam, isoDate, notFound, notify, parse, text, uuid } from '../http.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith, myCompanies } from '../perm.ts';
-import { saveFile } from '../storage.ts';
+import { deleteFile, saveFile } from '../storage.ts';
 import { upload } from './people.ts';
 
 export const policies = Router();
@@ -117,6 +117,19 @@ policies.patch('/policies/:id', async (req, res) => {
   res.json(await one(`update policies set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1 returning *`,
     [p.id, ...keys.map((k) => (k === 'chapters' ? JSON.stringify((b as any)[k]) : (b as any)[k]))]));
 });
+// A draft was never published, so nobody has been sent it or acknowledged it: it can be deleted. Approved versions stay as the record.
+policies.delete('/policies/:id', async (req, res) => {
+  await tx(async (db) => {
+    const { p } = await loadPolicy(req.access, idParam(req.params.id), null, db);
+    if (!canManage(req.access, p.company_id) || p.status !== 'draft') throw forbidden('Only a draft can be deleted. Approved versions are kept as the record.');
+    await q('delete from policies where id = $1', [p.id], db);
+    // A new version copies the source document of the one before, so the file goes only when nothing else uses it.
+    if (p.file_id && !(await one('select 1 from policies where file_id = $1', [p.file_id], db))) await deleteFile(db, p.file_id);
+    await audit(db, req.person.id, p.company_id, 'policy', p.id, 'delete_draft', { title: p.title, version: p.version });
+  });
+  res.status(204).end();
+});
+
 // Source documents stay attached to the draft; publication still requires independent approval.
 policies.post('/policies/:id/file', upload.single('file'), async (req, res) => {
   const { p } = await loadPolicy(req.access, idParam(req.params.id), null);

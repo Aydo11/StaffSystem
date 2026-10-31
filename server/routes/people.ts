@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { clearanceGate, currentClearance } from '../clearance.ts';
-import { one, pool, q, tx } from '../db.ts';
+import { type Db, one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, HttpError, isoDate, LONDON_TODAY, notFound, notify, parse, text, uuid, idParam } from '../http.ts';
 import { jobRole } from '../jobroles.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith, need } from '../perm.ts';
@@ -477,16 +477,22 @@ async function loadAppointment(a: Access, id: string, perm: string) {
 people.patch('/appointments/:id', async (req, res) => {
   const id = idParam(req.params.id);
   const ap = await loadAppointment(req.access, id, 'appointments.manage');
-  if (ap.status === 'ended') throw conflict('This appointment has ended. Create a new appointment instead of changing history.');
-  const b = parse(z.object({ job_title: text(120).min(2), job_role_key: z.string().max(60), responsibilities: apptFields.responsibilities, manager_person_id: apptFields.manager_person_id, contracted_hours_per_week: apptFields.contracted_hours_per_week, status: z.enum(['planned', 'active', 'suspended']), legal_employer_company_id: apptFields.legal_employer_company_id, legal_employer_name: apptFields.legal_employer_name, relationship: apptFields.relationship }).partial().strict(), req.body);
+  // Corrections are made in place (dates entered wrongly, the wrong job role), including on ended roles.
+  const b = parse(z.object({ start_date: isoDate, end_date: isoDate.nullable(), job_title: text(120).min(2), job_role_key: z.string().max(60), responsibilities: apptFields.responsibilities, manager_person_id: apptFields.manager_person_id, contracted_hours_per_week: apptFields.contracted_hours_per_week, status: z.enum(['planned', 'active', 'suspended']), legal_employer_company_id: apptFields.legal_employer_company_id, legal_employer_name: apptFields.legal_employer_name, relationship: apptFields.relationship }).partial().strict(), req.body);
   if (b.job_role_key) {
     if (ap.person_id === req.person.id && !req.access.superAdmin) throw forbidden('You cannot change your own job role.');
     b.job_title = (await jobRole(pool, req.access, b.job_role_key, ap.company_id)).label;
   } else if (b.job_title && ap.job_role_key) delete b.job_title; // the title follows the chosen job role
   const keys = Object.keys(b);
   if (!keys.length) throw bad('Nothing to save.');
+  const start = b.start_date ?? ap.start_date, finish = b.end_date === undefined ? ap.end_date : b.end_date;
+  if (finish && finish < start) throw bad('The end date cannot be before the start date.', { fields: { end_date: 'Before the start date' } });
   const row = await tx(async (db) => {
-    const r = await one(`update appointments set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1 returning *`, [id, ...keys.map((k) => (b as any)[k])], db);
+    await q(`update appointments set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1`, [id, ...keys.map((k) => (b as any)[k])], db);
+    // A corrected end date decides whether the role is ended; reopening a role brings a leaver back.
+    const r = await one(`update appointments set status = case when end_date is not null and end_date <= ${LONDON_TODAY} then 'ended' when status = 'ended' then 'active' else status end,
+                                ended_reason = case when end_date is null or end_date > ${LONDON_TODAY} then null else ended_reason end where id = $1 returning *`, [id], db);
+    if (r.status !== 'ended') await q(`update people set status = 'active', updated_at = now() where id = $1 and status = 'left'`, [ap.person_id], db);
     // History: the audit log keeps the before/after values of every appointment change.
     await audit(db, req.person.id, ap.company_id, 'appointment', id, 'update', { before: Object.fromEntries(keys.map((k) => [k, ap[k]])), after: b });
     return r;
@@ -500,9 +506,17 @@ people.post('/appointments/:id/end', async (req, res) => {
   const b = parse(z.object({ end_date: isoDate, reason: text(500).min(3), transfer_to: uuid.optional() }), req.body);
   if (ap.status === 'ended') throw conflict('This appointment has already ended.');
   if (b.end_date < ap.start_date) throw bad('End date cannot be before the start date.', { fields: { end_date: 'Before start date' } });
-  const result = await tx(async (db) => {
+  res.json(await tx((db) => endAppointment(db, req.person.id, ap, b)));
+});
+
+// Ends one role: open tasks move to `transfer_to` (or, when removing someone, are left unassigned), allocations, rates and planned visits end,
+// this company's access goes when no other role remains there, and a person with no role left anywhere loses sign-in.
+async function endAppointment(db: Db, actorId: string, ap: any, b: { end_date: string; reason: string; transfer_to?: string }, unassign = false) {
+    const id = ap.id;
     const openTasks = (await one<{ n: number }>(`select count(*) n from tasks where company_id = $1 and status <> 'completed' and (owner_id = $2 or reviewer_id = $2)`, [ap.company_id, ap.person_id], db))!.n;
-    if (openTasks && !b.transfer_to) throw new HttpError(409, 'transfer_required', `${openTasks} open task(s) in this company must be transferred before the role ends.`, { openTasks });
+    if (openTasks && unassign && !b.transfer_to) await q(`update tasks set owner_id = case when owner_id = $2 then null else owner_id end, reviewer_id = case when reviewer_id = $2 then null else reviewer_id end, updated_at = now()
+                where company_id = $1 and status <> 'completed' and (owner_id = $2 or reviewer_id = $2)`, [ap.company_id, ap.person_id], db);
+    else if (openTasks && !b.transfer_to) throw new HttpError(409, 'transfer_required', `${openTasks} open task(s) in this company must be transferred before the role ends.`, { openTasks });
     if (b.transfer_to) {
       const ok = await one(`select 1 from appointments a where a.person_id = $1 and a.company_id = $2 and a.id <> $3 and ${ACTIVE_APPT('a')}`, [b.transfer_to, ap.company_id, id], db);
       if (!ok || b.transfer_to === ap.person_id) throw bad('Transfer to someone else with a current role in this company.', { fields: { transfer_to: 'Not eligible' } });
@@ -517,7 +531,7 @@ people.post('/appointments/:id/end', async (req, res) => {
     // Remove this company's explicit roles only if no other appointment in the same company remains. Other companies are untouched.
     const other = await one(`select 1 from appointments a where a.person_id = $1 and a.company_id = $2 and a.id <> $3 and a.status <> 'ended' and (a.end_date is null or a.end_date > $4)`, [ap.person_id, ap.company_id, id, b.end_date], db);
     let revoked = 0;
-    if (!other && past) revoked = (await q(`update role_grants set revoked_at = now(), revoked_by = $3, reason = coalesce(reason, '') || ' [appointment ended]' where person_id = $1 and company_id = $2 and revoked_at is null returning id`, [ap.person_id, ap.company_id, req.person.id], db)).length;
+    if (!other && past) revoked = (await q(`update role_grants set revoked_at = now(), revoked_by = $3, reason = coalesce(reason, '') || ' [appointment ended]' where person_id = $1 and company_id = $2 and revoked_at is null returning id`, [ap.person_id, ap.company_id, actorId], db)).length;
     // A future end date: the roles expire at the end of the last day (London), so no later job is needed.
     if (!other && !past) revoked = (await q(`update role_grants set expires_at = least(coalesce(expires_at, 'infinity'), ($3::date + 1)::timestamp at time zone 'Europe/London') where person_id = $1 and company_id = $2 and revoked_at is null returning id`, [ap.person_id, ap.company_id, b.end_date], db)).length;
     // A leaver with no remaining appointment anywhere loses sign-in access.
@@ -526,10 +540,36 @@ people.post('/appointments/:id/end', async (req, res) => {
     const leaver = !anyLeft && past && !isSuper;
     if (leaver) await q(`update people set status = 'left', updated_at = now() where id = $1`, [ap.person_id], db);
     const keys = await q(`select k.label, pr.name as property_name from property_keys k join properties pr on pr.id = k.property_id where k.holder_person_id = $1 and k.returned_at is null and k.lost_reported_at is null and pr.company_id = $2`, [ap.person_id, ap.company_id], db);
-    await audit(db, req.person.id, ap.company_id, 'appointment', id, 'end', { end_date: b.end_date, transferred_to: b.transfer_to ?? null, revoked_grants: revoked, leaver });
-    return { revokedGrants: revoked, leaver, accessEndsOn: past ? null : b.end_date, keysStillHeld: keys };
+    await audit(db, actorId, ap.company_id, 'appointment', id, 'end', { end_date: b.end_date, transferred_to: b.transfer_to ?? null, unassigned: unassign ? openTasks : 0, revoked_grants: revoked, leaver });
+    return { revokedGrants: revoked, leaver, accessEndsOn: past ? null : b.end_date, keysStillHeld: keys, unassignedTasks: unassign && !b.transfer_to ? openTasks : 0 };
+}
+
+// Takes someone off the Hub in one step: every current role ends on the given day (today or earlier), their open tasks become unassigned,
+// and they are signed out and marked as left. Their past work stays. A super administrator can then anonymise them.
+people.post('/people/:id/remove', async (req, res) => {
+  const id = idParam(req.params.id);
+  const b = parse(z.object({ end_date: isoDate, reason: text(500).min(3) }), req.body);
+  if (id === req.person.id) throw forbidden('You cannot remove yourself.');
+  const person = await one('select id, status from people where id = $1', [id]);
+  if (!person) throw notFound();
+  if (await one(`select 1 from role_grants where person_id = $1 and role_key = 'super_admin' and revoked_at is null`, [id])) throw forbidden('Remove their super administrator access first.');
+  const roles = await q(`select * from appointments where person_id = $1 and status <> 'ended'`, [id]);
+  for (const ap of roles) need(req.access, 'appointments.manage', ap.company_id);
+  if (!roles.length && !req.access.superAdmin && !companiesWith(req.access, 'appointments.manage').length) throw forbidden();
+  if (b.end_date > (await one<{ d: string }>(`select ${LONDON_TODAY}::text d`))!.d) throw bad('Choose today or an earlier day. To end a role in the future, use End role on that role.', { fields: { end_date: 'In the future' } });
+  const out = await tx(async (db) => {
+    let unassigned = 0, keys: any[] = [];
+    for (const ap of roles) {
+      const r = await endAppointment(db, req.person.id, ap, { end_date: b.end_date < ap.start_date ? ap.start_date : b.end_date, reason: b.reason }, true);
+      unassigned += r.unassignedTasks; keys = keys.concat(r.keysStillHeld);
+    }
+    await q(`update people set status = 'left', updated_at = now() where id = $1`, [id], db);
+    await q('delete from sessions where person_id = $1', [id], db);
+    await q('delete from auth_tokens where person_id = $1', [id], db);
+    await audit(db, req.person.id, null, 'person', id, 'remove', { roles_ended: roles.length, unassigned_tasks: unassigned });
+    return { rolesEnded: roles.length, unassignedTasks: unassigned, keysStillHeld: keys };
   });
-  res.json(result);
+  res.json(out);
 });
 
 people.post('/appointments/:id/rates', async (req, res) => {

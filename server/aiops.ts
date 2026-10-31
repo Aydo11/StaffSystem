@@ -19,7 +19,7 @@ export async function companyFigures(db: Db, companyId: string) {
       (select count(*)::int from repairs where company_id = $1 and status <> 'closed') as open_repairs,
       (select count(*)::int from repairs where company_id = $1 and status <> 'closed' and urgency in ('emergency','urgent')) as urgent_repairs,
       (select count(*)::int from visits where company_id = $1 and status = 'submitted') as visits_awaiting_approval,
-      (select count(*)::int from visits where company_id = $1 and status in ('submitted','approved') and started_at > now() - interval '7 days') as visits_7_days,
+      (select count(*)::int from visits where company_id = $1 and entry_mode <> 'schedule' and status in ('submitted','approved') and started_at > now() - interval '7 days') as visits_7_days,
       (select count(distinct person_id)::int from leave_requests where company_id = $1 and status = 'approved' and ${LONDON_TODAY} between start_date and end_date) as staff_on_leave_today,
       (select count(*)::int from leave_requests where company_id = $1 and status = 'requested') as leave_to_decide,
       (select round(avg(pc.score))::int from property_condition pc join properties p on p.id = pc.property_id where p.company_id = $1) as average_house_mood`, [companyId], db);

@@ -1,6 +1,6 @@
 -- Support hours from August 2026, added from Valor's weekly support schedule at the owner's request (31 Oct 2026).
 -- They were not logged one by one (the Hub did not exist yet), so they are their own entry mode, `schedule`:
--- shown as "From the weekly support schedule", kept out of the KPIs and the monthly pack, but counted in timesheets.
+-- shown as "From the weekly support schedule"; counted in timesheets and KPIs (owner decision), kept out of the monthly pack visit count.
 alter table visits drop constraint visits_entry_mode_check;
 alter table visits add constraint visits_entry_mode_check check (entry_mode in ('live', 'manual', 'schedule'));
 

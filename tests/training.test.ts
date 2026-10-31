@@ -139,6 +139,20 @@ describe('11 · policies and handbooks', () => {
     expect((await morgan.patch(`/api/policies/${v2.id}`).send({ revision_summary: 'Clarified wording' })).status).toBe(200);
     expect((await sam.get(`/api/policies/${d.id}?company=${C.VH}`)).body.policy.chapters[0].body).toMatch(/never written/);
   });
+  it('a draft can be deleted by a policy manager; an approved version cannot', async () => {
+    const morgan = await as('morgan'), sam = await as('sam'), alex = await as('alex');
+    const d = (await morgan.post('/api/policies').send({ company_id: C.VH, kind: 'policy', title: 'Duplicate draft (fictional)' })).body;
+    expect((await sam.del(`/api/policies/${d.id}`)).status).toBe(404);
+    expect((await morgan.del(`/api/policies/${d.id}`)).status).toBe(204);
+    expect((await morgan.get(`/api/policies/${d.id}`)).status).toBe(404);
+    const k = (await morgan.post('/api/policies').send({ company_id: C.VH, kind: 'policy', title: 'Kept policy (fictional)' })).body;
+    await morgan.patch(`/api/policies/${k.id}`).send({ chapters: [{ title: 'Rule', body: 'Text.' }], effective_on: '2026-11-01', review_on: '2027-11-01' });
+    expect((await alex.post(`/api/policies/${k.id}/approve`).send({ company_id: C.VH })).status).toBe(200);
+    expect((await morgan.del(`/api/policies/${k.id}`)).status).toBe(403);
+    const v2 = (await morgan.post(`/api/policies/${k.id}/new-version`)).body;
+    expect((await morgan.del(`/api/policies/${v2.id}`)).status).toBe(204);
+    expect((await morgan.get(`/api/policies/${k.id}`)).status).toBe(200);
+  });
   it('a shared handbook reaches a company only after that company adopts it', async () => {
     const sam = await as('sam');
     const before = (await sam.get('/api/policies')).body.published.filter((p: any) => p.id === HANDBOOK).map((p: any) => p.company_code);

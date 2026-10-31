@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ApiError, download, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtDateTime, label, londonToday } from '../format.ts';
@@ -8,6 +8,33 @@ import { Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePi
 type Tab = 'pack' | 'leads' | 'meetings' | 'decisions' | 'risks' | 'audits' | 'actions' | 'quality' | 'framework';
 const PACK_STATUS: Record<string, [string, string]> = { evidence_missing: ['evidence_missing', 'Evidence Missing'], awaiting_review: ['review', 'Awaiting Review'], action_required: ['action', 'Action Required'], verified: ['verified', 'Verified'], not_applicable: ['not_required', 'Not Applicable'] };
 const AREAS: [string, string][] = [['staffing', 'Staffing'], ['quality', 'Quality'], ['safeguarding_oversight', 'Safeguarding oversight'], ['property_safety', 'Property safety'], ['complaints_oversight', 'Complaints manager'], ['repairs', 'Repairs manager'], ['finance', 'Finance'], ['data_protection', 'Data protection']];
+// The nine lists, grouped so the page has five sections instead of nine tabs. `?tab=` keeps the list key, so old links still work.
+const TAB_LABEL: Record<Tab, string> = { pack: 'Monthly pack', leads: 'Leads and accountability', meetings: 'Meetings', decisions: 'Decisions', risks: 'Risks', audits: 'Audits', actions: 'Actions', quality: 'Quality summaries', framework: 'Assessment framework' };
+const GROUPS: { key: string; label: string; tabs: Tab[] }[] = [
+  { key: 'overview', label: 'Monthly pack', tabs: ['pack'] },
+  { key: 'people', label: 'Accountability', tabs: ['leads'] },
+  { key: 'meetings', label: 'Meetings & decisions', tabs: ['meetings', 'decisions'] },
+  { key: 'assurance', label: 'Risks, audits & actions', tabs: ['risks', 'audits', 'actions'] },
+  { key: 'quality', label: 'Quality', tabs: ['quality', 'framework'] },
+];
+const inDays = (n: number) => { const d = new Date(`${londonToday()}T12:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+// Key numbers for a list. A number with a filter is a toggle button; pressing it again shows everything.
+type Stat = { label: string; value: ReactNode; tone?: 'bad' | 'warn' | 'ok'; filter?: string };
+function StatStrip({ label: aria, items, filter, onFilter }: { label: string; items: Stat[]; filter?: string; onFilter?: (f: string) => void }) {
+  return (
+    <div className="gov-stats-wrap">
+      <ul className="gov-stats" aria-label={aria}>{items.map((s) => {
+        const body = <><strong>{s.value}</strong><span>{s.label}</span></>;
+        return <li key={s.label} className={s.tone ? `tone-${s.tone}` : undefined}>{s.filter && onFilter
+          ? <button type="button" aria-pressed={filter === s.filter} onClick={() => onFilter(filter === s.filter ? '' : s.filter!)}>{body}</button>
+          : <div>{body}</div>}</li>;
+      })}</ul>
+      {filter && onFilter && <p className="small gov-filtering" role="status">Showing: {items.find((s) => s.filter === filter)?.label.toLowerCase()} <button type="button" className="btn ghost" onClick={() => onFilter('')}>Show all</button></p>}
+    </div>
+  );
+}
+
 const ACTION_STATUS: Record<string, [string, string]> = { open: ['info', 'Open'], evidence_submitted: ['review', 'Evidence submitted'], verified: ['verified', 'Verified'], closed: ['completed', 'Closed'], reopened: ['action', 'Reopened'] };
 
 function PersonSelect({ companyId, value, onChange, label: l, optional }: { companyId: string; value: string; onChange: (v: string) => void; label: string; optional?: boolean }) {
@@ -23,13 +50,16 @@ const firstCo = (hub: ReturnType<typeof useHub>, perm: string) => (hub.company !
 export function Governance() {
   const hub = useHub();
   const [params, setParams] = useSearchParams();
-  const tab = (params.get('tab') as Tab) ?? 'pack';
-  const tabs: [Tab, string][] = [['pack', 'Monthly pack'], ['leads', 'Leads and accountability'], ['meetings', 'Meetings'], ['decisions', 'Decisions'], ['risks', 'Risks'], ['audits', 'Audits'], ['actions', 'Actions'],
-    ...(hub.can('quality.view') ? [['quality', 'Quality summaries'] as [Tab, string]] : []), ['framework', 'Assessment framework']];
+  const visible = (t: Tab) => t !== 'quality' || hub.can('quality.view');
+  const groups = GROUPS.map((g) => ({ ...g, tabs: g.tabs.filter(visible) })).filter((g) => g.tabs.length);
+  const asked = params.get('tab') as Tab;
+  const tab: Tab = groups.some((g) => g.tabs.includes(asked)) ? asked : 'pack';
+  const group = groups.find((g) => g.tabs.includes(tab))!;
   return (
     <>
       <PageHead title="Governance and assurance" intro="Who is accountable, what was decided, what could go wrong, and whether improvements actually worked — kept separately for each company." />
-      <Tabs label="Governance sections" tabs={tabs} value={tab} onChange={(t) => setParams({ tab: t })} />
+      <Tabs label="Governance sections" tabs={groups.map((g) => [g.key, g.label] as [string, string])} value={group.key} onChange={(k) => setParams({ tab: groups.find((g) => g.key === k)!.tabs[0] })} />
+      {group.tabs.length > 1 && <div className="gov-subnav"><Chips label={`${group.label}: choose a list`} value={tab} onChange={(t) => setParams({ tab: t })} options={group.tabs.map((t) => [t, TAB_LABEL[t]] as [Tab, string])} /></div>}
       {tab === 'pack' && <Pack />}
       {tab === 'leads' && <Leads />}
       {tab === 'meetings' && <Meetings />}
@@ -47,8 +77,16 @@ function Pack() {
   const hub = useHub();
   const [month, setMonth] = useState(londonToday().slice(0, 7));
   const d = useApi<any[]>(`/packs${hub.q({ month })}`);
+  const [only, setOnly] = useState('');
+  const all = (d.data ?? []).flatMap((c) => c.sections);
+  const n = (st: string) => all.filter((x: any) => x.status === st).length;
   return (
     <>
+      <StatStrip label="This month at a glance" filter={only} onFilter={setOnly} items={[
+        { label: 'Action required', value: n('action_required'), tone: n('action_required') ? 'bad' : undefined, filter: 'action_required' },
+        { label: 'Evidence missing', value: n('evidence_missing'), tone: n('evidence_missing') ? 'warn' : undefined, filter: 'evidence_missing' },
+        { label: 'Awaiting review', value: n('awaiting_review'), filter: 'awaiting_review' },
+        { label: 'Verified', value: n('verified'), tone: 'ok', filter: 'verified' }]} />
       <div className="row between no-print" style={{ marginBottom: 16 }}>
         <div className="field" style={{ margin: 0 }}><label htmlFor="pack-month">Month</label><input id="pack-month" type="month" value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} style={{ width: 200 }} /></div>
         <Button variant="secondary" onClick={() => print()}>Print or save as PDF</Button>
@@ -60,7 +98,7 @@ function Pack() {
           <h2 id={`pk-${c.company_id}`}><CompanyBadge code={c.company_code} name={c.company_name} /> {c.company_name} — {new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(`${month}-15T12:00Z`))}</h2>
           <div className="table-wrap"><table>
             <thead><tr><th>Area</th><th>Status</th><th>Figures</th><th className="no-print"><span className="sr-only">Records</span></th></tr></thead>
-            <tbody>{c.sections.map((s: any) => { const [st, t] = PACK_STATUS[s.status]; return (
+            <tbody>{c.sections.filter((s: any) => !only || s.status === only).map((s: any) => { const [st, t] = PACK_STATUS[s.status]; return (
               <tr key={s.key}><td><strong>{s.title}</strong>{s.note && <div className="muted small">{s.note}</div>}</td><td><Status s={st} text={t} /></td>
                 <td className="small">{s.figures.length ? s.figures.map(([k, v]: [string, any]) => <div key={k}>{k}: <strong>{v}</strong></div>) : '—'}</td>
                 <td className="no-print"><Link to={s.link} aria-label={`Records for ${s.title}`}>Records</Link></td></tr>); })}</tbody>
@@ -102,7 +140,18 @@ function Leads() {
   const tree = (managerId: string | null, companyId: string, depth = 0): any[] => rows.filter((r) => r.company_id === companyId && (managerId ? r.manager_person_id === managerId : !r.manager_person_id || !rows.some((x) => x.person_id === r.manager_person_id && x.company_id === companyId)))
     .flatMap((r) => (depth > 6 ? [] : [<li key={r.id}>{r.person_name} — <span className="muted">{r.job_title}</span>{rows.some((x) => x.manager_person_id === r.person_id && x.company_id === companyId) && <ul>{tree(r.person_id, companyId, depth + 1)}</ul>}</li>]));
   const companies = [...new Map(rows.map((r) => [r.company_id, r.company_code])).entries()];
+  const missing = manageCos.flatMap((c) => AREAS.filter(([k]) => !all.some((x) => x.company_id === c.id && x.area === k && x.role === 'lead')).map(([k, t]) => ({ c, k, t })));
+  const areaCount = manageCos.length * AREAS.length;
   return (
+    <>
+    {manageCos.length > 0 && <>
+      <StatStrip label="Accountability at a glance" items={[
+        { label: 'Areas with a lead', value: `${areaCount - missing.length} of ${areaCount}`, tone: missing.length ? undefined : 'ok' },
+        { label: 'Areas with no lead', value: missing.length, tone: missing.length ? 'warn' : undefined },
+        { label: 'People named', value: new Set(all.map((x) => x.person_id)).size },
+        { label: 'Deputies', value: all.filter((x) => x.role === 'deputy').length }]} />
+      {missing.length > 0 && <div className="notice warn gov-gaps"><strong>No lead yet:</strong> {missing.map((m) => <button key={m.c.id + m.k} type="button" className="chip" onClick={() => setF(blank(m.k, 'lead', m.c.id))}>{m.t}{manageCos.length > 1 ? ` (${m.c.code})` : ''}</button>)}</div>}
+    </>}
     <div className="grid-2">
       {manageCos.length > 0 && (
         <section className="card" aria-labelledby="cm-h">
@@ -153,6 +202,7 @@ function Leads() {
           <Field label="Delegated authority" optional><textarea name="delegated_authority" value={f.delegated_authority} onChange={(e) => setF({ ...f, delegated_authority: e.target.value })} /></Field></>}
       </Dialog>
     </div>
+    </>
   );
 }
 
@@ -164,12 +214,24 @@ function Meetings() {
   const [f, setF] = useState<any>(null);
   const create = useSubmit(async () => { const m = await post('/meetings', { title: f.title, held_on: f.held_on, company_ids: f.company_ids, agenda: f.agenda.split('\n').map((s: string) => s.trim()).filter(Boolean).map((item: string) => ({ item })) }); setF(null); list.reload(); setOpen(m.id); });
   const cos = hub.me.companies.filter((c) => c.perms.includes('governance.manage'));
+  const [only, setOnly] = useState('');
+  const ms = list.data ?? [];
+  const draft = (m: any) => m.minutes_status !== 'approved';
+  const upcoming = ms.filter((m) => m.held_on >= londonToday()).sort((a, b) => a.held_on.localeCompare(b.held_on))[0];
+  const rows = ms.filter((m) => !only || (only === 'draft' ? draft(m) : m.held_on >= londonToday()));
   return (
     <>
-      {cos.length > 0 && <p><Button onClick={() => setF({ title: '', held_on: londonToday(), company_ids: [firstCo(hub, 'governance.manage')], agenda: '' })}>New meeting</Button></p>}
-      {(list.data ?? []).length === 0 ? <Empty>No meetings recorded.</Empty> : (
+      <div className="row between gov-toolbar">
+        <StatStrip label="Meetings at a glance" filter={only} onFilter={setOnly} items={[
+          { label: 'Meetings', value: ms.length },
+          { label: 'Minutes not approved', value: ms.filter(draft).length, tone: ms.some(draft) ? 'warn' : undefined, filter: 'draft' },
+          { label: 'Decisions recorded', value: ms.reduce((a, m) => a + Number(m.decisions ?? 0), 0) },
+          { label: 'Next meeting', value: upcoming ? fmtDate(upcoming.held_on) : '—', filter: 'upcoming' }]} />
+        {cos.length > 0 && <Button onClick={() => setF({ title: '', held_on: londonToday(), company_ids: [firstCo(hub, 'governance.manage')], agenda: '' })}><Icon name="plus" size={18} />New meeting</Button>}
+      </div>
+      {list.loading && !list.data ? <Skeleton lines={5} /> : rows.length === 0 ? <Empty>{only ? 'Nothing matches this filter.' : 'No meetings recorded.'}</Empty> : (
         <div className="table-wrap"><table><thead><tr><th>Meeting</th><th>Date</th><th>Companies</th><th>Minutes</th><th className="num">Decisions</th></tr></thead>
-          <tbody>{list.data!.map((m) => <tr key={m.id}><td><button type="button" className="btn ghost" onClick={() => setOpen(m.id)}>{m.title}</button><div className="muted small">Chair: {m.chair_name ?? '—'}</div></td><td>{fmtDate(m.held_on)}</td><td>{m.company_codes.join(', ')}{m.company_codes.length > 1 && <div className="small muted">Joint meeting</div>}</td>
+          <tbody>{rows.map((m) => <tr key={m.id}><td><button type="button" className="btn ghost" onClick={() => setOpen(m.id)}>{m.title}</button><div className="muted small">Chair: {m.chair_name ?? '—'}</div></td><td>{fmtDate(m.held_on)}</td><td>{m.company_codes.join(', ')}{m.company_codes.length > 1 && <div className="small muted">Joint meeting</div>}</td>
             <td>{m.minutes_status === 'approved' ? <Status s="verified" text={`Approved v${m.minutes_version}`} /> : <Status s="planned" text={m.minutes_version ? 'Amendment in draft' : 'Draft'} />}</td><td className="num">{m.decisions}</td></tr>)}</tbody></table></div>
       )}
       {open && <MeetingPanel id={open} onClose={() => { setOpen(null); list.reload(); }} />}
@@ -240,9 +302,22 @@ function MeetingPanel({ id, onClose }: { id: string; onClose: () => void }) {
 function Decisions() {
   const hub = useHub();
   const d = useApi<any[]>(`/decisions${hub.q()}`);
-  return (d.data ?? []).length === 0 ? <Empty>No decisions recorded. Decisions are recorded from a meeting.</Empty> : (
-    <div className="table-wrap"><table><thead><tr><th>Decision</th><th>Company</th><th>Decided</th><th>Authorised by</th><th>Review</th></tr></thead>
-      <tbody>{d.data!.map((x) => <tr key={x.id}><td><strong>{x.title}</strong><div className="small">{x.rationale}</div>{x.meeting_title && <div className="muted small">From: {x.meeting_title}</div>}</td><td><CompanyBadge code={x.company_code} name={x.company_name} /></td><td>{fmtDate(x.decided_on)}</td><td>{x.authoriser_name}</td><td>{fmtDate(x.review_on)}</td></tr>)}</tbody></table></div>
+  const [only, setOnly] = useState('');
+  const all = d.data ?? [];
+  const overdue = (x: any) => !!x.review_on && x.review_on < londonToday();
+  const soon = (x: any) => !!x.review_on && !overdue(x) && x.review_on <= inDays(30);
+  const rows = all.filter((x) => !only || (only === 'overdue' ? overdue(x) : soon(x)));
+  return (
+    <>
+      <StatStrip label="Decisions at a glance" filter={only} onFilter={setOnly} items={[
+        { label: 'Decisions', value: all.length },
+        { label: 'Review overdue', value: all.filter(overdue).length, tone: all.some(overdue) ? 'bad' : undefined, filter: 'overdue' },
+        { label: 'Review in 30 days', value: all.filter(soon).length, tone: all.some(soon) ? 'warn' : undefined, filter: 'soon' }]} />
+      {d.loading && !d.data ? <Skeleton lines={5} /> : rows.length === 0 ? <Empty>{only ? 'Nothing matches this filter.' : 'No decisions recorded. Decisions are recorded from a meeting.'}</Empty> : (
+        <div className="table-wrap"><table><thead><tr><th>Decision</th><th>Company</th><th>Decided</th><th>Authorised by</th><th>Review</th></tr></thead>
+          <tbody>{rows.map((x) => <tr key={x.id}><td><strong>{x.title}</strong><div className="small">{x.rationale}</div>{x.meeting_title && <div className="muted small">From: {x.meeting_title}</div>}</td><td><CompanyBadge code={x.company_code} name={x.company_name} /></td><td>{fmtDate(x.decided_on)}</td><td>{x.authoriser_name}</td><td>{fmtDate(x.review_on)}{overdue(x) && <div><Status s="action" text="Overdue" /></div>}</td></tr>)}</tbody></table></div>
+      )}
+    </>
   );
 }
 
@@ -255,13 +330,27 @@ function Risks() {
   const [f, setF] = useState<any>(null);
   const [open, setOpen] = useState<string | null>(null);
   const create = useSubmit(async () => { await post('/risks', { ...f, likelihood: Number(f.likelihood), impact: Number(f.impact), owner_id: f.owner_id || null, review_on: f.review_on || null, target_score: f.target_score ? Number(f.target_score) : null }); setF(null); toast('Risk added.'); list.reload(); });
+  const [only, setOnly] = useState('');
+  const all = list.data ?? [];
+  const live = all.filter((r) => r.status !== 'closed');
+  const late = (r: any) => r.status !== 'closed' && !!r.review_on && r.review_on < londonToday();
+  const rows = all.filter((r) => (only === 'closed' ? r.status === 'closed' : r.status !== 'closed') && (only !== 'high' || r.score >= 15) && (only !== 'overdue' || late(r)))
+    .sort((a, b) => b.score - a.score);
   return (
     <>
-      {hub.can('governance.manage') && <p><Button onClick={() => setF({ company_id: firstCo(hub, 'governance.manage'), title: '', description: '', controls: '', likelihood: 3, impact: 3, owner_id: '', review_on: '', target_score: '' })}>Add a risk</Button></p>}
-      <p className="small muted">Score = likelihood × impact (each 1–5). 15 or more is high.</p>
-      {(list.data ?? []).length === 0 ? <Empty>No risks recorded.</Empty> : (
+      <div className="row between gov-toolbar">
+        <StatStrip label="Risks at a glance" filter={only} onFilter={setOnly} items={[
+          { label: 'Open risks', value: live.length },
+          { label: 'High (15+)', value: live.filter((r) => r.score >= 15).length, tone: live.some((r) => r.score >= 15) ? 'bad' : undefined, filter: 'high' },
+          { label: 'Review overdue', value: all.filter(late).length, tone: all.some(late) ? 'warn' : undefined, filter: 'overdue' },
+          { label: 'Open actions', value: live.reduce((a, r) => a + Number(r.open_actions ?? 0), 0) },
+          { label: 'Closed', value: all.length - live.length, filter: 'closed' }]} />
+        {hub.can('governance.manage') && <Button onClick={() => setF({ company_id: firstCo(hub, 'governance.manage'), title: '', description: '', controls: '', likelihood: 3, impact: 3, owner_id: '', review_on: '', target_score: '' })}><Icon name="plus" size={18} />Add a risk</Button>}
+      </div>
+      <p className="small muted">Highest score first. Score = likelihood × impact (each 1–5); 15 or more is high.</p>
+      {list.loading && !list.data ? <Skeleton lines={5} /> : rows.length === 0 ? <Empty>{only ? 'Nothing matches this filter.' : 'No open risks recorded.'}</Empty> : (
         <div className="table-wrap"><table><thead><tr><th>Risk</th><th>Company</th><th>Owner</th><th>Score</th><th>Review</th><th className="num">Open actions</th></tr></thead>
-          <tbody>{list.data!.map((r) => { const [s, t] = scoreStatus(r.score); return <tr key={r.id}><td><button type="button" className="btn ghost" onClick={() => setOpen(r.id)}>{r.title}</button>{r.status === 'closed' && <Status s="ended" text="Closed" />}</td><td><CompanyBadge code={r.company_code} name={r.company_name} /></td><td>{r.owner_name ?? '—'}</td><td><Status s={s} text={t} /></td><td>{fmtDate(r.review_on)}{r.review_on && r.review_on < londonToday() && <div><Status s="action" text="Overdue" /></div>}</td><td className="num">{r.open_actions}</td></tr>; })}</tbody></table></div>
+          <tbody>{rows.map((r) => { const [s, t] = scoreStatus(r.score); return <tr key={r.id}><td><button type="button" className="btn ghost" onClick={() => setOpen(r.id)}>{r.title}</button>{r.status === 'closed' && <Status s="ended" text="Closed" />}</td><td><CompanyBadge code={r.company_code} name={r.company_name} /></td><td>{r.owner_name ?? '—'}</td><td><Status s={s} text={t} /></td><td>{fmtDate(r.review_on)}{r.review_on && r.review_on < londonToday() && <div><Status s="action" text="Overdue" /></div>}</td><td className="num">{r.open_actions}</td></tr>; })}</tbody></table></div>
       )}
       {open && <RiskPanel id={open} onClose={() => { setOpen(null); list.reload(); }} />}
       <Dialog open={!!f} onClose={() => setF(null)} title="Add a risk" footer={<Button busy={create.busy} onClick={() => create.run()}>Add</Button>}>
@@ -331,12 +420,25 @@ function Audits() {
   const [f, setF] = useState<any>(null);
   const [open, setOpen] = useState<string | null>(null);
   const create = useSubmit(async () => { const a = await post('/audits', { ...f, reviewer_id: f.reviewer_id || null, rubric: f.rubric.split('\n').map((s: string) => s.trim()).filter(Boolean).map((criterion: string) => ({ criterion })) }); setF(null); list.reload(); setOpen(a.id); });
+  const [only, setOnly] = useState('');
+  const all = list.data ?? [];
+  const done = (a: any) => a.status === 'completed';
+  const late = (a: any) => !done(a) && a.planned_on < londonToday();
+  const rows = all.filter((a) => !only || (only === 'planned' ? !done(a) : only === 'overdue' ? late(a) : only === 'findings' ? a.open_findings > 0 : done(a)))
+    .sort((a, b) => Number(done(a)) - Number(done(b)) || a.planned_on.localeCompare(b.planned_on));
   return (
     <>
-      {hub.can('governance.manage') && <p><Button onClick={() => setF({ company_id: firstCo(hub, 'governance.manage'), area: 'staff_files', title: '', scope: '', sample: '', reviewer_id: '', planned_on: londonToday(), rubric: '' })}>Plan an audit</Button></p>}
-      {(list.data ?? []).length === 0 ? <Empty>No audits planned.</Empty> : (
+      <div className="row between gov-toolbar">
+        <StatStrip label="Audits at a glance" filter={only} onFilter={setOnly} items={[
+          { label: 'To do', value: all.filter((a) => !done(a)).length, filter: 'planned' },
+          { label: 'Past planned date', value: all.filter(late).length, tone: all.some(late) ? 'bad' : undefined, filter: 'overdue' },
+          { label: 'With open findings', value: all.filter((a) => a.open_findings > 0).length, tone: all.some((a) => a.open_findings > 0) ? 'warn' : undefined, filter: 'findings' },
+          { label: 'Completed', value: all.filter(done).length, tone: 'ok', filter: 'done' }]} />
+        {hub.can('governance.manage') && <Button onClick={() => setF({ company_id: firstCo(hub, 'governance.manage'), area: 'staff_files', title: '', scope: '', sample: '', reviewer_id: '', planned_on: londonToday(), rubric: '' })}><Icon name="plus" size={18} />Plan an audit</Button>}
+      </div>
+      {list.loading && !list.data ? <Skeleton lines={5} /> : rows.length === 0 ? <Empty>{only ? 'Nothing matches this filter.' : 'No audits planned.'}</Empty> : (
         <div className="table-wrap"><table><thead><tr><th>Audit</th><th>Company</th><th>Planned</th><th>Status</th><th className="num">Findings (open)</th></tr></thead>
-          <tbody>{list.data!.map((a) => <tr key={a.id}><td><button type="button" className="btn ghost" onClick={() => setOpen(a.id)}>{a.title}</button><div className="muted small">{label(a.area)} · reviewer {a.reviewer_name ?? '—'}</div></td><td><CompanyBadge code={a.company_code} name={a.company_name} /></td><td>{fmtDate(a.planned_on)}</td><td>{a.status === 'completed' ? <Status s="verified" text={`Completed ${fmtDate(a.completed_on)}`} /> : <Status s={a.planned_on < londonToday() ? 'action' : 'planned'} text={label(a.status)} />}</td><td className="num">{a.findings} ({a.open_findings})</td></tr>)}</tbody></table></div>
+          <tbody>{rows.map((a) => <tr key={a.id}><td><button type="button" className="btn ghost" onClick={() => setOpen(a.id)}>{a.title}</button><div className="muted small">{label(a.area)} · reviewer {a.reviewer_name ?? '—'}</div></td><td><CompanyBadge code={a.company_code} name={a.company_name} /></td><td>{fmtDate(a.planned_on)}</td><td>{a.status === 'completed' ? <Status s="verified" text={`Completed ${fmtDate(a.completed_on)}`} /> : <Status s={a.planned_on < londonToday() ? 'action' : 'planned'} text={label(a.status)} />}</td><td className="num">{a.findings} ({a.open_findings})</td></tr>)}</tbody></table></div>
       )}
       {open && <AuditPanel id={open} onClose={() => { setOpen(null); list.reload(); }} />}
       <Dialog open={!!f} onClose={() => setF(null)} title="Plan an audit" footer={<Button busy={create.busy} onClick={() => create.run()}>Create</Button>}>
@@ -390,12 +492,26 @@ function ActionsList() {
   const [mine, setMine] = useState<'all' | 'mine'>('all');
   const [creating, setCreating] = useState(false);
   const d = useApi<any[]>(`/actions${hub.q()}`);
-  const rows = (d.data ?? []).filter((x) => mine === 'all' || x.owner_id === hub.me.person.id);
+  const [only, setOnly] = useState('');
+  const scope = (d.data ?? []).filter((x) => mine === 'all' || x.owner_id === hub.me.person.id);
+  const finished = (x: any) => x.status === 'verified' || x.status === 'closed';
+  const test: Record<string, (x: any) => boolean> = { open: (x) => !finished(x), overdue: (x) => !finished(x) && !!x.overdue, evidence: (x) => x.status === 'evidence_submitted', done: finished };
+  // Overdue first, then by deadline; finished ones only when asked for.
+  const rows = scope.filter((x) => (only ? test[only](x) : !finished(x)))
+    .sort((a, b) => Number(!!b.overdue) - Number(!!a.overdue) || String(a.due_on ?? '9').localeCompare(String(b.due_on ?? '9')));
   return (
     <>
-      <div className="row between" style={{ marginBottom: 12 }}><Chips label="Whose actions" value={mine} onChange={setMine} options={[['all', 'All I can see'], ['mine', 'Mine']]} />{hub.can('governance.manage') && <Button onClick={() => setCreating(true)}>New action</Button>}</div>
-      <p className="small muted">Every action follows: finding → action → owner → deadline → evidence → verification → check that it worked.</p>
-      {rows.length === 0 ? <Empty>No actions.</Empty> : (
+      <div className="row between gov-toolbar">
+        <Chips label="Whose actions" value={mine} onChange={setMine} options={[['all', 'All I can see'], ['mine', 'Mine']]} />
+        {hub.can('governance.manage') && <Button onClick={() => setCreating(true)}><Icon name="plus" size={18} />New action</Button>}
+      </div>
+      <StatStrip label="Actions at a glance" filter={only} onFilter={setOnly} items={[
+        { label: 'Open', value: scope.filter((x) => !finished(x)).length, filter: 'open' },
+        { label: 'Overdue', value: scope.filter(test.overdue).length, tone: scope.some(test.overdue) ? 'bad' : undefined, filter: 'overdue' },
+        { label: 'Evidence to verify', value: scope.filter(test.evidence).length, tone: scope.some(test.evidence) ? 'warn' : undefined, filter: 'evidence' },
+        { label: 'Verified or closed', value: scope.filter(finished).length, tone: 'ok', filter: 'done' }]} />
+      <ol className="gov-flow" aria-label="How every action is tracked">{['Finding', 'Action', 'Owner', 'Deadline', 'Evidence', 'Verified', 'Worked?'].map((t) => <li key={t}>{t}</li>)}</ol>
+      {d.loading && !d.data ? <Skeleton lines={5} /> : rows.length === 0 ? <Empty>{only ? 'Nothing matches this filter.' : 'No open actions.'}</Empty> : (
         <div className="table-wrap"><table><thead><tr><th>Action</th><th>From</th><th>Company</th><th>Owner</th><th>Deadline</th><th>Status</th></tr></thead>
           <tbody>{rows.map((x) => <tr key={x.id}><td><Link to={`/governance/actions/${x.id}`}>{x.action}</Link>{x.significance === 'significant' && <div><Status s="review" text="Significant" /></div>}</td><td>{label(x.source_type)}</td><td><CompanyBadge code={x.company_code} name={x.company_name} /></td><td>{x.owner_name ?? '—'}</td><td>{fmtDate(x.due_on)}{x.overdue && <div><Status s="action" text="Overdue" /></div>}</td><td><Status s={ACTION_STATUS[x.status][0]} text={ACTION_STATUS[x.status][1]} />{x.effectiveness && <div className="small">{label(x.effectiveness)}</div>}</td></tr>)}</tbody></table></div>
       )}

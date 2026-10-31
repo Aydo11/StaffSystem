@@ -10,7 +10,8 @@ function Notice() {
     <div className="prose">
       <h2>Who is responsible for your information</h2>
       <p>The company you work for is the controller of your records in the Hub: Valor Housing Ltd, Wellbeing Homes Ltd or Wellbeing Housing Ltd. If you work for more than one, each is responsible for the records of the work you do for it.</p>
-      <p>The Hub is run by Valor Housing Ltd, a company registered in England and Wales (company number 16175322). Registered office: 63 Grove Lane, Handsworth, Birmingham B21 9ES.</p>
+      <p>The Hub is run by Valor Housing Ltd, a company registered in England and Wales (company number 16175322). Registered office: 63 Grove Lane, Handsworth, Birmingham B21 9ES. Registered with the Information Commissioner's Office, reference ZC242198.</p>
+      <p>Data Protection Officer: Ayden Yafai, <a href="mailto:info@valorhousing.co.uk">info@valorhousing.co.uk</a>.</p>
 
       <h2>What we hold</h2>
       <ul>
@@ -49,7 +50,7 @@ function Notice() {
       <p>We keep your records while you work for us and for six years after you leave, unless the law requires longer. After that your personal details are removed: business records such as visits, timesheets and finance are kept under "Former staff member".</p>
 
       <h2>Your rights</h2>
-      <p>You can ask to see your information, correct it, have it deleted, restrict or object to how it is used, or receive a copy to take elsewhere. You can download your own data at any time from <strong>My profile → Download my data</strong>. For anything else, ask your manager or write to the director at the registered office above. We reply within one month.</p>
+      <p>You can ask to see your information, correct it, have it deleted, restrict or object to how it is used, or receive a copy to take elsewhere. You can download your own data at any time from <strong>My profile → Download my data</strong>. For anything else, email our Data Protection Officer at <a href="mailto:info@valorhousing.co.uk">info@valorhousing.co.uk</a> or ask your manager. We reply within one month.</p>
       <p>If you are unhappy with how we use your information, you can complain to the Information Commissioner's Office: <a href="https://ico.org.uk/make-a-complaint/" target="_blank" rel="noopener noreferrer">ico.org.uk/make-a-complaint</a> or 0303 123 1113. We would like the chance to put things right first.</p>
 
       <p className="small muted">Last updated {UPDATED}.</p>

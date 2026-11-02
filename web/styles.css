@@ -727,3 +727,45 @@ a.news-lead:hover h2, a.news-card:hover h3 { color: var(--teal-text); text-decor
 .gov-flow { list-style: none; margin: 0 0 var(--s3); padding: 0; display: flex; flex-wrap: wrap; gap: 4px; font-size: .8rem; color: var(--text-2); }
 .gov-flow li { padding: 2px 10px; border-radius: 999px; background: #e9eff3; }
 .gov-flow li + li::before { content: '→'; margin-right: 6px; color: var(--text-2); }
+
+/* ── Complaints workspace ── */
+.cmp-rows > li { flex-wrap: wrap; }
+.cmp-rows > li.is-overdue { box-shadow: inset 4px 0 0 var(--danger); padding-left: var(--s3); }
+.cmp-rows > li.is-escalated { box-shadow: inset 4px 0 0 var(--warn); padding-left: var(--s3); }
+.cmp-row-main { display: grid; gap: 2px; flex: 1 1 320px; min-width: 0; }
+.cmp-row-main a { color: var(--navy); text-decoration: none; } .cmp-row-main a:hover strong, .cmp-row-main a:hover { text-decoration: underline; }
+.cmp-row-meta { display: grid; gap: 6px; justify-items: start; align-content: start; }
+.cmp-late { color: var(--danger); font-weight: 600; }
+.cmp-done { text-decoration: line-through; color: var(--text-2); }
+.cmp-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 0 var(--s3); }
+.cmp-filters > :first-child, .cmp-more { grid-column: 1 / -1; }
+.cmp-more > summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; color: var(--teal-text); }
+.cmp-filters-inner { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 0 var(--s3); }
+.grid-2 > .cmp-wide { grid-column: 1 / -1; }
+.cmp-register-head { margin: var(--s3) 0; flex-wrap: wrap; gap: var(--s2); align-items: end; }
+.cmp-register-head p { margin: 0; }
+.cmp-bars { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s2); }
+.cmp-bars li { display: grid; grid-template-columns: minmax(80px, 9rem) 1fr auto; gap: var(--s3); align-items: center; }
+.cmp-bars-label { font-size: .875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-bars-track { height: 12px; background: var(--bg); border-radius: 999px; overflow: hidden; }
+.cmp-bars-track > span { display: block; height: 100%; background: var(--chart-1); border-radius: 999px; min-width: 2px; }
+.cmp-bars-val { font-size: .875rem; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 520px) { .cmp-bars li { grid-template-columns: 1fr auto; } .cmp-bars-track { grid-column: 1 / -1; order: 3; } }
+.cmp-sub { font-size: 1rem; margin: var(--s4) 0 var(--s2); }
+.cmp-stages { list-style: none; margin: 0 0 var(--s4); padding: 0; display: flex; gap: 4px; overflow-x: auto; counter-reset: stage; }
+.cmp-stages li { flex: 1 0 auto; min-width: 96px; counter-increment: stage; padding: var(--s2) var(--s3); background: var(--card); border: 1px solid var(--line); border-top: 4px solid var(--line); border-radius: var(--r-ctl); font-size: .8125rem; color: var(--text-2); }
+.cmp-stages li::before { content: counter(stage) ". "; }
+.cmp-stages li.done { border-top-color: var(--teal); color: var(--text); }
+.cmp-stages li.now { border-top-color: var(--navy); background: var(--teal-50); color: var(--navy); font-weight: 700; }
+.cmp-glance dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: var(--s4); margin: 0; }
+.cmp-glance dt { font-size: .8125rem; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
+.cmp-glance dd { margin: 4px 0 0; font-weight: 600; }
+.cmp-note { border-bottom: 1px solid var(--line); padding-bottom: var(--s4); margin-bottom: var(--s4); }
+.cmp-timeline { list-style: none; margin: 0; padding: 0 0 0 var(--s4); border-left: 2px solid var(--line); display: grid; gap: var(--s4); }
+.cmp-timeline li { position: relative; }
+.cmp-timeline li::before { content: ''; position: absolute; left: calc(-1 * var(--s4) - 7px); top: 6px; width: 12px; height: 12px; border-radius: 50%; background: var(--card); border: 2px solid var(--line-strong); }
+.cmp-timeline li.k-stage::before, .cmp-timeline li.k-assigned::before { border-color: var(--navy); background: var(--navy); }
+.cmp-timeline li.k-escalated::before, .cmp-timeline li.k-reminder::before { border-color: var(--danger); background: var(--danger); }
+.cmp-timeline li.k-action_done::before { border-color: var(--ok); background: var(--ok); }
+.cmp-timeline li.k-advice::before, .cmp-timeline li.k-recommendation::before { border-color: var(--teal); background: var(--teal); }
+@media print { .cmp-reports .btn, .cmp-reports select { display: none; } }

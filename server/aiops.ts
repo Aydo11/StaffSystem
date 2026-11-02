@@ -38,7 +38,7 @@ export async function propertySources(db: Db, companyId: string, propertyId: str
   if (!p) return [];
   const [cond, complaints, repairs, visits, tasks] = await Promise.all([
     one('select aspects, score, rated_at from property_condition where property_id = $1', [propertyId], db),
-    q(`select c.id, c.category, c.source, c.created_at::date as on, t.status from property_complaints c left join tasks t on t.id = c.task_id where c.property_id = $1 order by c.created_at desc limit 20`, [propertyId], db),
+    q(`select c.id, c.category, c.source, c.created_at::date as on, t.status from property_complaints c left join tasks t on t.id = c.task_id where c.property_id = $1 and not c.confidential order by c.created_at desc limit 20`, [propertyId], db),
     q(`select id, title, urgency, status, due_on from repairs where property_id = $1 order by created_at desc limit 20`, [propertyId], db),
     q(`select work_category, status, started_at::date as on from visits where property_id = $1 and status in ('submitted','approved') order by started_at desc limit 20`, [propertyId], db),
     q(`select id, title, status, due_on from tasks where property_id = $1 and status <> 'completed' order by due_on nulls last limit 20`, [propertyId], db),

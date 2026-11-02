@@ -17,6 +17,7 @@ import { People, PersonPage, Resume } from './pages/People.tsx';
 import { Performance } from './pages/Performance.tsx';
 import { Policies, PolicyPage } from './pages/Policies.tsx';
 import { CasePage, Concerns } from './pages/Concerns.tsx';
+import { ComplaintPage, Complaints } from './pages/Complaints.tsx';
 import { AgentPage, AgentPortal, Estates, RepairPage } from './pages/Estates.tsx';
 import { ActionPage, Governance } from './pages/Governance.tsx';
 import { Finance, FinanceDocument } from './pages/Finance.tsx';
@@ -90,6 +91,7 @@ const NAV: { to: string; label: string; icon: string; group: string; show?: (h: 
   { to: '/training', label: 'Training', icon: 'check', group: 'Learning & policies' },
   { to: '/policies', label: 'Policies & handbooks', icon: 'file', group: 'Learning & policies' },
   { to: '/governance', label: 'Governance', icon: 'shield', group: 'Organisation', show: (h) => h.can('governance.view') },
+  { to: '/complaints', label: 'Complaints', icon: 'inbox', group: 'Organisation' }, // everyone: staff see the complaints they logged or help with
   { to: '/concerns', label: 'Concerns', icon: 'note', group: 'Organisation' },
   { to: '/finance', label: 'Finance & expenses', icon: 'file', group: 'Organisation' },
   { to: '/assistant', label: 'AI assistant', icon: 'search', group: 'Organisation' },
@@ -220,6 +222,8 @@ function Shell() {
             <Route path="/install" element={<InstallPage />} />
             <Route path="/privacy" element={<PrivacyPage />} />
             <Route path="/governance/actions/:id" element={<ActionPage />} />
+            <Route path="/complaints" element={<Complaints />} />
+            <Route path="/complaints/:id" element={<ComplaintPage />} />
             <Route path="/concerns" element={<Concerns />} />
             <Route path="/concerns/:id" element={<CasePage />} />
             <Route path="/estates" element={<Estates />} />

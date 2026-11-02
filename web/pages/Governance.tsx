@@ -20,8 +20,8 @@ const GROUPS: { key: string; label: string; tabs: Tab[] }[] = [
 const inDays = (n: number) => { const d = new Date(`${londonToday()}T12:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 
 // Key numbers for a list. A number with a filter is a toggle button; pressing it again shows everything.
-type Stat = { label: string; value: ReactNode; tone?: 'bad' | 'warn' | 'ok'; filter?: string };
-function StatStrip({ label: aria, items, filter, onFilter }: { label: string; items: Stat[]; filter?: string; onFilter?: (f: string) => void }) {
+export type Stat = { label: string; value: ReactNode; tone?: 'bad' | 'warn' | 'ok'; filter?: string };
+export function StatStrip({ label: aria, items, filter, onFilter }: { label: string; items: Stat[]; filter?: string; onFilter?: (f: string) => void }) {
   return (
     <div className="gov-stats-wrap">
       <ul className="gov-stats" aria-label={aria}>{items.map((s) => {

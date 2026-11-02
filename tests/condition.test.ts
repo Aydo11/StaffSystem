@@ -36,7 +36,7 @@ describe('complaints and maintenance', () => {
     expect(p.repairs.map((x: any) => x.title)).toContain('Kitchen tap leaking');
     const task = (await pool.query('select owner_id, priority from tasks where id = $1', [p.complaints[0].task_id])).rows[0];
     expect(task).toEqual({ owner_id: P.robin, priority: 'high' });
-    expect((await pool.query(`select 1 from notifications where person_id = $1 and link = $2`, [P.robin, `/tasks/${p.complaints[0].task_id}`])).rowCount).toBe(1);
+    expect((await pool.query(`select 1 from notifications where person_id = $1 and link like $2`, [P.robin, `/complaints/%`])).rowCount).toBe(1);
     await pool.query(`update tasks set status = 'completed', completed_at = now() where id = $1`, [p.complaints[0].task_id]);
     const after = (await sam.get('/api/properties')).body.find((x: any) => x.id === prop(1));
     expect(after.open_complaints).toBe(0);

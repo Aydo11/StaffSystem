@@ -236,9 +236,9 @@ export function PropertyPage() {
             <details open={openComplaints.length > 0}><summary>{openComplaints.length} open · {complaints.length - openComplaints.length} resolved</summary>
               <ul className="list">{complaints.map((c: any) => (
                 <li key={c.id}>
-                  <span><strong>{CATEGORIES.find(([k]) => k === c.category)?.[1]}</strong> · from {SOURCES.find(([k]) => k === c.source)?.[1].toLowerCase()}<br />
+                  <span><Link to={`/complaints/${c.id}`}><strong>{c.ref}</strong></Link> · <strong>{CATEGORIES.find(([k]) => k === c.category)?.[1] ?? c.category}</strong> · from {SOURCES.find(([k]) => k === c.source)?.[1].toLowerCase()}<br />
                     <span className="small">{c.summary}</span><br />
-                    <span className="muted small">Logged by {c.raised_by_name}, {fmtDate(c.created_at)} · {c.handler_name ? `with ${c.handler_name}` : 'no complaints manager set'}{c.task_id && <> · <Link to={`/tasks/${c.task_id}`}>task</Link></>}</span></span>
+                    <span className="muted small">Logged by {c.raised_by_name}, {fmtDate(c.created_at)} · {c.handler_name ? `with ${c.handler_name}` : 'no complaints manager set'}</span></span>
                   <Status s={c.task_status === 'completed' ? 'completed' : c.task_status ?? 'not_started'} text={c.task_status === 'completed' ? 'Resolved' : c.task_status === 'in_progress' ? 'Being handled' : 'Open'} />
                 </li>
               ))}</ul>

@@ -210,7 +210,7 @@ finance.post('/finance/documents/:id/:step', async (req, res, next) => {
 });
 
 finance.post('/finance/documents/:id/payments', async (req, res) => {
-  const b = parse(z.object({ amount: money, paid_on: isoDate, method: z.enum(['bank_transfer', 'card', 'cash', 'cheque', 'other']), reference: text(200).nullable().optional() }), req.body);
+  const b = parse(z.object({ amount: money, paid_on: isoDate, method: z.enum(['bank_transfer', 'card', 'cash', 'cheque', 'other']), reference: text(200).nullable().optional(), account_id: uuid.nullable().optional() }), req.body);
   const out = await tx(async (db) => {
     const { d, role } = await loadDoc(req.access, idParam(req.params.id), db);
     if (role !== 'finance') throw forbidden();
@@ -220,7 +220,20 @@ finance.post('/finance/documents/:id/payments', async (req, res) => {
     const bal = await balance(db, d.id);
     const over = (await one<{ o: boolean }>('select $1::numeric > $2::numeric o', [b.amount, bal], db))!.o;
     if (over) throw bad(`That is more than the £${bal} still outstanding.`, { fields: { amount: 'More than the balance' } });
-    await q('insert into finance_payments (document_id, amount, paid_on, method, reference, recorded_by) values ($1,$2::numeric,$3,$4,$5,$6)', [d.id, b.amount, b.paid_on, b.method, b.reference ?? null, req.person.id], db);
+    // With an account, the payment is also the bank/cash item, so cash figures see it once (and the bill is the cost).
+    let txnId: string | null = null;
+    if (b.account_id) {
+      const acc = await one('select * from finance_accounts where id = $1 and company_id = $2 and not archived', [b.account_id, d.company_id], db);
+      if (!acc) throw bad('Choose one of this company\'s accounts.', { fields: { account_id: 'Not found' } });
+      if (acc.currency !== 'GBP') throw bad('Record foreign-currency payments from Bank & cash.');
+      if (b.paid_on < (acc.opening_date instanceof Date ? acc.opening_date.toISOString().slice(0, 10) : String(acc.opening_date))) throw bad('The payment is before this account\'s opening balance date.', { fields: { paid_on: 'Before the opening balance' } });
+      const incoming = d.direction === 'receivable';
+      txnId = (await one(`insert into finance_transactions (company_id, account_id, txn_date, amount, description, counterparty, category, department, property_id, document_id, source, created_by)
+                          values ($1,$2,$3,$4::numeric,$5,$6,$7,$8,$9,$10,'payment',$11) returning id`,
+        [d.company_id, acc.id, b.paid_on, incoming ? b.amount : `-${b.amount}`, `${d.number ?? LABEL[d.kind]} ${incoming ? d.recipient_name : d.issuer_name}`.slice(0, 300), incoming ? d.recipient_name : d.issuer_name,
+         d.category ?? (incoming ? 'other_income' : d.kind === 'contractor_invoice' ? 'staffing' : 'travel'), d.department, d.property_id, d.id, req.person.id], db))!.id;
+    }
+    await q('insert into finance_payments (document_id, amount, paid_on, method, reference, recorded_by, transaction_id) values ($1,$2::numeric,$3,$4,$5,$6,$7)', [d.id, b.amount, b.paid_on, b.method, b.reference ?? null, req.person.id, txnId], db);
     const left = await balance(db, d.id);
     const status = Number(left) === 0 ? 'paid' : 'part_paid';
     await q('update finance_documents set status = $2, updated_at = now() where id = $1', [d.id, status], db);

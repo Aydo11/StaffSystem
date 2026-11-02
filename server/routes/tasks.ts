@@ -175,6 +175,8 @@ tasks.get('/files/:id', async (req, res) => {
     if (!r || (r.person_id !== a.personId && !cos.some((c) => can(a, 'training.manage', c)))) throw notFound();
   } else if (f.entity_type === 'case') {
     if (!(await caseRoleForFile(a, f.entity_id))) throw notFound();
+  } else if (f.entity_type === 'finance_txn') {
+    if (!can(a, 'finance.view', f.company_id)) throw notFound();
   } else if (f.entity_type === 'complaint') {
     if (!(await complaintRoleForFile(a, f.entity_id))) throw notFound();
   } else if (f.entity_type === 'repair') {

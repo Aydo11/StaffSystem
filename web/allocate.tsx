@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ApiError, post } from './api.ts';
+import { londonToday } from './format.ts';
 import { Avatar, Button, CompanyBadge, Dialog, Empty, Field, Skeleton, useToast } from './ui.tsx';
 
 // One row the manager can tick: an appointment + property pair, shown as a name with a sub-line.
@@ -14,6 +15,7 @@ export function AllocateDialog({ title, options, loading, searchLabel, onClose, 
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [held, setHeld] = useState<Held[]>([]);
   const [reason, setReason] = useState('');
+  const [from, setFrom] = useState(londonToday()); // backdate when the person already covered the property before it was recorded
   const [busy, setBusy] = useState(false);
   const [changed, setChanged] = useState(false); // some were allocated: the page must refresh on close
   const shown = useMemo(() => {
@@ -30,7 +32,7 @@ export function AllocateDialog({ title, options, loading, searchLabel, onClose, 
     for (const o of todo) {
       const isHeld = held.find((h) => h.key === o.key);
       try {
-        const r = await post(`/appointments/${o.appointmentId}/properties`, { property_id: o.propertyId, override_reason: isHeld?.canOverride && overriding ? reason.trim() : undefined });
+        const r = await post(`/appointments/${o.appointmentId}/properties`, { property_id: o.propertyId, from_date: from || undefined, override_reason: isHeld?.canOverride && overriding ? reason.trim() : undefined });
         ok.push(o.key);
         if (r.warnings?.length) notes.push(`${o.title}: ${r.warnings.join(' ')}`);
       } catch (e) {
@@ -61,6 +63,7 @@ export function AllocateDialog({ title, options, loading, searchLabel, onClose, 
           <textarea name="override_reason" value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
       )}
+      <Field label="Allocated from" hint="Change this if they already covered the property before today."><input name="from_date" type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={{ maxWidth: 220 }} /></Field>
       {loading && !options ? <Skeleton /> : !options?.length ? <Empty>Nothing left to allocate here.</Empty> : (
         <>
           {options.length > 6 && <Field label={searchLabel}><input name="alloc_search" type="search" value={query} onChange={(e) => setQuery(e.target.value)} autoComplete="off" /></Field>}

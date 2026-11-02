@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ApiError, blobUrl, patch, post, upload, useApi, useSubmit } from '../api.ts';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ApiError, api, blobUrl, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtDateTime, fmtDay, fmtMinutes, fmtTime, label, londonLocal } from '../format.ts';
 import { useHub } from '../hub.tsx';
 import { AllocateDialog } from '../allocate.tsx';
@@ -133,7 +133,8 @@ export function PropertyPage() {
   const hub = useHub();
   const d = useApi<any>(`/properties/${id}`);
   const toast = useToast();
-  const [dlg, setDlg] = useState<null | 'start' | 'edit' | 'key' | 'issue' | 'schedule' | 'assign' | 'complaint' | 'repair'>(null);
+  const [dlg, setDlg] = useState<null | 'start' | 'edit' | 'key' | 'issue' | 'schedule' | 'assign' | 'complaint' | 'repair' | 'remove'>(null);
+  const nav = useNavigate();
   const [complaint, setComplaint] = useState(blankExtras().complaint);
   const [keyId, setKeyId] = useState('');
   const [form, setForm] = useState<any>({});
@@ -169,6 +170,7 @@ export function PropertyPage() {
         actions={<>
           {my_appointments.length > 0 && <><Button variant="go" disabled={!!hub.me.activeVisit} onClick={() => setDlg('start')}>Start Visit</Button><Link className="btn secondary" to={`/visits/new?property=${p.id}`}>Log Completed Visit</Link></>}
           {can.manage && <Button variant="secondary" onClick={() => setDlg('edit')}>Edit</Button>}
+          {can.manage && <Button variant="danger" onClick={() => setDlg('remove')}>Remove</Button>}
         </>} />
 
       <section className={`card prop-hero glow-${tone(condition.score)}`} aria-label="Summary">
@@ -328,6 +330,7 @@ export function PropertyPage() {
         <ErrorSummary error={logComplaint.error} />
         <ComplaintFields value={complaint} onChange={setComplaint} error={logComplaint.error?.fields.summary} />
       </Dialog>
+      {dlg === 'remove' && <RemoveProperty p={p} onClose={() => setDlg(null)} onDone={(how) => { toast(how === 'deleted' ? `${p.name} was deleted.` : `${p.name} was offboarded: hidden from lists, allocations ended, its history kept.`); nav('/properties'); }} />}
       {dlg === 'repair' && <ReportRepair properties={[p]} onClose={() => setDlg(null)} onSaved={() => { setDlg(null); d.reload(); }} />}
       {dlg === 'start' && <StartVisitDialog property={{ ...p, my_appointments }} onClose={() => setDlg(null)} />}
       {dlg === 'edit' && <PropertyForm existing={p} onClose={() => setDlg(null)} onSaved={() => { setDlg(null); d.reload(); }} />}
@@ -352,5 +355,17 @@ export function PropertyPage() {
         <Field label="Planned minutes" error={schedule.error?.fields.planned_minutes}><input name="planned_minutes" type="number" min={5} max={720} value={form.planned_minutes ?? ''} onChange={(e) => setForm({ ...form, planned_minutes: e.target.value })} style={{ maxWidth: 160 }} /></Field>
       </Dialog>
     </>
+  );
+}
+
+// Deleted outright when nothing has happened there yet; otherwise offboarded so visits, repairs and complaints stay on record.
+function RemoveProperty({ p, onClose, onDone }: { p: any; onClose: () => void; onDone: (how: 'deleted' | 'offboarded') => void }) {
+  const go = useSubmit(async () => { const r = await api('DELETE', `/properties/${p.id}`); onDone(r.removed); });
+  return (
+    <Dialog open onClose={onClose} title={`Remove ${p.name}`} variant="modal" footer={<Button variant="danger" busy={go.busy} onClick={() => go.run()}>Remove property</Button>}>
+      <p>If nothing has been recorded at this property (for example it was added twice or by mistake), it is deleted completely.</p>
+      <p>If it has history, such as visits, repairs, tasks or complaints, it is <strong>offboarded</strong> instead: it disappears from the property lists, staff allocations end today and planned visits are cancelled, but its history stays on record.</p>
+      <ErrorSummary error={go.error} />
+    </Dialog>
   );
 }

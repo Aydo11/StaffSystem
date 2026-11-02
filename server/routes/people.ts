@@ -592,6 +592,7 @@ people.post('/appointments/:id/properties', async (req, res) => {
   const ap = await loadAppointment(req.access, id, 'appointments.manage');
   const b = parse(z.object({ property_id: uuid, from_date: isoDate.optional(), override_reason: text(500).min(5).optional() }), req.body);
   if (!(ap.status === 'active' || ap.status === 'planned')) throw conflict('Only current roles can be given properties.');
+  if (b.from_date && b.from_date < ap.start_date) throw bad(`The role started on ${ap.start_date}. Correct the role's start date first if they began earlier.`, { fields: { from_date: 'Before the role started' } });
   const pr = await one(`select p.id from properties p where p.id = $1 and (p.company_id = $2 or exists (select 1 from property_company_links l where l.property_id = p.id and l.company_id = $2))`, [b.property_id, ap.company_id]);
   if (!pr) throw bad('This property is not part of this company or an authorised arrangement.', { fields: { property_id: 'Wrong company' } });
   const out = await tx(async (db) => {

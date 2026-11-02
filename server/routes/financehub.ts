@@ -219,3 +219,211 @@ financehub.get('/finance/reports', async (req, res) => {
   const f = filters(req, t);
   const b = await loadBooks(pool, f.companies);
   const acc = accrual(b, f), plan = planTotals(b, f);
+  const line = (cat: string) => ({ category: cat, actual: acc.rows.filter((r) => r.category === cat).reduce((s, r) => s + r.amount, 0), budget: Math.round(plan.lines.filter((l) => l.category === cat).reduce((s, l) => s + (l.direction === 'income' ? 1 : -1) * l.amount, 0)) });
+  const pnl = { income: INCOME.map(line), direct: DIRECT.map(line), overheads: CATEGORIES.filter((c) => !(INCOME as readonly string[]).includes(c) && !DIRECT.includes(c) && !(FINANCING as readonly string[]).includes(c)).map(line),
+    revenue: acc.revenue, gross_profit: acc.gross, net_profit: acc.net, budget_net: plan.net };
+  const c = cash(b, f);
+  const opening = cashBalance(b, addDays(f.from, -1), f.account), closing = cashBalance(b, f.to, f.account);
+  const byCat = (rows: any[]) => Object.entries(rows.reduce((m: any, r) => ({ ...m, [r.category ?? 'uncategorised']: (m[r.category ?? 'uncategorised'] ?? 0) + r.amount }), {})).map(([category, amount]) => ({ category, amount }));
+  const fin = c.rows.filter((r) => (FINANCING as readonly string[]).includes(r.category ?? ''));
+  const opr = c.rows.filter((r) => !(FINANCING as readonly string[]).includes(r.category ?? ''));
+  // Transfers and money moved between group companies are excluded from in/out; a balance check proves the roll-forward.
+  const moved = b.txns.filter((x) => (x.transfer_id || x.category === 'transfer' || (b.companies.length > 1 && x.counterparty_company_id && b.companies.includes(x.counterparty_company_id))) && day(x.txn_date) >= f.from && day(x.txn_date) <= f.to && (!f.account || x.account_id === f.account)).reduce((s, x) => s + p(x.amount_gbp), 0);
+  // Accounts first opened inside the range bring their opening balance in as a separate line.
+  const opened = b.accounts.filter((a) => !a.archived && a.kind !== 'loan' && (!f.account || a.id === f.account) && day(a.opening_date) >= f.from && day(a.opening_date) <= f.to).reduce((s, a) => s + Math.round(p(a.opening_balance) * Number(a.opening_fx_rate)), 0);
+  const flow = { operating: byCat(opr), financing: byCat(fin), net_operating: opr.reduce((s, r) => s + r.amount, 0), net_financing: fin.reduce((s, r) => s + r.amount, 0), transfers: moved, opened, opening, closing,
+    reconciles: opening == null || closing == null ? null : opening + opened + c.net + moved === closing };
+  const asOf = f.to < t ? f.to : t;
+  const ar = b.docs.filter((d) => d.direction === 'receivable' && d.kind !== 'credit_note' && ['issued', 'part_paid'].includes(d.status)).reduce((s, d) => s + outstanding(d), 0);
+  const ap = b.docs.filter((d) => d.direction === 'payable' && ['approved', 'issued', 'part_paid'].includes(d.status)).reduce((s, d) => s + outstanding(d), 0);
+  const loans = b.commitments.filter((x) => x.kind === 'loan' && x.loan_balance != null).reduce((s, x) => s + p(x.loan_balance), 0) - b.accounts.filter((a) => a.kind === 'loan').reduce((s, a) => s + accountBalance(a, b.txns, asOf).gbp, 0);
+  const accounts = b.accounts.filter((a) => a.kind !== 'loan').map((a) => ({ name: `${a.company_code} · ${a.name}`, amount: accountBalance(a, b.txns, asOf).gbp }));
+  const assets = accounts.reduce((s, a) => s + a.amount, 0) + ar, liabilities = ap + loans;
+  res.json({ filters: f, pnl, cashflow: flow, balance_sheet: { as_of: asOf, accounts, receivables: ar, payables: ap, loans, assets, liabilities, net_assets: assets - liabilities } });
+});
+
+// ── Bank and cash accounts ──
+financehub.get('/finance/accounts', async (req, res) => {
+  res.json(await q(`select a.id, a.company_id, a.name, a.kind, a.currency, a.last_four from finance_accounts a where a.company_id = any($1::uuid[]) and not a.archived order by a.name`, [scope(req.access, 'finance.view', req.query.company)]));
+});
+const accountBody = z.object({ company_id: uuid, name: text(120).min(2), kind: z.enum(['bank', 'savings', 'cash', 'card', 'loan']), currency: z.string().regex(/^[A-Z]{3}$/).default('GBP'),
+  opening_balance: signedMoney, opening_fx_rate: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('1'), opening_date: isoDate, last_four: z.string().regex(/^\d{4}$/).nullable().optional() });
+financehub.post('/finance/accounts', async (req, res) => {
+  const b = parse(accountBody, req.body);
+  need(req.access, 'finance.manage', b.company_id);
+  if (b.currency === 'GBP' && Number(b.opening_fx_rate) !== 1) throw bad('A GBP account has a rate of 1.');
+  const row = await tx(async (db) => {
+    const r = await one(`insert into finance_accounts (company_id, name, kind, currency, opening_balance, opening_fx_rate, opening_date, last_four, created_by) values ($1,$2,$3,$4,$5::numeric,$6::numeric,$7,$8,$9) returning *`,
+      [b.company_id, b.name, b.kind, b.currency, b.opening_balance, b.opening_fx_rate, b.opening_date, b.last_four ?? null, req.person.id], db);
+    await audit(db, req.person.id, b.company_id, 'finance_account', r!.id, 'create', { opening_balance: b.opening_balance, opening_date: b.opening_date });
+    return r;
+  });
+  res.status(201).json(row);
+});
+financehub.patch('/finance/accounts/:id', async (req, res) => {
+  const b = parse(accountBody.omit({ company_id: true }).partial().extend({ archived: z.boolean().optional() }).strict(), req.body);
+  const out = await tx(async (db) => {
+    const a = await one('select * from finance_accounts where id = $1 for update', [idParam(req.params.id)], db);
+    if (!a) throw notFound();
+    need(req.access, 'finance.manage', a.company_id);
+    if ((b.opening_date || b.opening_balance) && (await one('select 1 from finance_transactions where account_id = $1 and reconciled', [a.id], db))) throw conflict('This account has reconciled transactions, so its opening balance is locked. Unreconcile first if it is wrong.');
+    const keys = Object.keys(b);
+    if (keys.length) await q(`update finance_accounts set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')} where id = $1`, [a.id, ...keys.map((k) => (b as any)[k])], db);
+    await audit(db, req.person.id, a.company_id, 'finance_account', a.id, 'update', Object.fromEntries(keys.map((k) => [k, { from: a[k], to: (b as any)[k] }])));
+    return { ok: true };
+  });
+  res.json(out);
+});
+
+// Reconcile: the statement balance on a date must equal the Hub's balance for that date; then everything up to it is ticked.
+financehub.post('/finance/accounts/:id/reconcile', async (req, res) => {
+  const b = parse(z.object({ statement_date: isoDate, statement_balance: signedMoney }), req.body);
+  const out = await tx(async (db) => {
+    const a = await one('select * from finance_accounts where id = $1 for update', [idParam(req.params.id)], db);
+    if (!a) throw notFound();
+    need(req.access, 'finance.manage', a.company_id);
+    const ts = await q('select * from finance_transactions where account_id = $1', [a.id], db);
+    const hub = accountBalance(a, ts, b.statement_date).own;
+    const diff = p(b.statement_balance) - hub;
+    if (diff !== 0) throw bad(`The Hub shows £${pounds(hub)} on ${b.statement_date}; the statement shows £${b.statement_balance}. Difference £${pounds(diff)}: look for missing, duplicated or mis-dated items.`, { fields: { statement_balance: `Differs by £${pounds(diff)}` } });
+    const n = await q(`update finance_transactions set reconciled = true, reconciled_at = now(), reconciled_by = $3 where account_id = $1 and txn_date <= $2 and not reconciled returning id`, [a.id, b.statement_date, req.person.id], db);
+    await audit(db, req.person.id, a.company_id, 'finance_account', a.id, 'reconcile', { statement_date: b.statement_date, statement_balance: b.statement_balance, items: n.length });
+    return { reconciled: n.length };
+  });
+  res.json(out);
+});
+
+// ── Transactions ──
+financehub.get('/finance/transactions', async (req, res) => {
+  const t = await today();
+  const f = filters(req, t);
+  const status = req.query.status ? parse(z.enum(['uncategorised', 'unreconciled', 'missing_docs']), req.query.status) : null;
+  res.json(await q(`select t.*, a.name as account_name, a.currency, pr.name as property_name, d.number as document_number, co.code as company_code,
+                           (select count(*)::int from files x where x.entity_type = 'finance_txn' and x.entity_id = t.id) as files
+                      from finance_transactions t join finance_accounts a on a.id = t.account_id join companies co on co.id = t.company_id left join properties pr on pr.id = t.property_id left join finance_documents d on d.id = t.document_id
+                     where t.company_id = any($1::uuid[]) and t.txn_date between $2 and $3 and ($4::uuid is null or t.account_id = $4) and ($5::text is null or t.department = $5) and ($6::uuid is null or t.property_id = $6)
+                       and ($7::text is null or ($7 = 'uncategorised' and t.category is null and t.transfer_id is null) or ($7 = 'unreconciled' and not t.reconciled)
+                            or ($7 = 'missing_docs' and t.amount_gbp <= -100 and t.document_id is null and t.transfer_id is null and coalesce(t.category, '') <> 'transfer' and not exists (select 1 from files x where x.entity_type = 'finance_txn' and x.entity_id = t.id)))
+                     order by t.txn_date desc, t.created_at desc limit 1000`,
+    [f.companies, status ? '1900-01-01' : f.from, status ? '2999-12-31' : f.to, f.account ?? null, f.department ?? null, f.property ?? null, status]));
+});
+const txnBody = z.object({ account_id: uuid, txn_date: isoDate, amount: signedMoney, fx_rate: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).optional(), description: text(300).min(1), counterparty: text(200).nullable().optional(),
+  category: category.nullable().optional(), department: department.nullable().optional(), property_id: uuid.nullable().optional(), counterparty_company_id: uuid.nullable().optional(), note: text(1000).nullable().optional() });
+async function accountFor(db: Db, a: any, id: string) {
+  const acc = await one('select * from finance_accounts where id = $1', [id], db);
+  if (!acc) throw notFound();
+  need(a, 'finance.manage', acc.company_id);
+  if (acc.archived) throw conflict('This account is archived.');
+  return acc;
+}
+function checkDate(acc: any, d: string) { if (d < day(acc.opening_date)) throw bad(`This account's opening balance is dated ${day(acc.opening_date)}; enter only later transactions, or move the opening date back.`, { fields: { txn_date: 'Before the opening balance' } }); }
+financehub.post('/finance/transactions', async (req, res) => {
+  const b = parse(txnBody, req.body);
+  if (Number(b.amount) === 0) throw bad('Enter an amount.', { fields: { amount: 'Cannot be zero' } });
+  const row = await tx(async (db) => {
+    const acc = await accountFor(db, req.access, b.account_id);
+    checkDate(acc, b.txn_date);
+    const rate = acc.currency === 'GBP' ? '1' : b.fx_rate;
+    if (!rate) throw bad('Enter the exchange rate to GBP for this foreign-currency account.', { fields: { fx_rate: 'Required' } });
+    const r = await one(`insert into finance_transactions (company_id, account_id, txn_date, amount, fx_rate, description, counterparty, category, department, property_id, counterparty_company_id, note, created_by)
+                         values ($1,$2,$3,$4::numeric,$5::numeric,$6,$7,$8,$9,$10,$11,$12,$13) returning *`,
+      [acc.company_id, acc.id, b.txn_date, b.amount, rate, b.description, b.counterparty ?? null, b.category ?? null, b.department ?? null, b.property_id ?? null, b.counterparty_company_id ?? null, b.note ?? null, req.person.id], db);
+    await audit(db, req.person.id, acc.company_id, 'finance_transaction', r!.id, 'create', { amount: b.amount, txn_date: b.txn_date, category: b.category ?? null });
+    return r;
+  });
+  res.status(201).json(row);
+});
+financehub.patch('/finance/transactions/:id', async (req, res) => {
+  const b = parse(txnBody.omit({ account_id: true }).partial().extend({ reconciled: z.boolean().optional() }).strict(), req.body);
+  await tx(async (db) => {
+    const x = await one('select t.*, a.opening_date from finance_transactions t join finance_accounts a on a.id = t.account_id where t.id = $1 for update', [idParam(req.params.id)], db);
+    if (!x) throw notFound();
+    need(req.access, 'finance.manage', x.company_id);
+    // Reconciled money is fixed: only its coding (category, department, property, note) can change.
+    if (x.reconciled && (b.amount || b.txn_date || b.fx_rate)) throw conflict('This item is reconciled to a bank statement, so its date and amount are locked.');
+    if (x.transfer_id && (b.amount || b.category)) throw conflict('Change a transfer by deleting it and entering it again.');
+    if (b.txn_date) checkDate(x, b.txn_date);
+    const keys = Object.keys(b).filter((k) => k !== 'reconciled');
+    const sets = keys.map((k, i) => `${k} = $${i + 2}${['amount', 'fx_rate'].includes(k) ? '::numeric' : ''}`);
+    const vals = keys.map((k) => (b as any)[k] ?? null);
+    if (b.reconciled !== undefined) { vals.push(b.reconciled, req.person.id); sets.push(`reconciled = $${vals.length}`, `reconciled_at = case when $${vals.length} then now() end`, `reconciled_by = case when $${vals.length} then $${vals.length + 1}::uuid end`); }
+    if (sets.length) await q(`update finance_transactions set ${sets.join(', ')}, updated_at = now() where id = $1`, [x.id, ...vals], db);
+    await audit(db, req.person.id, x.company_id, 'finance_transaction', x.id, 'update', Object.fromEntries(Object.keys(b).map((k) => [k, { from: x[k], to: (b as any)[k] }])));
+  });
+  res.json({ ok: true });
+});
+financehub.delete('/finance/transactions/:id', async (req, res) => {
+  await tx(async (db) => {
+    const x = await one('select * from finance_transactions where id = $1 for update', [idParam(req.params.id)], db);
+    if (!x) throw notFound();
+    need(req.access, 'finance.manage', x.company_id);
+    if (x.reconciled) throw conflict('Reconciled items cannot be deleted.');
+    if (x.document_id) throw conflict('This item settles an invoice or bill. Remove the payment from that document first.');
+    const ids = x.transfer_id ? (await q('select id from finance_transactions where transfer_id = $1', [x.transfer_id], db)).map((r) => r.id) : [x.id];
+    if (x.transfer_id && (await one('select 1 from finance_transactions where transfer_id = $1 and reconciled', [x.transfer_id], db))) throw conflict('One side of this transfer is reconciled.');
+    await q(`delete from files where entity_type = 'finance_txn' and entity_id = any($1::uuid[])`, [ids], db);
+    await q('delete from finance_transactions where id = any($1::uuid[])', [ids], db);
+    await audit(db, req.person.id, x.company_id, 'finance_transaction', x.id, 'delete', { amount: x.amount, txn_date: day(x.txn_date), description: x.description, legs: ids.length });
+  });
+  res.json({ ok: true });
+});
+financehub.post('/finance/transactions/:id/files', upload.single('file'), async (req, res) => {
+  const x = await one('select * from finance_transactions where id = $1', [idParam(req.params.id)]);
+  if (!x) throw notFound();
+  need(req.access, 'finance.manage', x.company_id);
+  if (!req.file) throw bad('Choose a file.');
+  const f = await tx((db) => saveFile(db, { companyId: x.company_id, entityType: 'finance_txn', entityId: x.id, name: req.file!.originalname, buf: req.file!.buffer, uploadedBy: req.person.id }));
+  res.status(201).json({ id: f.id });
+});
+financehub.get('/finance/transactions/:id/files', async (req, res) => {
+  const x = await one('select company_id from finance_transactions where id = $1', [idParam(req.params.id)]);
+  if (!x || !can(req.access, 'finance.view', x.company_id)) throw notFound();
+  res.json(await q(`select id, original_name, uploaded_at from files where entity_type = 'finance_txn' and entity_id = $1 order by uploaded_at`, [req.params.id]));
+});
+
+// Transfer between two of the company's accounts (or two group companies): two linked rows, never income or spending.
+financehub.post('/finance/transfers', async (req, res) => {
+  const b = parse(z.object({ from_account: uuid, to_account: uuid, txn_date: isoDate, amount: money, description: text(300).min(1), to_amount: money.optional() }), req.body);
+  if (b.from_account === b.to_account) throw bad('Choose two different accounts.');
+  const out = await tx(async (db) => {
+    const a = await accountFor(db, req.access, b.from_account), z2 = await accountFor(db, req.access, b.to_account);
+    checkDate(a, b.txn_date); checkDate(z2, b.txn_date);
+    if (a.currency !== z2.currency && !b.to_amount) throw bad('These accounts use different currencies: enter the amount received too.', { fields: { to_amount: 'Required' } });
+    const id = (await one<{ id: string }>('select gen_random_uuid() id', [], db))!.id;
+    const ic = a.company_id !== z2.company_id;
+    const toAmt = b.to_amount ?? b.amount;
+    const gbp = a.currency === 'GBP' ? Number(b.amount) : z2.currency === 'GBP' ? Number(toAmt) : null;  // the GBP side fixes the rate for the other
+    const rate = (acc: any, amt: string) => (acc.currency === 'GBP' ? 1 : gbp != null ? (gbp / Number(amt)).toFixed(6) : acc.opening_fx_rate);
+    for (const [acc, amt, other] of [[a, b.amount, z2], [z2, toAmt, a]] as const)
+      await q(`insert into finance_transactions (company_id, account_id, txn_date, amount, fx_rate, description, category, transfer_id, counterparty_company_id, created_by)
+               values ($1,$2,$3,$4::numeric, $5::numeric, $6, 'transfer', $7, $8, $9)`,
+        [acc.company_id, acc.id, b.txn_date, acc === a ? `-${amt}` : amt, rate(acc, amt), b.description, id, ic ? other.company_id : null, req.person.id], db);
+    await audit(db, req.person.id, a.company_id, 'finance_transfer', id, 'create', { amount: b.amount, from: a.id, to: z2.id });
+    return { transfer_id: id };
+  });
+  res.status(201).json(out);
+});
+
+// Match a bank item to an invoice or bill: records the (part) payment against it, so the bank item is the cash and the
+// document is the income or cost. Money in matches receivables, money out matches payables.
+financehub.post('/finance/transactions/:id/match', async (req, res) => {
+  const b = parse(z.object({ document_id: uuid }), req.body);
+  const out = await tx(async (db) => {
+    const x = await one('select * from finance_transactions where id = $1 for update', [idParam(req.params.id)], db);
+    if (!x) throw notFound();
+    need(req.access, 'finance.manage', x.company_id);
+    if (x.document_id) throw conflict('This bank item is already matched.');
+    if (x.transfer_id) throw conflict('Transfers cannot settle invoices.');
+    const d = await one(`select f.*, coalesce((select sum(amount) from finance_payments where document_id = f.id), 0) paid,
+                                coalesce((select sum(total) from finance_documents c where c.credits_document_id = f.id and c.status = 'issued'), 0) credited
+                           from finance_documents f where f.id = $1 and f.company_id = $2 for update`, [b.document_id, x.company_id], db);
+    if (!d) throw notFound();
+    const inflow = p(x.amount_gbp) > 0;
+    if ((d.direction === 'receivable') !== inflow) throw bad(inflow ? 'Money in can only settle an invoice you issued.' : 'Money out can only settle a bill or claim.');
+    const ok = d.direction === 'receivable' ? ['issued', 'part_paid'] : ['approved', 'issued', 'part_paid'];
+    if (!ok.includes(d.status)) throw conflict('That document is not open for payment.');
+    const amt = Math.abs(p(x.amount_gbp)), left = outstanding(d);
+    if (amt > left) throw bad(`This bank item (£${pounds(amt)}) is more than the £${pounds(left)} still owed. Split it, or record the extra separately.`);
+    await q(`insert into finance_payments (document_id, amount, paid_on, method, reference, manual, recorded_by, transaction_id) values ($1, $2::numeric, $3, 'bank_transfer', $4, false, $5, $6)`,
+      [d.id, pounds(amt), day(x.txn_date), x.description.slice(0, 200), req.person.id, x.id], db);
+    await q(`update finance_transactions set document_id = $2, category = coalesce(category, $3), department = coalesce(department, $4), property_id = coalesce(property_id, $5), updated_at = now() where id = $1`,

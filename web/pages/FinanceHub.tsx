@@ -644,3 +644,41 @@ export function Plan() {
   const d = useApi<any>(`/finance/plan${hub.q()}`);
   const [edit, setEdit] = useState<any>(null);
   const saveL = useSubmit(async () => { await patch(`/finance/plan-lines/${edit.id}`, { amount: edit.amount, all_periods: edit.all }); setEdit(null); toast('Plan updated.'); d.reload(); });
+  const grid = useMemo(() => {
+    if (!d.data) return [];
+    const m = new Map<string, any>();
+    for (const l of d.data.lines) { const k = `${l.plan_id}|${l.direction}|${l.category}|${l.label}`; const x = m.get(k) ?? { ...l, periods: {} }; x.periods[l.period_no] = l; m.set(k, x); }
+    return [...m.values()];
+  }, [d.data]);
+  if (d.error) return <LoadError error={d.error} retry={d.reload} />;
+  if (!d.data) return <Skeleton lines={8} />;
+  if (!d.data.plans.length) return <Empty>No plan loaded for this company.</Empty>;
+  const plan = d.data.plans[0];
+  const periods = Array.from({ length: plan.periods }, (_, i) => i + 1);
+  const start = (n: number) => { const x = new Date(`${String(plan.start_date).slice(0, 10)}T12:00:00Z`); x.setUTCDate(x.getUTCDate() + (n - 1) * plan.period_days); return x.toISOString().slice(0, 10); };
+  const tot = (pred: (l: any) => boolean, n: number) => d.data.lines.filter((l: any) => l.period_no === n && pred(l)).reduce((s: number, l: any) => s + Math.round(Number(l.amount) * 100) * (l.direction === 'income' ? 1 : -1), 0);
+  const sheet = () => [['Line', 'Category', 'Department', ...periods.map((n) => `P${n} ${start(n)}`)], ...grid.map((g) => [g.label, catName(g.category), g.department, ...periods.map((n) => (g.direction === 'income' ? 1 : -1) * Number(g.periods[n]?.amount ?? 0))]), ['Net', '', '', ...periods.map((n) => tot(() => true, n) / 100)]];
+  return (
+    <>
+      <section className="card"><h2>{plan.name}</h2><p className="small">{plan.source_note}</p>
+        <p className="small muted">{plan.periods} periods of {plan.period_days} days from {fmtDate(plan.start_date)}. This is the budget and the base of the forecast. It is never shown as actual results.</p>
+        <span className="row"><Button variant="secondary" onClick={() => save(xlsx([{ name: 'Plan', rows: sheet() }]), 'plan.xlsx')}>Excel</Button><Button variant="ghost" onClick={() => save(csv(sheet()), 'plan.csv')}>CSV</Button></span></section>
+      <section className="card"><h2>Plan by line and period</h2>
+        <div className="table-wrap fh-plan"><table><thead><tr><th scope="col">Line</th>{periods.map((n) => <th key={n} scope="col" className="num">P{n}<br /><span className="small muted">{fmtDate(start(n)).replace(/ \d{4}$/, '')}</span></th>)}</tr></thead>
+          <tbody>
+            {['income', 'expense'].map((dir) => [<tr key={dir} className="fh-sec"><th colSpan={periods.length + 1} scope="rowgroup">{dir === 'income' ? 'Income' : 'Costs'}</th></tr>,
+              ...grid.filter((g) => g.direction === dir).map((g) => <tr key={g.label + g.category}><th scope="row" className="fh-plan-line">{g.label}<br /><span className="small muted">{catName(g.category)}{g.department && ` · ${label(g.department)}`}</span></th>
+                {periods.map((n) => { const l = g.periods[n]; return <td key={n} className="num">{l ? (hub.can('finance.manage', plan.company_id) ? <button type="button" className="linkish" onClick={() => setEdit({ id: l.id, label: g.label, period: n, amount: l.amount, all: false })}>{money(l.amount)}</button> : money(l.amount)) : '—'}</td>; })}</tr>)])}
+            <tr className="fh-total"><th scope="row">Income</th>{periods.map((n) => <td key={n} className="num">{gbp(tot((l) => l.direction === 'income', n))}</td>)}</tr>
+            <tr className="fh-total"><th scope="row">Costs</th>{periods.map((n) => <td key={n} className="num">{gbp(-tot((l) => l.direction === 'expense', n))}</td>)}</tr>
+            <tr className="fh-total"><th scope="row">Retained</th>{periods.map((n) => <td key={n} className="num"><strong>{gbp(tot(() => true, n))}</strong></td>)}</tr>
+          </tbody></table></div>
+      </section>
+      <Dialog open={!!edit} onClose={() => setEdit(null)} title="Change a plan line" variant="modal" footer={<Button busy={saveL.busy} onClick={() => saveL.run()}>Save</Button>}>
+        {edit && <><ErrorSummary error={saveL.error} /><p className="small">{edit.label}, P{edit.period}. Changes are recorded in the audit log.</p>
+          <Field label="Amount per period (£)" error={saveL.error?.fields.amount}><input inputMode="decimal" value={edit.amount} onChange={(e) => setEdit({ ...edit, amount: e.target.value })} /></Field>
+          <label className="check"><input type="checkbox" checked={edit.all} onChange={(e) => setEdit({ ...edit, all: e.target.checked })} /> Apply to every period</label></>}
+      </Dialog>
+    </>
+  );
+}

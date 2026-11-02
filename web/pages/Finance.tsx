@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, download, patch, post, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, label, londonToday, money } from '../format.ts';
 import { useHub } from '../hub.tsx';
+import { Bank, CAT, Daily, DEPTS, Forecast, Overview, Plan, Reports } from './FinanceHub.tsx';
 import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 const KIND: Record<string, string> = { sales_invoice: 'Invoice', contractor_invoice: 'Contractor invoice', payment_statement: 'Payment statement', expense_claim: 'Expense claim', credit_note: 'Credit note' };
@@ -31,22 +32,28 @@ function LinesEditor({ lines, onChange, errors }: { lines: Line[]; onChange: (l:
   );
 }
 
-type Tab = 'documents' | 'mine' | 'budgets' | 'cashflow' | 'continuity' | 'settings';
+type Tab = 'overview' | 'forecast' | 'daily' | 'reports' | 'bank' | 'plan' | 'documents' | 'mine' | 'continuity' | 'settings';
 export function Finance() {
   const hub = useHub();
   const [params, setParams] = useSearchParams();
   const fin = hub.can('finance.view');
-  const tab = (params.get('tab') as Tab) ?? (fin ? 'documents' : 'mine');
-  const tabs: [Tab, string][] = [...(fin ? [['documents', 'Documents'] as [Tab, string]] : []), ['mine', 'My claims and statements'], ...(fin ? [['budgets', 'Budgets'], ['cashflow', 'Cash flow and scenarios']] as [Tab, string][] : []),
-    ...(hub.can('continuity.manage') || hub.can('governance.view') ? [['continuity', 'Continuity'] as [Tab, string]] : []), ...(hub.can('finance.manage') ? [['settings', 'Settings'] as [Tab, string]] : [])];
+  const tab = (params.get('tab') as Tab) ?? (fin ? 'overview' : 'mine');
+  // Changing tab keeps the date and other filters, so a view carries across tabs.
+  const go = (t: string, extra: Record<string, string> = {}) => { const n = new URLSearchParams(params); n.set('tab', t); n.delete('status'); for (const [k, v] of Object.entries(extra)) n.set(k, v); setParams(n); };
+  const tabs: [Tab, string][] = [...(fin ? [['overview', 'Overview'], ['forecast', 'Cash forecast'], ['daily', 'Daily'], ['reports', 'Reports'], ['bank', 'Bank & cash'], ['plan', 'Plan & budgets'], ['documents', 'Documents']] as [Tab, string][] : []),
+    ['mine', 'My claims and statements'], ...(hub.can('continuity.manage') || hub.can('governance.view') ? [['continuity', 'Continuity'] as [Tab, string]] : []), ...(hub.can('finance.manage') ? [['settings', 'Settings'] as [Tab, string]] : [])];
   return (
     <>
-      <PageHead title="Finance" intro="Each company issues and approves its own documents under its own name and numbering. Nobody approves their own submission." />
-      <Tabs label="Finance sections" tabs={tabs} value={tab} onChange={(t) => setParams({ tab: t })} />
+      <PageHead title="Finance" intro={fin ? 'Profit, cash, forecasts and day-to-day finance for each company. Figures come from invoices, bills and bank records; the plan is shown as plan, never as results.' : 'Each company issues and approves its own documents under its own name and numbering. Nobody approves their own submission.'} />
+      <Tabs label="Finance sections" tabs={tabs} value={tab} onChange={(t) => go(t)} />
+      {tab === 'overview' && fin && <Overview go={go} />}
+      {tab === 'forecast' && fin && <Forecast go={go} />}
+      {tab === 'daily' && fin && <Daily go={go} />}
+      {tab === 'reports' && fin && <Reports />}
+      {tab === 'bank' && fin && <Bank />}
+      {tab === 'plan' && fin && <Plan />}
       {tab === 'documents' && fin && <Documents />}
       {tab === 'mine' && <Mine />}
-      {tab === 'budgets' && fin && <Budgets />}
-      {tab === 'cashflow' && fin && <Cashflow />}
       {tab === 'continuity' && <Continuity />}
       {tab === 'settings' && <Settings />}
     </>
@@ -138,7 +145,9 @@ export function FinanceDocument() {
   const [dlg, setDlg] = useState<null | 'reject' | 'pay' | 'query' | 'edit'>(null);
   const [f, setF] = useState<any>({});
   const step = useSubmit(async (s: string, body: any = {}) => { const r = await post(`/finance/documents/${id}/${s}`, body); setDlg(null); toast(r?.number ? `Issued as ${r.number}.` : 'Done.'); d.reload(); });
-  const pay = useSubmit(async () => { await post(`/finance/documents/${id}/payments`, f); setDlg(null); toast('Payment recorded.'); d.reload(); });
+  const pay = useSubmit(async () => { await post(`/finance/documents/${id}/payments`, { ...f, account_id: f.account_id || null }); setDlg(null); toast('Payment recorded.'); d.reload(); });
+  const accounts = useApi<any[]>(d.data?.can?.pay ? `/finance/accounts?company=${d.data.document.company_id}` : null);
+  const coding = useSubmit(async (body: any) => { await patch(`/finance/documents/${id}/coding`, body); toast('Saved.'); d.reload(); });
   const query = useSubmit(async () => { await post(`/finance/documents/${id}/queries`, { body: f.body }); setDlg(null); toast('Query sent to finance.'); d.reload(); });
   const answer = useSubmit(async (qid: string, text: string) => { await post(`/finance/queries/${qid}/answer`, { answer: text }); d.reload(); });
   const save = useSubmit(async () => { await patch(`/finance/documents/${id}`, { recipient_name: f.recipient_name, tax_treatment: f.tax_treatment, lines: f.lines.map((l: any) => ({ description: l.description, quantity: String(l.quantity), unit: l.unit, rate: String(l.rate) })) }); setDlg(null); toast('Draft saved.'); d.reload(); });
@@ -177,8 +186,13 @@ export function FinanceDocument() {
         {doc.notes && <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{doc.notes}</p>}
       </article>
       <div className="grid-2 no-print" style={{ marginTop: 16 }}>
+        {can.pay && <section className="card" aria-labelledby="code-h"><h2 id="code-h">Budget coding</h2>
+          <p className="small muted">Where this counts in budgets and reports.</p>
+          <div className="form-grid"><Field label="Category"><select value={doc.category ?? ''} onChange={(e) => coding.run({ category: e.target.value || null })}><option value="">Default for this kind</option>{Object.entries(CAT).filter(([k]) => k !== 'transfer').map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>
+            <Field label="Department"><select value={doc.department ?? ''} onChange={(e) => coding.run({ department: e.target.value || null })}><option value="">None</option>{DEPTS.map((x) => <option key={x} value={x}>{label(x)}</option>)}</select></Field></div>
+          <ErrorSummary error={coding.error} /></section>}
         <section className="card" aria-labelledby="pay-h"><h2 id="pay-h">Payments</h2>
-          {payments.length === 0 ? <p className="muted">None recorded.</p> : <ul className="list">{payments.map((p: any) => <li key={p.id}><span>{money(p.amount)} on {fmtDate(p.paid_on)} by {label(p.method)}{p.reference && ` (${p.reference})`}<br /><span className="small muted">Recorded manually by {p.recorded_by_name} — not matched to a bank feed</span></span></li>)}</ul>}
+          {payments.length === 0 ? <p className="muted">None recorded.</p> : <ul className="list">{payments.map((p: any) => <li key={p.id}><span>{money(p.amount)} on {fmtDate(p.paid_on)} by {label(p.method)}{p.reference && ` (${p.reference})`}<br /><span className="small muted">{p.transaction_id ? `In Bank & cash · recorded by ${p.recorded_by_name}` : `Recorded manually by ${p.recorded_by_name}, not in Bank & cash`}</span></span></li>)}</ul>}
           {credits.length > 0 && <><h3>Credit notes</h3><ul>{credits.map((c: any) => <li key={c.id}><Link to={`/finance/${c.id}`}>{c.number ?? 'Draft'}</Link> {money(c.total)} ({label(c.status)})</li>)}</ul></>}
           {files.length > 0 && <p>Attachments: {files.map((x: any) => <button key={x.id} type="button" className="btn ghost" onClick={() => download(`/files/${x.id}`, x.original_name)}>{x.original_name}</button>)}</p>}
         </section>
@@ -190,7 +204,8 @@ export function FinanceDocument() {
         <Field label="Why?"><textarea name="note" value={f.note ?? ''} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
       </Dialog>
       <Dialog open={dlg === 'pay'} onClose={() => setDlg(null)} title="Record a payment" variant="modal" footer={<Button busy={pay.busy} onClick={() => pay.run()}>Record</Button>}>
-        <p className="small muted">This is a manual record. It is not reconciled with your bank.</p>
+        <p className="small muted">Choose the account it went through and it is added to Bank & cash too, so cash figures count it once. Leave it blank if the bank statement import will bring it in; then match it there instead.</p>
+        <Field label="Account" optional><select name="account_id" value={f.account_id ?? ''} onChange={(e) => setF({ ...f, account_id: e.target.value })}><option value="">Not recorded in Bank & cash</option>{accounts.data?.filter((a) => a.currency === 'GBP').map((a) => <option key={a.id} value={a.id}>{a.name}{a.last_four && ` ··${a.last_four}`}</option>)}</select></Field>
         <ErrorSummary error={pay.error} />
         <div className="form-grid"><Field label="Amount (£)" error={pay.error?.fields.amount}><input name="amount" inputMode="decimal" value={f.amount ?? ''} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field><Field label="Paid on"><input name="paid_on" type="date" value={f.paid_on ?? ''} onChange={(e) => setF({ ...f, paid_on: e.target.value })} /></Field></div>
         <Field label="Method"><select name="method" value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}>{['bank_transfer', 'card', 'cash', 'cheque', 'other'].map((m) => <option key={m} value={m}>{label(m)}</option>)}</select></Field>
@@ -211,96 +226,6 @@ export function FinanceDocument() {
 function AnswerBox({ onSend }: { onSend: (t: string) => void }) {
   const [t, setT] = useState('');
   return <div className="row" style={{ marginTop: 4 }}><input aria-label="Answer" value={t} onChange={(e) => setT(e.target.value)} style={{ flex: 1 }} /><Button variant="secondary" disabled={t.trim().length < 2} onClick={() => onSend(t)}>Answer</Button></div>;
-}
-
-function Budgets() {
-  const hub = useHub();
-  const toast = useToast();
-  const [year, setYear] = useState(Number(londonToday().slice(0, 4)));
-  const d = useApi<any>(`/finance/budgets${hub.q({ year: String(year) })}`);
-  const [f, setF] = useState<any>(null);
-  const save = useSubmit(async () => { await api('PUT', '/finance/budgets', { ...f, actual: f.actual || null, note: f.note || null }); setF(null); toast('Saved.'); d.reload(); });
-  const est = (company: string, month: string) => d.data?.staffing_estimate.find((x: any) => x.company_id === company && x.month === month)?.estimate;
-  return (
-    <>
-      <div className="row" style={{ marginBottom: 16 }}><Button variant="secondary" onClick={() => setYear(year - 1)}>‹ {year - 1}</Button><h2 style={{ margin: 0 }}>{year}</h2><Button variant="secondary" onClick={() => setYear(year + 1)}>{year + 1} ›</Button>
-        {hub.can('finance.manage') && <Button onClick={() => setF({ company_id: hub.company !== 'all' ? hub.company : hub.me.companies.find((c) => c.perms.includes('finance.manage'))?.id, month: `${year}-01-01`, category: 'staffing', amount: '', actual: '', note: '' })}>Set a budget</Button>}</div>
-      <p className="small muted">The staffing estimate comes from approved timesheets, allocated to the company the work was for, so people working for more than one company are never counted twice. It is an estimate, not payroll.</p>
-      {(d.data?.budgets ?? []).length === 0 ? <Empty>No budgets set for {year}.</Empty> : (
-        <div className="table-wrap"><table><thead><tr><th>Month</th><th>Company</th><th>Category</th><th className="num">Budget</th><th className="num">Actual</th><th className="num">Staffing estimate</th><th>Note</th></tr></thead>
-          <tbody>{d.data.budgets.map((b: any) => <tr key={b.id}><td>{fmtDate(b.month).replace(/^1 /, '')}</td><td>{b.company_code}</td><td>{label(b.category)}</td><td className="num">{money(b.amount)}</td><td className="num">{money(b.actual)}</td><td className="num">{b.category === 'staffing' ? money(est(b.company_id, b.month) ?? 0) : '—'}</td><td className="small">{b.note}</td></tr>)}</tbody></table></div>
-      )}
-      <Dialog open={!!f} onClose={() => setF(null)} title="Set a budget" footer={<Button busy={save.busy} onClick={() => save.run()}>Save</Button>}>
-        {f && <><ErrorSummary error={save.error} />
-          <Field label="Company"><select name="company_id" value={f.company_id} onChange={(e) => setF({ ...f, company_id: e.target.value })}>{hub.me.companies.filter((c) => c.perms.includes('finance.manage')).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
-          <div className="form-grid"><Field label="Month"><input name="month" type="month" value={f.month.slice(0, 7)} onChange={(e) => setF({ ...f, month: `${e.target.value}-01` })} /></Field>
-            <Field label="Category"><select name="category" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{['staffing', 'cover', 'training', 'premises', 'other'].map((c) => <option key={c} value={c}>{label(c)}</option>)}</select></Field></div>
-          <div className="form-grid"><Field label="Budget (£)" error={save.error?.fields.amount}><input name="amount" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field><Field label="Actual (£)" optional><input name="actual" inputMode="decimal" value={f.actual} onChange={(e) => setF({ ...f, actual: e.target.value })} /></Field></div>
-          <Field label="Note" optional><input name="note" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field></>}
-      </Dialog>
-    </>
-  );
-}
-
-function Cashflow() {
-  const hub = useHub();
-  const toast = useToast();
-  const cos = hub.me.companies.filter((c) => c.perms.includes('finance.view'));
-  const [company, setCompany] = useState(hub.company !== 'all' && hub.can('finance.view', hub.company) ? hub.company : cos[0]?.id);
-  const d = useApi<any>(company ? `/finance/cashflow?company=${company}` : null);
-  const [line, setLine] = useState<any>(null);
-  const [sc, setSc] = useState<any>(null);
-  const [setup, setSetup] = useState<any>(null);
-  const manage = hub.can('finance.manage', company);
-  const saveLine = useSubmit(async () => { await post('/finance/cashflow/lines', { ...line, company_id: company, actual: line.actual || null }); setLine(null); toast('Saved.'); d.reload(); });
-  const saveSc = useSubmit(async () => { await post('/finance/scenarios', { ...sc, company_id: company, supplier_increase_percent: sc.supplier_increase_percent ? Number(sc.supplier_increase_percent) : null, adjustments: sc.adjustments.filter((x: any) => x.amount) }); setSc(null); toast('Scenario saved.'); d.reload(); });
-  const saveSetup = useSubmit(async () => { await api('PUT', '/finance/cashflow/settings', { ...setup, company_id: company }); setSetup(null); d.reload(); });
-  const data = d.data;
-  return (
-    <>
-      <div className="row" style={{ marginBottom: 16 }}>
-        <div className="field" style={{ margin: 0 }}><label htmlFor="cf-co">Company</label><select id="cf-co" value={company} onChange={(e) => setCompany(e.target.value)} style={{ width: 'auto' }}>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-        {manage && <><Button variant="secondary" onClick={() => setSetup({ opening_balance: data?.settings?.opening_balance ?? '0.00', opening_month: data?.settings?.opening_month ?? `${londonToday().slice(0, 7)}-01` })}>Opening balance</Button>
-          <Button variant="secondary" onClick={() => setLine({ month: `${londonToday().slice(0, 7)}-01`, kind: 'income', label: '', forecast: '', actual: '' })}>Add a forecast line</Button>
-          <Button variant="secondary" onClick={() => setSc({ name: '', kind: 'delayed_income', assumptions: '', response: '', supplier_increase_percent: '', adjustments: [{ month: `${londonToday().slice(0, 7)}-01`, label: '', amount: '' }] })}>Add a scenario</Button></>}
-      </div>
-      {!data ? <Skeleton /> : !data.settings ? <Empty>Set the opening balance and month to start the forecast.</Empty> : (
-        <>
-          <div className="table-wrap"><table>
-            <caption>Projected balance for 12 months (forecast; actual where entered)</caption>
-            <thead><tr><th>Month</th><th className="num">Forecast net</th><th className="num">Actual net</th><th className="num">Projected balance</th>{data.scenarios.map((s: any) => <th key={s.id} className="num">If: {s.name}</th>)}</tr></thead>
-            <tbody>{data.projection.map((p: any) => <tr key={p.month}><td>{new Intl.DateTimeFormat('en-GB', { month: 'short', year: 'numeric' }).format(new Date(`${p.month}T12:00Z`))}</td><td className="num">{money(p.net)}</td><td className="num">{money(p.actual_net)}</td>
-              <td className="num">{Number(p.balance) < 0 ? <strong style={{ color: 'var(--danger)' }}>{money(p.balance)} (below zero)</strong> : money(p.balance)}</td>
-              {data.scenarios.map((s: any) => { const v = p.scenarios.find((x: any) => x.id === s.id)?.balance; return <td key={s.id} className="num">{Number(v) < 0 ? <strong style={{ color: 'var(--danger)' }}>{money(v)} (below zero)</strong> : money(v)}</td>; })}</tr>)}</tbody>
-          </table></div>
-          <div className="grid-2" style={{ marginTop: 16 }}>
-            <section className="card"><h2>Forecast lines</h2>{data.lines.length === 0 ? <Empty>None.</Empty> : <ul className="list">{data.lines.map((l: any) => <li key={l.id}><span>{fmtDate(l.month).replace(/^1 /, '')} · {label(l.kind)}: {l.label}<br /><span className="small">Forecast {money(l.forecast)} · Actual {money(l.actual)}</span></span>{manage && <Button variant="ghost" onClick={() => setLine({ ...l, forecast: String(l.forecast), actual: l.actual ?? '' })}>Edit</Button>}</li>)}</ul>}</section>
-            <section className="card"><h2>Scenarios</h2>{data.scenarios.length === 0 ? <Empty>No scenarios. Try delayed income, cover costs, unexpected spending or supplier increases.</Empty> : data.scenarios.map((s: any) => <div key={s.id} style={{ marginBottom: 12 }}><strong>{s.name}</strong> <span className="badge co">{label(s.kind)}</span><p className="small" style={{ margin: '4px 0' }}>Assumptions: {s.assumptions}</p>{s.response && <p className="small" style={{ margin: 0 }}>Management response: {s.response}</p>}</div>)}</section>
-          </div>
-        </>
-      )}
-      <Dialog open={!!setup} onClose={() => setSetup(null)} title="Opening balance" variant="modal" footer={<Button busy={saveSetup.busy} onClick={() => saveSetup.run()}>Save</Button>}>
-        {setup && <><ErrorSummary error={saveSetup.error} /><Field label="Opening balance (£)"><input name="opening_balance" inputMode="decimal" value={setup.opening_balance} onChange={(e) => setSetup({ ...setup, opening_balance: e.target.value })} /></Field><Field label="From month"><input name="opening_month" type="month" value={setup.opening_month.slice(0, 7)} onChange={(e) => setSetup({ ...setup, opening_month: `${e.target.value}-01` })} /></Field></>}
-      </Dialog>
-      <Dialog open={!!line} onClose={() => setLine(null)} title="Forecast line" footer={<Button busy={saveLine.busy} onClick={() => saveLine.run()}>Save</Button>}>
-        {line && <><ErrorSummary error={saveLine.error} />
-          <div className="form-grid"><Field label="Month"><input name="month" type="month" value={line.month.slice(0, 7)} onChange={(e) => setLine({ ...line, month: `${e.target.value}-01` })} /></Field><Field label="Type"><select name="kind" value={line.kind} onChange={(e) => setLine({ ...line, kind: e.target.value })}><option value="income">Income</option><option value="expense">Expense</option></select></Field></div>
-          <Field label="Label" error={saveLine.error?.fields.label}><input name="label" value={line.label} onChange={(e) => setLine({ ...line, label: e.target.value })} /></Field>
-          <div className="form-grid"><Field label="Forecast (£)" error={saveLine.error?.fields.forecast}><input name="forecast" inputMode="decimal" value={line.forecast} onChange={(e) => setLine({ ...line, forecast: e.target.value })} /></Field><Field label="Actual (£)" optional><input name="actual" inputMode="decimal" value={line.actual} onChange={(e) => setLine({ ...line, actual: e.target.value })} /></Field></div></>}
-      </Dialog>
-      <Dialog open={!!sc} onClose={() => setSc(null)} title="Add a scenario" footer={<Button busy={saveSc.busy} onClick={() => saveSc.run()}>Save</Button>}>
-        {sc && <><ErrorSummary error={saveSc.error} />
-          <Field label="Name" error={saveSc.error?.fields.name}><input name="name" value={sc.name} onChange={(e) => setSc({ ...sc, name: e.target.value })} /></Field>
-          <Field label="Type"><select name="kind" value={sc.kind} onChange={(e) => setSc({ ...sc, kind: e.target.value })}>{['delayed_income', 'cover_costs', 'unexpected_expenditure', 'supplier_increase', 'other'].map((k) => <option key={k} value={k}>{label(k)}</option>)}</select></Field>
-          <Field label="Assumptions" error={saveSc.error?.fields.assumptions}><textarea name="assumptions" value={sc.assumptions} onChange={(e) => setSc({ ...sc, assumptions: e.target.value })} /></Field>
-          {sc.kind === 'supplier_increase' && <Field label="Increase on all forecast expenses (%)"><input name="pct" type="number" min={0} max={100} value={sc.supplier_increase_percent} onChange={(e) => setSc({ ...sc, supplier_increase_percent: e.target.value })} /></Field>}
-          <fieldset style={{ border: 0, padding: 0 }}><legend style={{ fontWeight: 600 }}>Changes to the forecast</legend><span className="hint">Use a minus sign for money lost or spent, for example -18000.00.</span>
-            {sc.adjustments.map((x: any, i: number) => <div key={i} className="form-grid"><Field label="Month"><input name={`am${i}`} type="month" value={x.month.slice(0, 7)} onChange={(e) => setSc({ ...sc, adjustments: sc.adjustments.map((y: any, j: number) => (j === i ? { ...y, month: `${e.target.value}-01` } : y)) })} /></Field><Field label="What"><input name={`al${i}`} value={x.label} onChange={(e) => setSc({ ...sc, adjustments: sc.adjustments.map((y: any, j: number) => (j === i ? { ...y, label: e.target.value } : y)) })} /></Field><Field label="Amount (£)"><input name={`aa${i}`} value={x.amount} onChange={(e) => setSc({ ...sc, adjustments: sc.adjustments.map((y: any, j: number) => (j === i ? { ...y, amount: e.target.value } : y)) })} /></Field></div>)}
-            <Button variant="ghost" onClick={() => setSc({ ...sc, adjustments: [...sc.adjustments, { month: sc.adjustments.at(-1)?.month ?? `${londonToday().slice(0, 7)}-01`, label: '', amount: '' }] })}>Add a change</Button></fieldset>
-          <Field label="What management would do" optional><textarea name="response" value={sc.response} onChange={(e) => setSc({ ...sc, response: e.target.value })} /></Field></>}
-      </Dialog>
-    </>
-  );
 }
 
 const SCENARIOS: [string, string][] = [['staff_shortage', 'Staff shortage'], ['it_failure', 'IT failure'], ['office_loss', 'Loss of office'], ['emergency', 'Emergency'], ['supplier_failure', 'Supplier failure'], ['other', 'Other']];

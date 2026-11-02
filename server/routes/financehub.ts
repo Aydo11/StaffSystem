@@ -309,14 +309,14 @@ financehub.get('/finance/transactions', async (req, res) => {
 });
 const txnBody = z.object({ account_id: uuid, txn_date: isoDate, amount: signedMoney, fx_rate: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).optional(), description: text(300).min(1), counterparty: text(200).nullable().optional(),
   category: category.nullable().optional(), department: department.nullable().optional(), property_id: uuid.nullable().optional(), counterparty_company_id: uuid.nullable().optional(), note: text(1000).nullable().optional() });
-async function accountFor(db: Db, a: any, id: string) {
+export async function accountFor(db: Db, a: any, id: string) {
   const acc = await one('select * from finance_accounts where id = $1', [id], db);
   if (!acc) throw notFound();
   need(a, 'finance.manage', acc.company_id);
   if (acc.archived) throw conflict('This account is archived.');
   return acc;
 }
-function checkDate(acc: any, d: string) { if (d < day(acc.opening_date)) throw bad(`This account's opening balance is dated ${day(acc.opening_date)}; enter only later transactions, or move the opening date back.`, { fields: { txn_date: 'Before the opening balance' } }); }
+export function checkDate(acc: any, d: string) { if (d < day(acc.opening_date)) throw bad(`This account's opening balance is dated ${day(acc.opening_date)}; enter only later transactions, or move the opening date back.`, { fields: { txn_date: 'Before the opening balance' } }); }
 financehub.post('/finance/transactions', async (req, res) => {
   const b = parse(txnBody, req.body);
   if (Number(b.amount) === 0) throw bad('Enter an amount.', { fields: { amount: 'Cannot be zero' } });
@@ -452,7 +452,7 @@ financehub.post('/finance/accounts/:id/import', upload.single('file'), async (re
     if (iDate < 0 || iDesc < 0 || (iAmt < 0 && (iIn < 0 || iOut < 0))) throw bad('Could not find the date, description and amount columns. Use headings like Date, Description, Amount (or Paid in, Paid out).');
     const known = new Map((await q(`select lower(description) d, category from finance_transactions where company_id = $1 and category is not null and transfer_id is null order by created_at`, [acc.company_id], db)).map((r) => [r.d, r.category]));
     const seen = new Map<string, number>();
-    let imported = 0, duplicates = 0, skipped = 0;
+    let imported = 0, duplicates = 0, skipped = 0, matched = 0;
     const errors: string[] = [];
     for (const [n, r] of rows.slice(1).entries()) {
       const raw = (r[iDate] ?? '').trim();
@@ -467,13 +467,19 @@ financehub.post('/finance/accounts/:id/import', upload.single('file'), async (re
       const key = `${date}|${Number(amount).toFixed(2)}|${desc.toLowerCase()}`;
       const k = (seen.get(key) ?? 0) + 1; seen.set(key, k);  // two identical rows on one day are both kept (the nth copy has its own hash)
       const hash = createHash('sha256').update(`${key}|${k}`).digest('hex');
+      if (await one('select 1 from finance_transactions where account_id = $1 and import_hash = $2', [acc.id, hash], db)) { duplicates++; continue; }
+      // Already entered by hand (an expense, a payment, a transfer or a whole remittance): link it to this row instead of adding it again.
+      const claim = await one(`select (array_agg(id order by created_at))[1] id from finance_transactions
+                                where account_id = $1 and source <> 'import' and txn_date between $2::date - 3 and $2::date + 3
+                                group by coalesce(remittance_id, id) having sum(amount) = $3::numeric and bool_and(import_hash is null) limit 1`, [acc.id, date, amount], db);
+      if (claim) { await q('update finance_transactions set import_hash = $2 where id = $1', [claim.id, hash], db); matched++; continue; }
       const r2 = await one(`insert into finance_transactions (company_id, account_id, txn_date, amount, fx_rate, description, counterparty, category, source, import_hash, created_by)
                             values ($1,$2,$3,$4::numeric,$5::numeric,$6,$7,$8,'import',$9,$10) on conflict (account_id, import_hash) do nothing returning id`,
         [acc.company_id, acc.id, date, amount, acc.currency === 'GBP' ? 1 : acc.opening_fx_rate, desc, iWho >= 0 ? (r[iWho] ?? '').trim().slice(0, 200) || null : null, known.get(desc.toLowerCase()) ?? null, hash, req.person.id], db);
       if (r2) imported++; else duplicates++;
     }
-    await audit(db, req.person.id, acc.company_id, 'finance_account', acc.id, 'import', { imported, duplicates, skipped, errors: errors.length });
-    return { imported, duplicates, skipped_before_opening: skipped, errors: errors.slice(0, 20) };
+    await audit(db, req.person.id, acc.company_id, 'finance_account', acc.id, 'import', { imported, duplicates, matched, skipped, errors: errors.length });
+    return { imported, duplicates, matched, skipped_before_opening: skipped, errors: errors.slice(0, 20) };
   });
   res.status(201).json(out);
 });

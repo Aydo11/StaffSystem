@@ -371,3 +371,144 @@ export function Forecast({ go }: { go: (tab: string) => void }) {
         {edit && <><ErrorSummary error={saveSet.error} />
           <Field label="Minimum cash buffer (£)" hint="The forecast flags any period that closes below this."><input name="min_cash" inputMode="decimal" value={edit.min_cash} onChange={(e) => setEdit({ ...edit, min_cash: e.target.value })} /></Field>
           {SC.map(([k, n]) => { const s = edit.scenarios[k], setS = (x: any) => setEdit({ ...edit, scenarios: { ...edit.scenarios, [k]: { ...s, ...x } } }); return (
+            <fieldset key={k} className="fh-fieldset"><legend>{n}</legend>
+              <div className="form-grid"><Field label="Collections late by (days)"><input type="number" min={0} max={180} value={s.collect_delay_days} onChange={(e) => setS({ collect_delay_days: Number(e.target.value) })} /></Field>
+                <Field label="Bills paid late by (days)"><input type="number" min={0} max={180} value={s.pay_delay_days} onChange={(e) => setS({ pay_delay_days: Number(e.target.value) })} /></Field></div>
+              <div className="form-grid"><Field label="Revenue change (%)"><input type="number" step="0.5" value={s.revenue_pct} onChange={(e) => setS({ revenue_pct: Number(e.target.value) })} /></Field>
+                <Field label="Cost change (%)"><input type="number" step="0.5" value={s.cost_pct} onChange={(e) => setS({ cost_pct: Number(e.target.value) })} /></Field></div>
+              {s.one_offs.map((o: any, i: number) => <div key={i} className="form-grid"><Field label="Date"><input type="date" value={o.date} onChange={(e) => setS({ one_offs: s.one_offs.map((y: any, j: number) => (j === i ? { ...y, date: e.target.value } : y)) })} /></Field>
+                <Field label="What"><input value={o.label} onChange={(e) => setS({ one_offs: s.one_offs.map((y: any, j: number) => (j === i ? { ...y, label: e.target.value } : y)) })} /></Field>
+                <Field label="Amount (£, minus for money out)"><input inputMode="decimal" value={o.amount} onChange={(e) => setS({ one_offs: s.one_offs.map((y: any, j: number) => (j === i ? { ...y, amount: e.target.value } : y)) })} /></Field></div>)}
+              <Button variant="ghost" onClick={() => setS({ one_offs: [...s.one_offs, { date: londonToday(), label: '', amount: '' }] })}>Add a one-off</Button>
+            </fieldset>); })}</>}
+      </Dialog>
+    </>
+  );
+}
+
+// ── Daily operations ──
+const KIND_LABEL: Record<string, string> = { invoice_due: 'Invoice due', bill_due: 'Bill due', payroll: 'Payroll', tax: 'Tax', loan: 'Loan', rent: 'Rent', supplier: 'Supplier', subscription: 'Subscription', insurance: 'Insurance', income: 'Income', other: 'Other' };
+export function Daily({ go }: { go: (tab: string, extra?: Record<string, string>) => void }) {
+  const hub = useHub();
+  const d = useApi<any>(`/finance/hub${hub.q()}`);
+  if (d.error) return <LoadError error={d.error} retry={d.reload} />;
+  if (!d.data) return <Skeleton lines={8} />;
+  const h = d.data;
+  const weeks = new Map<string, any[]>();
+  for (const e of h.calendar) { const k = e.date.slice(0, 10); const wk = (() => { const x = new Date(`${k}T12:00:00Z`); x.setUTCDate(x.getUTCDate() - ((x.getUTCDay() + 6) % 7)); return x.toISOString().slice(0, 10); })(); weeks.set(wk, [...(weeks.get(wk) ?? []), e]); }
+  return (
+    <>
+      <ul className="fh-kpis fh-queues">
+        {[['Waiting for approval', h.ops.awaiting_approval.length, () => go('documents')], ['Not categorised', h.ops.uncategorised, () => go('bank', { status: 'uncategorised' })],
+          ['Receipt or bill missing', h.ops.missing_docs, () => go('bank', { status: 'missing_docs' })], ['Not reconciled', h.ops.unreconciled, () => go('bank', { status: 'unreconciled' })]].map(([t, n, fn]: any) => (
+          <li key={t} className={`fh-kpi ${n ? 'tone-warn' : ''}`}><button type="button" onClick={fn}><span className="fh-kpi-label">{t}</span><strong className="fh-kpi-value">{n}</strong><span className="fh-vs">Open the list</span></button></li>))}
+      </ul>
+      <div className="grid-2">
+        <section className="card"><h2>Collect first</h2><p className="small muted">Overdue invoices, largest and oldest first.</p>
+          {h.collections.length === 0 ? <Empty>Nothing overdue.</Empty> : <ul className="list">{h.collections.map((c: any) => <li key={c.id}><span><Link to={`/finance/${c.id}`}>{c.number ?? 'Invoice'}</Link> · {c.who}<br /><span className="small fh-bad">{c.days_late} days late{c.part_paid && ' · part paid'}</span></span><strong>{gbp(c.amount)}</strong></li>)}</ul>}
+        </section>
+        <section className="card"><h2>Bank and reconciliation</h2>
+          {h.accounts.length === 0 ? <Empty>No accounts yet. <Button variant="ghost" onClick={() => go('bank')}>Add one</Button></Empty> : <ul className="list">{h.accounts.map((a: any) => <li key={a.id}><span><strong>{a.company_code} · {a.name}</strong><br /><span className="small muted">Bank data to {a.last_txn ? fmtDate(a.last_txn) : 'none yet'} · reconciled to {a.reconciled_to ? fmtDate(a.reconciled_to) : 'never'} · {a.unreconciled} not reconciled</span></span><strong>{a.currency === 'GBP' ? gbp(Number(a.balance) * 100) : `${a.balance} ${a.currency}`}</strong></li>)}</ul>}
+        </section>
+      </div>
+      <section className="card"><h2>Finance calendar, next 60 days</h2>
+        <p className="small muted">Invoices due in, bills due out, payroll, tax, loan repayments and recurring bills. Add payroll, tax and loans under Commitments below.</p>
+        {h.calendar.length === 0 ? <Empty>Nothing scheduled. Add payroll, tax deadlines, loans and regular bills as commitments.</Empty> : [...weeks].map(([wk, es]) => (
+          <div key={wk} className="fh-cal-week"><h3 className="fh-h3">Week of {fmtDate(wk)}</h3><ul className="list">{es.map((e: any, i: number) => <li key={i}><span>{fmtDate(e.date)} · <Status s={e.amount > 0 ? 'info' : e.overdue ? 'action' : 'review'} text={KIND_LABEL[e.kind] ?? label(e.kind)} /> {e.link ? <Link to={e.link}>{e.label}</Link> : e.label}{e.certainty === 'estimate' && <span className="small muted"> (estimate)</span>}{e.overdue && <span className="fh-bad"> overdue</span>}</span><strong>{gbp(e.amount)}</strong></li>)}</ul></div>))}
+      </section>
+      <Commitments />
+    </>
+  );
+}
+const COMMIT_KINDS: [string, string, string, string][] = [['payroll', 'Payroll', 'out', 'staffing'], ['tax', 'Tax (VAT, PAYE, corporation tax)', 'out', 'tax'], ['loan', 'Loan repayment', 'out', 'loan_repayment'], ['rent', 'Rent to a landlord', 'out', 'property_rent'],
+  ['supplier', 'Supplier / provider', 'out', 'provider_costs'], ['subscription', 'Subscription', 'out', 'it_systems'], ['insurance', 'Insurance', 'out', 'insurance'], ['income', 'Regular income', 'in', 'rent'], ['other', 'Other', 'out', 'other_expense']];
+function Commitments() {
+  const hub = useHub();
+  const toast = useToast();
+  const d = useApi<any[]>(`/finance/commitments${hub.q()}`);
+  const [f, setF] = useState<any>(null);
+  const cos = hub.me.companies.filter((c) => c.perms.includes('finance.manage'));
+  const saveC = useSubmit(async () => {
+    const body = { ...f, end_date: f.end_date || null, department: f.department || null, counterparty: f.counterparty || null, loan_balance: f.kind === 'loan' && f.loan_balance ? f.loan_balance : null, interest_rate: f.kind === 'loan' && f.interest_rate ? f.interest_rate : null, note: f.note || null };
+    if (f.id) { const { id, company_id, ...rest } = body; await patch(`/finance/commitments/${id}`, rest); } else await post('/finance/commitments', body);
+    setF(null); toast('Commitment saved.'); d.reload();
+  });
+  const stop = useSubmit(async (id: string) => { await patch(`/finance/commitments/${id}`, { active: false }); toast('Stopped. It stays on record.'); d.reload(); });
+  const blank = () => ({ company_id: hub.company !== 'all' && cos.some((c) => c.id === hub.company) ? hub.company : cos[0]?.id, kind: 'payroll', label: '', direction: 'out', amount: '', frequency: 'monthly', next_date: londonToday(), end_date: '', certainty: 'committed', category: 'staffing', department: '', counterparty: '', loan_balance: '', interest_rate: '', note: '' });
+  return (
+    <section className="card"><div className="row between"><h2>Commitments: payroll, tax, loans and regular bills</h2>{cos.length > 0 && <Button variant="secondary" onClick={() => setF(blank())}><Icon name="plus" size={18} />Add</Button>}</div>
+      <p className="small muted">Committed items are counted in the forecast as they are. Estimates are flexed by the scenario. Either one replaces the matching part of the plan, so nothing is counted twice.</p>
+      {!d.data ? <Skeleton /> : d.data.length === 0 ? <Empty>No commitments yet.</Empty> : (
+        <div className="table-wrap"><table><thead><tr><th scope="col">What</th><th scope="col">How often</th><th scope="col">Next</th><th scope="col" className="num">Amount</th><th scope="col">Certainty</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+          <tbody>{d.data.map((c) => <tr key={c.id} className={c.active ? undefined : 'muted'}><td><strong>{c.label}</strong><br /><span className="small muted">{c.company_code} · {COMMIT_KINDS.find((k) => k[0] === c.kind)?.[1]} · {catName(c.category)}{c.loan_balance && ` · £${c.loan_balance} owed at ${c.interest_rate ?? 0}%`}</span></td>
+            <td>{label(c.frequency)}{c.end_date && <><br /><span className="small muted">until {fmtDate(c.end_date)}</span></>}</td><td>{c.upcoming[0] ? fmtDate(c.upcoming[0].date) : '—'}</td><td className="num">{c.direction === 'in' ? '' : '−'}{money(c.amount)}</td>
+            <td><Status s={c.certainty === 'committed' ? 'info' : 'review'} text={label(c.certainty)} /></td>
+            <td>{c.active && hub.can('finance.manage', c.company_id) && <span className="row"><Button variant="ghost" onClick={() => setF({ ...blank(), ...c, end_date: c.end_date ?? '', department: c.department ?? '', counterparty: c.counterparty ?? '', loan_balance: c.loan_balance ?? '', interest_rate: c.interest_rate ?? '', note: c.note ?? '', next_date: String(c.next_date).slice(0, 10) })}>Edit</Button><Button variant="ghost" disabled={stop.busy} onClick={() => stop.run(c.id)}>Stop</Button></span>}</td></tr>)}</tbody></table></div>
+      )}
+      <Dialog open={!!f} onClose={() => setF(null)} title={f?.id ? 'Edit commitment' : 'Add a commitment'} footer={<Button busy={saveC.busy} onClick={() => saveC.run()}>Save</Button>}>
+        {f && <><ErrorSummary error={saveC.error} />
+          {!f.id && cos.length > 1 && <Field label="Company"><select value={f.company_id} onChange={(e) => setF({ ...f, company_id: e.target.value })}>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>}
+          <Field label="Type"><select value={f.kind} onChange={(e) => { const k = COMMIT_KINDS.find((x) => x[0] === e.target.value)!; setF({ ...f, kind: k[0], direction: k[2], category: k[3] }); }}>{COMMIT_KINDS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>
+          <Field label="Name" error={saveC.error?.fields.label}><input value={f.label} onChange={(e) => setF({ ...f, label: e.target.value })} placeholder="e.g. Monthly payroll, PAYE to HMRC, Bounce Back loan" /></Field>
+          <div className="form-grid"><Field label="Amount each time (£)" error={saveC.error?.fields.amount}><input inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
+            <Field label="Money"><select value={f.direction} onChange={(e) => setF({ ...f, direction: e.target.value })} disabled={f.kind === 'loan'}><option value="out">Going out</option><option value="in">Coming in</option></select></Field></div>
+          <div className="form-grid"><Field label="How often"><select value={f.frequency} onChange={(e) => setF({ ...f, frequency: e.target.value })}>{['once', 'weekly', 'four_weekly', 'monthly', 'quarterly', 'annually'].map((x) => <option key={x} value={x}>{label(x)}</option>)}</select></Field>
+            <Field label="Next date" error={saveC.error?.fields.next_date}><input type="date" value={f.next_date} onChange={(e) => setF({ ...f, next_date: e.target.value })} /></Field></div>
+          <Field label="Ends" optional error={saveC.error?.fields.end_date}><input type="date" value={f.end_date} onChange={(e) => setF({ ...f, end_date: e.target.value })} /></Field>
+          {f.kind === 'loan' && <div className="form-grid"><Field label="Still owed (£)" optional hint="Splits each repayment into interest and principal and stops when repaid."><input inputMode="decimal" value={f.loan_balance} onChange={(e) => setF({ ...f, loan_balance: e.target.value })} /></Field>
+            <Field label="Interest rate (% a year)" optional><input inputMode="decimal" value={f.interest_rate} onChange={(e) => setF({ ...f, interest_rate: e.target.value })} /></Field></div>}
+          <Field label="How certain"><select value={f.certainty} onChange={(e) => setF({ ...f, certainty: e.target.value })}><option value="committed">Committed (contracted or agreed)</option><option value="estimate">Estimate (expected, not agreed)</option></select></Field>
+          <div className="form-grid"><Field label="Category"><select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{Object.entries(CAT).map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>
+            <Field label="Department" optional><select value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })}><option value="">None</option>{DEPTS.map((x) => <option key={x} value={x}>{label(x)}</option>)}</select></Field></div>
+          <Field label="Paid to / from" optional><input value={f.counterparty} onChange={(e) => setF({ ...f, counterparty: e.target.value })} /></Field></>}
+      </Dialog>
+    </section>
+  );
+}
+
+// ── Reports: P&L, cash flow statement, balance sheet ──
+export function Reports() {
+  const hub = useHub();
+  const { qs, f } = useFinanceFilters();
+  const d = useApi<any>(`/finance/reports?${qs({ company: hub.company !== 'all' ? hub.company : '' })}`);
+  const [drill, setDrill] = useState<[string, string] | null>(null);
+  if (d.error) return <><FilterBar /><LoadError error={d.error} retry={d.reload} /></>;
+  const r = d.data;
+  const line = (x: any) => <tr key={x.category}><td><button type="button" className="linkish" onClick={() => setDrill([`category:${x.category}`, catName(x.category)])}>{catName(x.category)}</button></td><td className="num">{gbp(Math.abs(x.actual))}</td><td className="num">{gbp(Math.abs(x.budget))}</td><td className="num">{gbp(Math.abs(x.actual) - Math.abs(x.budget))}</td></tr>;
+  const nonzero = (xs: any[]) => xs.filter((x) => x.actual || x.budget);
+  const pnlRows = () => r && [['Profit and loss (accrual)', `${f.from} to ${f.to}`], ['Line', 'Actual', 'Budget'], ...['income', 'direct', 'overheads'].flatMap((g) => [[g === 'income' ? 'Income' : g === 'direct' ? 'Direct costs' : 'Overheads'], ...nonzero(r.pnl[g]).map((x: any) => [catName(x.category), Math.abs(x.actual) / 100, Math.abs(x.budget) / 100])]),
+    ['Revenue', r.pnl.revenue / 100], ['Gross profit', r.pnl.gross_profit / 100], ['Net profit', r.pnl.net_profit / 100, r.pnl.budget_net / 100]];
+  const cfRows = () => r && [['Cash flow (cash basis)', `${f.from} to ${f.to}`], ['Opening cash', r.cashflow.opening == null ? '' : r.cashflow.opening / 100], ['Accounts opened in the period', r.cashflow.opened / 100], ['Operating'], ...r.cashflow.operating.map((x: any) => [catName(x.category), x.amount / 100]),
+    ['Financing'], ...r.cashflow.financing.map((x: any) => [catName(x.category), x.amount / 100]), ['Transfers and money between group companies', r.cashflow.transfers / 100], ['Closing cash', r.cashflow.closing == null ? '' : r.cashflow.closing / 100]];
+  const bsRows = () => r && [['Balance sheet (management)', `as at ${r.balance_sheet.as_of}`], ...r.balance_sheet.accounts.map((a: any) => [a.name, a.amount / 100]), ['Owed to you', r.balance_sheet.receivables / 100], ['Total assets', r.balance_sheet.assets / 100], ['You owe', r.balance_sheet.payables / 100], ['Loans', r.balance_sheet.loans / 100], ['Total liabilities', r.balance_sheet.liabilities / 100], ['Net assets', r.balance_sheet.net_assets / 100]];
+  return (
+    <>
+      <FilterBar />
+      {!r ? <Skeleton lines={8} /> : (
+        <>
+          <div className="row between fh-toolbar"><p className="small muted">Management reports from Hub records. Not statutory accounts: fixed assets, VAT control, prepayments and accruals other than invoices and bills are not tracked here.</p>
+            <span className="row"><Button variant="secondary" onClick={() => save(xlsx([{ name: 'Profit and loss', rows: pnlRows() }, { name: 'Cash flow', rows: cfRows() }, { name: 'Balance sheet', rows: bsRows() }]), `finance-reports-${f.from}-to-${f.to}.xlsx`)}>Excel</Button>
+              <Button variant="ghost" onClick={() => save(csv(pnlRows()), `profit-and-loss-${f.from}-to-${f.to}.csv`)}>CSV</Button><Button variant="ghost" onClick={() => window.print()}>PDF</Button></span></div>
+          <section className="card"><h2>Profit and loss <span className="small muted">(accrual)</span></h2>
+            <div className="table-wrap"><table><thead><tr><th scope="col">Line</th><th scope="col" className="num">Actual</th><th scope="col" className="num">Budget</th><th scope="col" className="num">Difference</th></tr></thead>
+              <tbody><tr className="fh-sec"><th colSpan={4} scope="rowgroup">Income</th></tr>{nonzero(r.pnl.income).map(line)}
+                <tr className="fh-total"><th scope="row">Revenue</th><td className="num">{gbp(r.pnl.revenue)}</td><td colSpan={2} /></tr>
+                <tr className="fh-sec"><th colSpan={4} scope="rowgroup">Direct costs</th></tr>{nonzero(r.pnl.direct).map(line)}
+                <tr className="fh-total"><th scope="row">Gross profit</th><td className="num">{gbp(r.pnl.gross_profit)}</td><td colSpan={2} /></tr>
+                <tr className="fh-sec"><th colSpan={4} scope="rowgroup">Overheads</th></tr>{nonzero(r.pnl.overheads).map(line)}
+                <tr className="fh-total"><th scope="row">Net profit</th><td className="num">{gbp(r.pnl.net_profit)}</td><td className="num">{gbp(r.pnl.budget_net)}</td><td className="num">{gbp(r.pnl.net_profit - r.pnl.budget_net)}</td></tr></tbody></table></div>
+          </section>
+          <div className="grid-2">
+            <section className="card"><h2>Cash flow <span className="small muted">(cash)</span></h2>
+              <div className="table-wrap"><table><tbody>
+                <tr className="fh-total"><th scope="row">Opening cash</th><td className="num">{r.cashflow.opening == null ? 'No accounts' : gbp(r.cashflow.opening)}</td></tr>
+                {r.cashflow.opened !== 0 && <tr><th scope="row">Accounts opened in the period</th><td className="num">{gbp(r.cashflow.opened)}</td></tr>}
+                <tr className="fh-sec"><th colSpan={2} scope="rowgroup">Operating</th></tr>{r.cashflow.operating.map((x: any) => <tr key={x.category}><td>{catName(x.category)}</td><td className="num">{gbp(x.amount)}</td></tr>)}
+                <tr className="fh-sec"><th colSpan={2} scope="rowgroup">Financing</th></tr>{r.cashflow.financing.map((x: any) => <tr key={x.category}><td>{catName(x.category)}</td><td className="num">{gbp(x.amount)}</td></tr>)}
+                {r.cashflow.transfers !== 0 && <tr><td>Transfers and money between group companies</td><td className="num">{gbp(r.cashflow.transfers)}</td></tr>}
+                <tr className="fh-total"><th scope="row">Closing cash</th><td className="num">{r.cashflow.closing == null ? 'No accounts' : gbp(r.cashflow.closing)}</td></tr></tbody></table></div>
+              {r.cashflow.reconciles != null && <p className={`small ${r.cashflow.reconciles ? '' : 'fh-bad'}`}>{r.cashflow.reconciles ? '✓ Opening plus movements equals closing.' : 'Opening plus movements does not equal closing: check for transactions dated before an account opened.'}</p>}
+            </section>
+            <section className="card"><h2>Balance sheet <span className="small muted">(as at {fmtDate(r.balance_sheet.as_of)})</span></h2>
+              <div className="table-wrap"><table><tbody>
+                <tr className="fh-sec"><th colSpan={2} scope="rowgroup">Assets</th></tr>{r.balance_sheet.accounts.map((a: any) => <tr key={a.name}><td>{a.name}</td><td className="num">{gbp(a.amount)}</td></tr>)}

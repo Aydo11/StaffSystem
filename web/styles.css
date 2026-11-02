@@ -824,3 +824,12 @@ button.linkish { background: none; border: 0; padding: 0; font: inherit; color: 
 @media print { .fh-filters, .fh-toolbar .btn, .fh-def, .fh-table-view summary { display: none !important; } .fh-table-view { display: block; } .fh-table-view[open], .fh-table-view > div { display: block; } }
 .fh-more { grid-column: 1 / -1; } .fh-more > summary { cursor: pointer; font-weight: 600; color: var(--teal-text); min-height: 44px; display: flex; align-items: center; }
 .fh-more-inner { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: 0 var(--s3); align-items: end; }
+.contents { display: contents; }
+/* Remittances and expenses */
+.fi-rows { list-style: none; margin: var(--s3) 0; padding: 0; display: grid; gap: var(--s3); }
+.fi-row { border: 1px solid var(--line); border-radius: var(--r-ctl); padding: var(--s2) var(--s3) 0; background: var(--card); }
+.fi-row.in { border-left: 4px solid var(--chart-1); } .fi-row.out { border-left: 4px solid #eb6834; }
+.fi-row-head { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; justify-content: space-between; }
+.fi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 0 var(--s3); }
+.fi-total { font-variant-numeric: tabular-nums; }
+.fi-notes { list-style: none; margin: 0 0 var(--s3); display: grid; gap: 4px; }

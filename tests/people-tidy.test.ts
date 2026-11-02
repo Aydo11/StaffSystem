@@ -32,3 +32,15 @@ describe('correcting and removing', () => {
     expect((await pool.query(`select count(*)::int n from tasks where owner_id = $1 and status <> 'completed'`, [P.sam])).rows[0].n).toBe(0);
   });
 });
+
+describe('backdated clearance', () => {
+  it('keeps the real decision date and when it was entered; refuses a future date', async () => {
+    const alex = await as('alex');
+    const base = { person_id: P.sam, company_id: C.VH, status: 'cleared', evidence_summary: 'DBS and right to work seen (fictional)' };
+    expect((await alex.post('/api/clearance').send({ ...base, decided_on: '2999-01-01' })).status).toBe(400);
+    const r = await alex.post('/api/clearance').send({ ...base, decided_on: '2026-08-03' });
+    expect(r.status).toBe(201);
+    const row = (await pool.query(`select (decided_at at time zone 'Europe/London')::date::text d, recorded_at > now() - interval '1 minute' as fresh from clearance_decisions where id = $1`, [r.body.id])).rows[0];
+    expect(row).toEqual({ d: '2026-08-03', fresh: true });
+  });
+});

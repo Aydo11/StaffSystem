@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { one, pool, q, tx } from '../db.ts';
-import { audit, bad, conflict, isoDate, localDateTime, notFound, parse, text, uuid, idParam } from '../http.ts';
+import { audit, bad, conflict, isoDate, LONDON_TODAY, localDateTime, notFound, parse, text, uuid, idParam } from '../http.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith, need } from '../perm.ts';
 import { deleteFile, readFile, saveFile } from '../storage.ts';
 import { onLeave } from './leave.ts';
@@ -137,6 +137,34 @@ properties.patch('/properties/:id', async (req, res) => {
   if (row.latitude == null) pinProperties(pool, 5).catch(() => {});
   await audit(pool, req.person.id, p.company_id, 'property', id, 'update', { before: Object.fromEntries(keys.map((k) => [k, p[k]])), after: b });
   res.json(row);
+});
+
+// Removing a property: with no history (added by mistake, a duplicate) it is deleted outright. With history (visits, repairs,
+// tasks, complaints…) it is offboarded instead: hidden from lists, allocations end, planned visits are cancelled, and the
+// history stays. Both are audited.
+const HISTORY = ['visits', 'repairs', 'tasks', 'condition_ratings', 'property_complaints', 'finance_documents', 'handover_notes', 'conversations', 'safety_requirements', 'appointment_properties', 'scheduled_visits'];
+properties.delete('/properties/:id', async (req, res) => {
+  const id = idParam(req.params.id);
+  const p = await visibleProperty(req.access, id);
+  need(req.access, 'properties.manage', p.company_id);
+  const out = await tx(async (db) => {
+    const used = (await one<{ n: number }>(`select (${HISTORY.map((t) => `(select count(*) from ${t} where property_id = $1)`).join(' + ')})::int n`, [id], db))!.n;
+    if (!used) {
+      const files = await q<{ id: string }>(`select id from files where entity_type = 'property' and entity_id = $1`, [id], db);
+      await q('update properties set photo_path = null where id = $1', [id], db);
+      for (const f of files) await deleteFile(db, f.id);
+      await q('delete from agent_properties where property_id = $1', [id], db);
+      await q('delete from properties where id = $1', [id], db);
+      await audit(db, req.person.id, p.company_id, 'property', id, 'delete', { ref: p.ref, name: p.name });
+      return { removed: 'deleted' };
+    }
+    await q(`update properties set status = 'offboarded' where id = $1`, [id], db);
+    await q(`update appointment_properties set to_date = ${LONDON_TODAY} where property_id = $1 and (to_date is null or to_date > ${LONDON_TODAY})`, [id], db);
+    await q(`update scheduled_visits set status = 'cancelled' where property_id = $1 and status = 'scheduled' and planned_start > now()`, [id], db);
+    await audit(db, req.person.id, p.company_id, 'property', id, 'offboard', { ref: p.ref, name: p.name });
+    return { removed: 'offboarded' };
+  });
+  res.json(out);
 });
 
 properties.post('/properties/:id/photo', upload.single('file'), async (req, res) => {

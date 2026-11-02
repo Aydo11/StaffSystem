@@ -512,3 +512,135 @@ export function Reports() {
             <section className="card"><h2>Balance sheet <span className="small muted">(as at {fmtDate(r.balance_sheet.as_of)})</span></h2>
               <div className="table-wrap"><table><tbody>
                 <tr className="fh-sec"><th colSpan={2} scope="rowgroup">Assets</th></tr>{r.balance_sheet.accounts.map((a: any) => <tr key={a.name}><td>{a.name}</td><td className="num">{gbp(a.amount)}</td></tr>)}
+                <tr><td>Owed to you</td><td className="num">{gbp(r.balance_sheet.receivables)}</td></tr><tr className="fh-total"><th scope="row">Total assets</th><td className="num">{gbp(r.balance_sheet.assets)}</td></tr>
+                <tr className="fh-sec"><th colSpan={2} scope="rowgroup">Liabilities</th></tr><tr><td>You owe</td><td className="num">{gbp(r.balance_sheet.payables)}</td></tr><tr><td>Loans</td><td className="num">{gbp(r.balance_sheet.loans)}</td></tr>
+                <tr className="fh-total"><th scope="row">Total liabilities</th><td className="num">{gbp(r.balance_sheet.liabilities)}</td></tr>
+                <tr className="fh-total"><th scope="row">Net assets</th><td className="num">{gbp(r.balance_sheet.net_assets)}</td></tr></tbody></table></div>
+            </section>
+          </div>
+        </>
+      )}
+      <Drill metric={drill?.[0] ?? null} title={drill?.[1] ?? ''} onClose={() => setDrill(null)} />
+    </>
+  );
+}
+
+// ── Bank and cash ──
+export function Bank() {
+  const hub = useHub();
+  const toast = useToast();
+  const { qs, params, set } = useFinanceFilters();
+  const status = params.get('status') ?? '';
+  const h = useApi<any>(`/finance/hub${hub.q()}`);
+  const tx = useApi<any[]>(`/finance/transactions?${qs({ company: hub.company !== 'all' ? hub.company : '', status })}`);
+  const docs = useApi<any[]>('/finance/documents');
+  const [acc, setAcc] = useState<any>(null);
+  const [t, setT] = useState<any>(null);
+  const [tr, setTr] = useState<any>(null);
+  const [rec, setRec] = useState<any>(null);
+  const [match, setMatch] = useState<any>(null);
+  const [imp, setImp] = useState<string | null>(null);
+  const cos = hub.me.companies.filter((c) => c.perms.includes('finance.manage'));
+  const accounts = h.data?.accounts ?? [];
+  const reload = () => { h.reload(); tx.reload(); docs.reload(); };
+  const saveAcc = useSubmit(async () => { await post('/finance/accounts', { ...acc, last_four: acc.last_four || null }); setAcc(null); toast('Account added.'); reload(); });
+  const saveT = useSubmit(async () => { const b = { ...t, category: t.category || null, department: t.department || null, property_id: t.property_id || null, counterparty: t.counterparty || null, note: t.note || null };
+    if (t.id) { const { id, account_id, ...rest } = b; await patch(`/finance/transactions/${id}`, rest); } else await post('/finance/transactions', b); setT(null); toast('Saved.'); reload(); });
+  const code = useSubmit(async (id: string, body: any) => { await patch(`/finance/transactions/${id}`, body); reload(); });
+  const del = useSubmit(async (id: string) => { await api('DELETE', `/finance/transactions/${id}`); toast('Deleted.'); reload(); });
+  const saveTr = useSubmit(async () => { await post('/finance/transfers', { ...tr, to_amount: tr.to_amount || undefined }); setTr(null); toast('Transfer recorded.'); reload(); });
+  const saveRec = useSubmit(async () => { const r = await post(`/finance/accounts/${rec.id}/reconcile`, { statement_date: rec.statement_date, statement_balance: rec.statement_balance }); setRec(null); toast(`${r.reconciled} item(s) reconciled.`); reload(); });
+  const saveMatch = useSubmit(async () => { await post(`/finance/transactions/${match.id}/match`, { document_id: match.document_id }); setMatch(null); toast('Matched and payment recorded.'); reload(); });
+  const doImport = useSubmit(async (file: File) => { const r = await upload(`/finance/accounts/${imp}/import`, file, file.name); setImp(null); toast(`Imported ${r.imported}, skipped ${r.duplicates} already there${r.skipped_before_opening ? `, ${r.skipped_before_opening} before the opening date` : ''}${r.errors.length ? `, ${r.errors.length} rows not read` : ''}.`); reload(); });
+  const attach = useSubmit(async (id: string, file: File) => { await upload(`/finance/transactions/${id}/files`, file, file.name); toast('Receipt attached.'); reload(); });
+  const openDocs = (x: any) => (docs.data ?? []).filter((d) => d.company_id === x.company_id && (Number(x.amount) > 0 ? d.direction === 'receivable' && ['issued', 'part_paid'].includes(d.status) : d.direction === 'payable' && ['approved', 'issued', 'part_paid'].includes(d.status)));
+  const sheet = () => [['Date', 'Account', 'Description', 'Counterparty', 'Category', 'Department', 'Amount', 'Currency', 'GBP', 'Reconciled', 'Matched to'], ...(tx.data ?? []).map((x) => [String(x.txn_date).slice(0, 10), x.account_name, x.description, x.counterparty, catName(x.category), x.department, Number(x.amount), x.currency, Number(x.amount_gbp), x.reconciled ? 'Yes' : 'No', x.document_number])];
+  return (
+    <>
+      <section className="card"><div className="row between"><h2>Accounts</h2>{cos.length > 0 && <Button onClick={() => setAcc({ company_id: hub.company !== 'all' && cos.some((c) => c.id === hub.company) ? hub.company : cos.find((c) => c.code === 'VH')?.id ?? cos[0].id, name: '', kind: 'bank', currency: 'GBP', opening_balance: '', opening_fx_rate: '1', opening_date: londonToday(), last_four: '' })}><Icon name="plus" size={18} />Add an account</Button>}</div>
+        <p className="small muted">The opening balance is the balance on the morning of the opening date (from your bank statement). Everything on and after that date comes from transactions, imported or typed in. Only the last four digits of an account are stored.</p>
+        {!h.data ? <Skeleton /> : accounts.length === 0 ? <Empty>No accounts yet. Add your bank account with today's balance (or the balance on the date your statement starts), then import the statement.</Empty> : (
+          <div className="table-wrap"><table><thead><tr><th scope="col">Account</th><th scope="col" className="num">Balance</th><th scope="col">Data to</th><th scope="col">Reconciled to</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+            <tbody>{accounts.map((a: any) => <tr key={a.id}><td><strong>{a.company_code} · {a.name}</strong>{a.last_four && <span className="small muted"> ··{a.last_four}</span>}<br /><span className="small muted">{label(a.kind)} · opened {fmtDate(a.opening_date)} with {money(a.opening_balance)}{a.currency !== 'GBP' && ` ${a.currency}`}</span></td>
+              <td className="num">{a.currency === 'GBP' ? money(a.balance) : `${a.balance} ${a.currency} (${money(a.balance_gbp)})`}</td><td>{a.last_txn ? fmtDate(a.last_txn) : '—'}{a.last_import && <><br /><span className="small muted">imported {fmtDate(a.last_import)}</span></>}</td>
+              <td>{a.reconciled_to ? fmtDate(a.reconciled_to) : 'Never'}{a.unreconciled > 0 && <><br /><span className="small muted">{a.unreconciled} to reconcile</span></>}</td>
+              <td>{hub.can('finance.manage', a.company_id) && <span className="row"><Button variant="secondary" onClick={() => setImp(a.id)}>Import statement</Button><Button variant="ghost" onClick={() => setRec({ id: a.id, statement_date: a.last_txn ?? londonToday(), statement_balance: '' })}>Reconcile</Button></span>}</td></tr>)}</tbody></table></div>
+        )}
+      </section>
+      <section className="card">
+        <div className="row between"><h2>Transactions</h2>
+          <span className="row">{accounts.length > 0 && cos.length > 0 && <><Button variant="secondary" onClick={() => setT({ account_id: accounts[0].id, txn_date: londonToday(), amount: '', description: '', counterparty: '', category: '', department: '', property_id: '', note: '' })}>Add a transaction</Button>
+            {accounts.length > 1 && <Button variant="ghost" onClick={() => setTr({ from_account: accounts[0].id, to_account: accounts[1].id, txn_date: londonToday(), amount: '', to_amount: '', description: 'Transfer' })}>Transfer</Button>}</>}
+            <Button variant="ghost" onClick={() => save(xlsx([{ name: 'Transactions', rows: sheet() }]), 'transactions.xlsx')}>Excel</Button><Button variant="ghost" onClick={() => save(csv(sheet()), 'transactions.csv')}>CSV</Button></span></div>
+        <div role="group" aria-label="Show" className="fh-seg">{[['', 'In the period'], ['uncategorised', 'Not categorised'], ['missing_docs', 'Receipt missing'], ['unreconciled', 'Not reconciled']].map(([k, n]) => <button key={k} type="button" aria-pressed={status === k} onClick={() => set({ status: k })}>{n}</button>)}</div>
+        {!status && <FilterBar accounts={accounts} showAccount />}
+        <ErrorSummary error={code.error ?? del.error ?? attach.error} />
+        {!tx.data ? <Skeleton /> : tx.data.length === 0 ? <Empty>No transactions here.</Empty> : (
+          <div className="table-wrap"><table><thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Category</th><th scope="col" className="num">Amount</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+            <tbody>{tx.data.map((x) => { const m = hub.can('finance.manage', x.company_id); return <tr key={x.id}><td>{fmtDate(x.txn_date)}</td>
+              <td>{x.description}<br /><span className="small muted">{x.company_code} · {x.account_name}{x.counterparty && ` · ${x.counterparty}`}{x.property_name && ` · ${x.property_name}`}</span></td>
+              <td>{x.transfer_id ? 'Transfer' : m && !x.document_id ? <select aria-label={`Category for ${x.description}`} value={x.category ?? ''} onChange={(e) => code.run(x.id, { category: e.target.value || null })}><option value="">Not categorised</option>{Object.entries(CAT).filter(([k]) => k !== 'transfer').map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select> : catName(x.category)}</td>
+              <td className="num">{Number(x.amount) < 0 ? <span>{money(x.amount)}</span> : <strong>{money(x.amount)}</strong>}{x.currency !== 'GBP' && <><br /><span className="small muted">{x.currency} → {money(x.amount_gbp)}</span></>}</td>
+              <td className="small">{x.reconciled ? <Status s="verified" text="Reconciled" /> : <Status s="planned" text="Not reconciled" />}{x.document_number && <><br />Matched to <Link to={`/finance/${x.document_id}`}>{x.document_number}</Link></>}{x.files > 0 && <><br />{x.files} receipt{x.files === 1 ? '' : 's'}</>}</td>
+              <td>{m && <span className="row">{!x.document_id && !x.transfer_id && openDocs(x).length > 0 && <Button variant="ghost" onClick={() => setMatch({ id: x.id, x, document_id: '' })}>Match</Button>}
+                {!x.transfer_id && <FilePicker label="Attach receipt" compact instant accept="application/pdf,image/*" busy={attach.busy} onChange={(fs) => fs[0] && attach.run(x.id, fs[0])} />}
+                {!x.reconciled && !x.transfer_id && !x.document_id && <Button variant="ghost" onClick={() => setT({ ...x, txn_date: String(x.txn_date).slice(0, 10), amount: String(x.amount), category: x.category ?? '', department: x.department ?? '', property_id: x.property_id ?? '', counterparty: x.counterparty ?? '', note: x.note ?? '' })}>Edit</Button>}
+                {!x.reconciled && !x.document_id && <Button variant="ghost" disabled={del.busy} onClick={() => del.run(x.id)}>Delete</Button>}</span>}</td></tr>; })}</tbody></table></div>
+        )}
+      </section>
+      <Dialog open={!!acc} onClose={() => setAcc(null)} title="Add an account" footer={<Button busy={saveAcc.busy} onClick={() => saveAcc.run()}>Add</Button>}>
+        {acc && <><ErrorSummary error={saveAcc.error} />
+          {cos.length > 1 && <Field label="Company"><select value={acc.company_id} onChange={(e) => setAcc({ ...acc, company_id: e.target.value })}>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>}
+          <Field label="Name" error={saveAcc.error?.fields.name}><input value={acc.name} onChange={(e) => setAcc({ ...acc, name: e.target.value })} placeholder="e.g. Business current account" /></Field>
+          <div className="form-grid"><Field label="Type"><select value={acc.kind} onChange={(e) => setAcc({ ...acc, kind: e.target.value })}>{[['bank', 'Bank current account'], ['savings', 'Savings'], ['cash', 'Petty cash'], ['card', 'Credit card'], ['loan', 'Loan account']].map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>
+            <Field label="Last 4 digits" optional><input inputMode="numeric" maxLength={4} value={acc.last_four} onChange={(e) => setAcc({ ...acc, last_four: e.target.value })} /></Field></div>
+          <div className="form-grid"><Field label="Opening date" hint="The date your balance is from." error={saveAcc.error?.fields.opening_date}><input type="date" value={acc.opening_date} onChange={(e) => setAcc({ ...acc, opening_date: e.target.value })} /></Field>
+            <Field label="Opening balance" hint="Minus if overdrawn or owed." error={saveAcc.error?.fields.opening_balance}><input inputMode="decimal" value={acc.opening_balance} onChange={(e) => setAcc({ ...acc, opening_balance: e.target.value })} /></Field></div>
+          <div className="form-grid"><Field label="Currency"><input maxLength={3} value={acc.currency} onChange={(e) => setAcc({ ...acc, currency: e.target.value.toUpperCase(), opening_fx_rate: e.target.value.toUpperCase() === 'GBP' ? '1' : acc.opening_fx_rate })} /></Field>
+            {acc.currency !== 'GBP' && <Field label="Rate to GBP on the opening date"><input inputMode="decimal" value={acc.opening_fx_rate} onChange={(e) => setAcc({ ...acc, opening_fx_rate: e.target.value })} /></Field>}</div></>}
+      </Dialog>
+      <Dialog open={!!t} onClose={() => setT(null)} title={t?.id ? 'Edit transaction' : 'Add a transaction'} footer={<Button busy={saveT.busy} onClick={() => saveT.run()}>Save</Button>}>
+        {t && <><ErrorSummary error={saveT.error} />
+          {!t.id && <Field label="Account"><select value={t.account_id} onChange={(e) => setT({ ...t, account_id: e.target.value })}>{accounts.map((a: any) => <option key={a.id} value={a.id}>{a.company_code} · {a.name}</option>)}</select></Field>}
+          <div className="form-grid"><Field label="Date" error={saveT.error?.fields.txn_date}><input type="date" value={t.txn_date} onChange={(e) => setT({ ...t, txn_date: e.target.value })} /></Field>
+            <Field label="Amount" hint="Minus for money out, e.g. -120.00. A refund you receive is plus, in the original category." error={saveT.error?.fields.amount}><input inputMode="decimal" value={t.amount} onChange={(e) => setT({ ...t, amount: e.target.value })} /></Field></div>
+          {accounts.find((a: any) => a.id === t.account_id)?.currency !== 'GBP' && <Field label="Rate to GBP" error={saveT.error?.fields.fx_rate}><input inputMode="decimal" value={t.fx_rate ?? ''} onChange={(e) => setT({ ...t, fx_rate: e.target.value })} /></Field>}
+          <Field label="Description" error={saveT.error?.fields.description}><input value={t.description} onChange={(e) => setT({ ...t, description: e.target.value })} /></Field>
+          <Field label="Paid to / from" optional><input value={t.counterparty} onChange={(e) => setT({ ...t, counterparty: e.target.value })} /></Field>
+          <div className="form-grid"><Field label="Category" optional><select value={t.category} onChange={(e) => setT({ ...t, category: e.target.value })}><option value="">Not categorised</option>{Object.entries(CAT).filter(([k]) => k !== 'transfer').map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></Field>
+            <Field label="Department" optional><select value={t.department} onChange={(e) => setT({ ...t, department: e.target.value })}><option value="">None</option>{DEPTS.map((x) => <option key={x} value={x}>{label(x)}</option>)}</select></Field></div>
+          <Field label="Note" optional><input value={t.note} onChange={(e) => setT({ ...t, note: e.target.value })} /></Field></>}
+      </Dialog>
+      <Dialog open={!!tr} onClose={() => setTr(null)} title="Transfer between accounts" footer={<Button busy={saveTr.busy} onClick={() => saveTr.run()}>Record transfer</Button>}>
+        {tr && <><ErrorSummary error={saveTr.error} /><p className="small muted">Recorded on both accounts and never counted as income or spending.</p>
+          <div className="form-grid"><Field label="From"><select value={tr.from_account} onChange={(e) => setTr({ ...tr, from_account: e.target.value })}>{accounts.map((a: any) => <option key={a.id} value={a.id}>{a.company_code} · {a.name}</option>)}</select></Field>
+            <Field label="To"><select value={tr.to_account} onChange={(e) => setTr({ ...tr, to_account: e.target.value })}>{accounts.map((a: any) => <option key={a.id} value={a.id}>{a.company_code} · {a.name}</option>)}</select></Field></div>
+          <div className="form-grid"><Field label="Date"><input type="date" value={tr.txn_date} onChange={(e) => setTr({ ...tr, txn_date: e.target.value })} /></Field><Field label="Amount (£)" error={saveTr.error?.fields.amount}><input inputMode="decimal" value={tr.amount} onChange={(e) => setTr({ ...tr, amount: e.target.value })} /></Field></div>
+          <Field label="Amount received" optional hint="Only if the accounts use different currencies." error={saveTr.error?.fields.to_amount}><input inputMode="decimal" value={tr.to_amount} onChange={(e) => setTr({ ...tr, to_amount: e.target.value })} /></Field>
+          <Field label="Description"><input value={tr.description} onChange={(e) => setTr({ ...tr, description: e.target.value })} /></Field></>}
+      </Dialog>
+      <Dialog open={!!rec} onClose={() => setRec(null)} title="Reconcile to a bank statement" variant="modal" footer={<Button busy={saveRec.busy} onClick={() => saveRec.run()}>Reconcile</Button>}>
+        {rec && <><ErrorSummary error={saveRec.error} /><p className="small muted">Enter the closing balance shown on your statement for a date. If the Hub agrees to the penny, everything up to that date is marked reconciled and locked.</p>
+          <div className="form-grid"><Field label="Statement date"><input type="date" value={rec.statement_date} onChange={(e) => setRec({ ...rec, statement_date: e.target.value })} /></Field>
+            <Field label="Statement balance (£)" error={saveRec.error?.fields.statement_balance}><input inputMode="decimal" value={rec.statement_balance} onChange={(e) => setRec({ ...rec, statement_balance: e.target.value })} /></Field></div></>}
+      </Dialog>
+      <Dialog open={!!match} onClose={() => setMatch(null)} title="Match to an invoice or bill" variant="modal" footer={<Button busy={saveMatch.busy} disabled={!match?.document_id} onClick={() => saveMatch.run()}>Match</Button>}>
+        {match && <><ErrorSummary error={saveMatch.error} /><p className="small">{match.x.description}: <strong>{money(match.x.amount)}</strong>. A part payment is fine; the rest stays owed.</p>
+          <Field label="Document"><select value={match.document_id} onChange={(e) => setMatch({ ...match, document_id: e.target.value })}><option value="">Choose…</option>{openDocs(match.x).map((d) => <option key={d.id} value={d.id}>{d.number ?? label(d.kind)} · {d.direction === 'receivable' ? d.recipient_name : d.issuer_name} · {money(d.total)}</option>)}</select></Field></>}
+      </Dialog>
+      <Dialog open={!!imp} onClose={() => setImp(null)} title="Import a bank statement" variant="modal">
+        <ErrorSummary error={doImport.error} />
+        <p className="small">Download a CSV statement from online banking. The Hub finds the Date, Description and Amount (or Paid in / Paid out) columns. Rows already imported are skipped, so overlapping statements are safe. Rows dated before the account's opening date are skipped.</p>
+        <FilePicker label="CSV statement" accept=".csv,text/csv" instant busy={doImport.busy} onChange={(fs) => fs[0] && doImport.run(fs[0])} />
+      </Dialog>
+    </>
+  );
+}
+
+// ── Plan and budgets ──
+export function Plan() {
+  const hub = useHub();
+  const toast = useToast();
+  const d = useApi<any>(`/finance/plan${hub.q()}`);
+  const [edit, setEdit] = useState<any>(null);
+  const saveL = useSubmit(async () => { await patch(`/finance/plan-lines/${edit.id}`, { amount: edit.amount, all_periods: edit.all }); setEdit(null); toast('Plan updated.'); d.reload(); });

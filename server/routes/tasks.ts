@@ -6,6 +6,7 @@ import { ACTIVE_APPT, type Access, can, companiesWith } from '../perm.ts';
 import { deleteFile, readFile, saveFile } from '../storage.ts';
 import { personVisible, taskVisible, visitVisible } from '../visibility.ts';
 import { caseRoleForFile } from './cases.ts';
+import { complaintRoleForFile } from './complaints.ts';
 import { loadRepair } from './estates.ts';
 import { canReadStory, upload } from './people.ts';
 
@@ -174,6 +175,8 @@ tasks.get('/files/:id', async (req, res) => {
     if (!r || (r.person_id !== a.personId && !cos.some((c) => can(a, 'training.manage', c)))) throw notFound();
   } else if (f.entity_type === 'case') {
     if (!(await caseRoleForFile(a, f.entity_id))) throw notFound();
+  } else if (f.entity_type === 'complaint') {
+    if (!(await complaintRoleForFile(a, f.entity_id))) throw notFound();
   } else if (f.entity_type === 'repair') {
     await loadRepair(a, f.entity_id);
   } else if (f.entity_type === 'safety_check') {

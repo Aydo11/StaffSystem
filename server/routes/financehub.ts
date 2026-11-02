@@ -427,3 +427,155 @@ financehub.post('/finance/transactions/:id/match', async (req, res) => {
     await q(`insert into finance_payments (document_id, amount, paid_on, method, reference, manual, recorded_by, transaction_id) values ($1, $2::numeric, $3, 'bank_transfer', $4, false, $5, $6)`,
       [d.id, pounds(amt), day(x.txn_date), x.description.slice(0, 200), req.person.id, x.id], db);
     await q(`update finance_transactions set document_id = $2, category = coalesce(category, $3), department = coalesce(department, $4), property_id = coalesce(property_id, $5), updated_at = now() where id = $1`,
+      [x.id, d.id, d.category ?? (d.direction === 'receivable' ? 'other_income' : d.kind === 'contractor_invoice' ? 'staffing' : 'other_expense'), d.department, d.property_id], db);
+    const status = amt === left ? 'paid' : 'part_paid';
+    await q('update finance_documents set status = $2, updated_at = now() where id = $1', [d.id, status], db);
+    await audit(db, req.person.id, x.company_id, 'finance_payment', d.id, 'match', { transaction_id: x.id, amount: pounds(amt) });
+    return { status };
+  });
+  res.json(out);
+});
+
+// Bank statement import (CSV). Columns are recognised by name: date; description; amount, or paid in / paid out
+// (also money in/out, credit/debit); optional counterparty or reference. Dates as dd/mm/yyyy or yyyy-mm-dd.
+// The same row imported twice is skipped. A description seen before reuses its category.
+financehub.post('/finance/accounts/:id/import', upload.single('file'), async (req, res) => {
+  if (!req.file) throw bad('Choose a CSV bank statement.');
+  const out = await tx(async (db) => {
+    const acc = await accountFor(db, req.access, idParam(req.params.id));
+    const rows = parseCsv(req.file!.buffer.toString('utf8'));
+    if (rows.length < 2) throw bad('The file has no rows.');
+    const head = rows[0].map((h) => h.trim().toLowerCase());
+    const col = (...names: string[]) => head.findIndex((h) => names.some((n) => h === n || h.includes(n)));
+    const iDate = col('date'), iDesc = col('description', 'details', 'narrative', 'memo', 'transaction'), iAmt = head.findIndex((h) => h === 'amount' || h.startsWith('amount'));
+    const iIn = col('paid in', 'money in', 'credit', 'in'), iOut = col('paid out', 'money out', 'debit', 'out'), iWho = col('counterparty', 'payee', 'name', 'reference');
+    if (iDate < 0 || iDesc < 0 || (iAmt < 0 && (iIn < 0 || iOut < 0))) throw bad('Could not find the date, description and amount columns. Use headings like Date, Description, Amount (or Paid in, Paid out).');
+    const known = new Map((await q(`select lower(description) d, category from finance_transactions where company_id = $1 and category is not null and transfer_id is null order by created_at`, [acc.company_id], db)).map((r) => [r.d, r.category]));
+    const seen = new Map<string, number>();
+    let imported = 0, duplicates = 0, skipped = 0;
+    const errors: string[] = [];
+    for (const [n, r] of rows.slice(1).entries()) {
+      const raw = (r[iDate] ?? '').trim();
+      const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/) ?? raw.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/);
+      if (!m) { errors.push(`Row ${n + 2}: date "${raw}" not recognised`); continue; }
+      const date = m[1].length === 4 ? `${m[1]}-${m[2]}-${m[3]}` : `${m[3].length === 2 ? `20${m[3]}` : m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+      const num = (s?: string) => (s ?? '').replace(/[£,\s]/g, '').replace(/^\((.*)\)$/, '-$1');
+      const amount = iAmt >= 0 ? num(r[iAmt]) : ((Number(num(r[iIn])) || 0) - Math.abs(Number(num(r[iOut])) || 0)).toFixed(2);
+      if (!/^-?\d+(\.\d{1,2})?$/.test(amount) || Number(amount) === 0) { errors.push(`Row ${n + 2}: no amount`); continue; }
+      if (date < day(acc.opening_date)) { skipped++; continue; }
+      const desc = (r[iDesc] ?? '').trim().slice(0, 300) || '(no description)';
+      const key = `${date}|${Number(amount).toFixed(2)}|${desc.toLowerCase()}`;
+      const k = (seen.get(key) ?? 0) + 1; seen.set(key, k);  // two identical rows on one day are both kept (the nth copy has its own hash)
+      const hash = createHash('sha256').update(`${key}|${k}`).digest('hex');
+      const r2 = await one(`insert into finance_transactions (company_id, account_id, txn_date, amount, fx_rate, description, counterparty, category, source, import_hash, created_by)
+                            values ($1,$2,$3,$4::numeric,$5::numeric,$6,$7,$8,'import',$9,$10) on conflict (account_id, import_hash) do nothing returning id`,
+        [acc.company_id, acc.id, date, amount, acc.currency === 'GBP' ? 1 : acc.opening_fx_rate, desc, iWho >= 0 ? (r[iWho] ?? '').trim().slice(0, 200) || null : null, known.get(desc.toLowerCase()) ?? null, hash, req.person.id], db);
+      if (r2) imported++; else duplicates++;
+    }
+    await audit(db, req.person.id, acc.company_id, 'finance_account', acc.id, 'import', { imported, duplicates, skipped, errors: errors.length });
+    return { imported, duplicates, skipped_before_opening: skipped, errors: errors.slice(0, 20) };
+  });
+  res.status(201).json(out);
+});
+
+// ── Commitments: payroll, tax, loans, bills, recurring income ──
+const commitBody = z.object({ company_id: uuid, kind: z.enum(['payroll', 'tax', 'loan', 'rent', 'supplier', 'subscription', 'insurance', 'income', 'other']), label: text(200).min(2),
+  direction: z.enum(['in', 'out']), amount: money, frequency: z.enum(['once', 'weekly', 'four_weekly', 'monthly', 'quarterly', 'annually']), next_date: isoDate, end_date: isoDate.nullable().optional(),
+  certainty: z.enum(['committed', 'estimate']), category, department: department.nullable().optional(), account_id: uuid.nullable().optional(), counterparty: text(200).nullable().optional(),
+  loan_balance: money.nullable().optional(), interest_rate: z.string().regex(/^\d{1,2}(\.\d{1,3})?$/).nullable().optional(), note: text(1000).nullable().optional() });
+financehub.get('/finance/commitments', async (req, res) => {
+  const cs = scope(req.access, 'finance.view', req.query.company);
+  const t = await today();
+  const rows = await q(`select c.*, co.code as company_code from finance_commitments c join companies co on co.id = c.company_id where c.company_id = any($1::uuid[]) order by c.active desc, c.kind, c.next_date`, [cs]);
+  res.json(rows.map((c) => ({ ...c, upcoming: occurrences(c, t, addDays(t, 120)).slice(0, 6).map((o) => ({ ...o, amount: pounds(o.amount), interest: pounds(o.interest ?? null), principal: pounds(o.principal ?? null), balance_after: pounds(o.balance_after ?? null) })) })));
+});
+financehub.post('/finance/commitments', async (req, res) => {
+  const b = parse(commitBody, req.body);
+  need(req.access, 'finance.manage', b.company_id);
+  if (b.end_date && b.end_date < b.next_date) throw bad('The end date is before the first date.', { fields: { end_date: 'Before the first date' } });
+  if (b.kind === 'loan' && b.direction !== 'out') throw bad('Loan repayments are money out. Record money borrowed as a bank item in the loan received category.');
+  const row = await tx(async (db) => {
+    const keys = Object.keys(b);
+    const r = await one(`insert into finance_commitments (${keys.join(', ')}, created_by) values (${keys.map((_, i) => `$${i + 1}`).join(', ')}, $${keys.length + 1}) returning *`, [...keys.map((k) => (b as any)[k] ?? null), req.person.id], db);
+    await audit(db, req.person.id, b.company_id, 'finance_commitment', r!.id, 'create', { label: b.label, amount: b.amount, frequency: b.frequency });
+    return r;
+  });
+  res.status(201).json(row);
+});
+financehub.patch('/finance/commitments/:id', async (req, res) => {
+  const b = parse(commitBody.omit({ company_id: true }).partial().extend({ active: z.boolean().optional() }).strict(), req.body);
+  await tx(async (db) => {
+    const c = await one('select * from finance_commitments where id = $1 for update', [idParam(req.params.id)], db);
+    if (!c) throw notFound();
+    need(req.access, 'finance.manage', c.company_id);
+    const keys = Object.keys(b);
+    if (keys.length) await q(`update finance_commitments set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1`, [c.id, ...keys.map((k) => (b as any)[k] ?? null)], db);
+    await audit(db, req.person.id, c.company_id, 'finance_commitment', c.id, 'update', Object.fromEntries(keys.map((k) => [k, { from: c[k], to: (b as any)[k] }])));
+  });
+  res.json({ ok: true });
+});
+
+// ── Plan (budget) ──
+financehub.get('/finance/plan', async (req, res) => {
+  const cs = scope(req.access, 'finance.view', req.query.company);
+  const plans = await q(`select p.*, co.code as company_code from finance_plans p join companies co on co.id = p.company_id where p.company_id = any($1::uuid[]) and p.active`, [cs]);
+  const lines = await q(`select l.*, pr.name as property_name from finance_plan_lines l left join properties pr on pr.id = l.property_id where l.plan_id = any($1::uuid[]) order by l.direction desc, l.category, l.label, l.period_no`, [plans.map((x) => x.id)]);
+  res.json({ plans, lines });
+});
+financehub.patch('/finance/plan-lines/:id', async (req, res) => {
+  const b = parse(z.object({ amount: signedMoney, all_periods: z.boolean().default(false) }), req.body);
+  await tx(async (db) => {
+    const l = await one('select l.*, p.company_id from finance_plan_lines l join finance_plans p on p.id = l.plan_id where l.id = $1', [idParam(req.params.id)], db);
+    if (!l) throw notFound();
+    need(req.access, 'finance.manage', l.company_id);
+    const n = await q(`update finance_plan_lines set amount = $2::numeric where ${b.all_periods ? 'plan_id = $3 and label = $4 and direction = $5 and category = $6' : 'id = $1'} returning id`,
+      b.all_periods ? [l.id, b.amount, l.plan_id, l.label, l.direction, l.category] : [l.id, b.amount], db);
+    await audit(db, req.person.id, l.company_id, 'finance_plan_line', l.id, 'update', { label: l.label, period: b.all_periods ? 'all' : l.period_no, from: l.amount, to: b.amount, lines: n.length });
+  });
+  res.json({ ok: true });
+});
+
+// ── Settings, document coding, saved views ──
+const scenarioSchema = z.object({ collect_delay_days: z.coerce.number().int().min(0).max(180), pay_delay_days: z.coerce.number().int().min(0).max(180), revenue_pct: z.coerce.number().min(-100).max(100), cost_pct: z.coerce.number().min(-100).max(200),
+  one_offs: z.array(z.object({ date: isoDate, label: text(200).min(1), amount: signedMoney })).max(50) });
+financehub.get('/finance/hub/settings', async (req, res) => {
+  const company = parse(uuid, req.query.company);
+  need(req.access, 'finance.view', company);
+  res.json(await one('select * from finance_hub_settings where company_id = $1', [company]) ?? { company_id: company, min_cash: '0.00', scenarios: null });
+});
+financehub.put('/finance/hub/settings', async (req, res) => {
+  const b = parse(z.object({ company_id: uuid, min_cash: money, scenarios: z.object({ base: scenarioSchema, optimistic: scenarioSchema, pessimistic: scenarioSchema }) }), req.body);
+  need(req.access, 'finance.manage', b.company_id);
+  await tx(async (db) => {
+    const old = await one('select * from finance_hub_settings where company_id = $1', [b.company_id], db);
+    await q(`insert into finance_hub_settings (company_id, min_cash, scenarios, updated_by, updated_at) values ($1, $2::numeric, $3, $4, now())
+             on conflict (company_id) do update set min_cash = excluded.min_cash, scenarios = excluded.scenarios, updated_by = excluded.updated_by, updated_at = now()`, [b.company_id, b.min_cash, JSON.stringify(b.scenarios), req.person.id], db);
+    await audit(db, req.person.id, b.company_id, 'finance_settings', b.company_id, 'forecast_assumptions', { from: old ? { min_cash: old.min_cash, scenarios: old.scenarios } : null, to: { min_cash: b.min_cash, scenarios: b.scenarios } });
+  });
+  res.json({ ok: true });
+});
+financehub.patch('/finance/documents/:id/coding', async (req, res) => {
+  const b = parse(z.object({ category: category.nullable(), department: department.nullable(), property_id: uuid.nullable() }).partial(), req.body);
+  await tx(async (db) => {
+    const d = await one('select * from finance_documents where id = $1', [idParam(req.params.id)], db);
+    if (!d) throw notFound();
+    need(req.access, 'finance.manage', d.company_id);
+    const keys = Object.keys(b);
+    if (keys.length) await q(`update finance_documents set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1`, [d.id, ...keys.map((k) => (b as any)[k])], db);
+    await audit(db, req.person.id, d.company_id, 'finance_document', d.id, 'coding', Object.fromEntries(keys.map((k) => [k, { from: d[k], to: (b as any)[k] }])));
+  });
+  res.json({ ok: true });
+});
+financehub.get('/finance/views', async (req, res) => {
+  if (!companiesWith(req.access, 'finance.view').length) throw forbidden();
+  res.json(await q('select * from finance_saved_views where person_id = $1 order by name', [req.person.id]));
+});
+financehub.post('/finance/views', async (req, res) => {
+  if (!companiesWith(req.access, 'finance.view').length) throw forbidden();
+  const b = parse(z.object({ name: text(80).min(1), filters: z.record(z.string(), z.string().max(100)) }), req.body);
+  res.status(201).json(await one('insert into finance_saved_views (person_id, name, filters) values ($1,$2,$3) returning *', [req.person.id, b.name, JSON.stringify(b.filters)]));
+});
+financehub.delete('/finance/views/:id', async (req, res) => {
+  await q('delete from finance_saved_views where id = $1 and person_id = $2', [idParam(req.params.id), req.person.id]);
+  res.json({ ok: true });
+});

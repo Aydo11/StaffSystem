@@ -20,7 +20,7 @@ tk as (select t.*, (t.completed_at at time zone 'Europe/London')::date done_on f
         where t.company_id = $1 and ($2::uuid is null or t.owner_id = $2) and t.due_on >= w.ds and t.due_on < w.de
           and (t.status = 'completed' or t.due_on < (now() at time zone 'Europe/London')::date)),
 rp as (select r.* from repairs r left join tasks t on t.id = r.task_id, w
-        where r.company_id = $1 and ($2::uuid is null or r.assignee_id = $2 or t.owner_id = $2) and r.due_on >= w.ds and r.due_on < w.de
+        where r.company_id = $1 and r.status <> 'cancelled' and ($2::uuid is null or r.assignee_id = $2 or t.owner_id = $2) and r.due_on >= w.ds and r.due_on < w.de
           and (r.completed_on is not null or r.due_on < (now() at time zone 'Europe/London')::date)),
 cp as (select t.*, (t.completed_at at time zone 'Europe/London')::date done_on from property_complaints c join tasks t on t.id = c.task_id, w
         where c.company_id = $1 and ($2::uuid is null or t.owner_id = $2) and t.due_on >= w.ds and t.due_on < w.de

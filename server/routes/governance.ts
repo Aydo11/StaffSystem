@@ -367,9 +367,9 @@ async function pack(db: Db, a: Access, companyId: string, month: string): Promis
       (select count(*) from scheduled_visits s, w where s.company_id = $1 and s.status = 'scheduled' and s.planned_start >= w.ds and s.planned_start < w.de and s.planned_start + make_interval(mins => s.planned_minutes) < now())::int missed,
       (select count(*) from audits x, w where x.company_id = $1 and x.completed_on >= w.ds and x.completed_on < w.de)::int audits_done,
       (select count(*) from audits x where x.company_id = $1 and x.status <> 'completed' and x.planned_on < ${LONDON_TODAY})::int audits_late,
-      (select count(*) from repairs r where r.company_id = $1 and r.status <> 'closed')::int repairs_open,
-      (select count(*) from repairs r where r.company_id = $1 and r.status <> 'closed' and r.urgency = 'emergency')::int repairs_emergency,
-      (select count(*) from repairs r where r.company_id = $1 and r.status <> 'closed' and r.due_on < ${LONDON_TODAY})::int repairs_overdue,
+      (select count(*) from repairs r where r.company_id = $1 and r.status not in ('verified','closed','cancelled'))::int repairs_open,
+      (select count(*) from repairs r where r.company_id = $1 and r.status not in ('verified','closed','cancelled') and r.urgency = 'emergency')::int repairs_emergency,
+      (select count(*) from repairs r where r.company_id = $1 and r.status not in ('verified','closed','cancelled') and r.due_on < ${LONDON_TODAY})::int repairs_overdue,
       (select count(*) from safety_requirements sr where sr.company_id = $1 and sr.retired_at is null
          and coalesce((select max(done_on) from safety_checks sc where sc.requirement_id = sr.id) + sr.interval_days, '1900-01-01') < ${LONDON_TODAY})::int safety_overdue,
       (select count(*) from safety_checks sc join safety_requirements sr on sr.id = sc.requirement_id, w where sr.company_id = $1 and sc.result = 'fail' and sc.done_on >= w.ds and sc.done_on < w.de)::int safety_failed,

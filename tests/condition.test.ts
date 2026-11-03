@@ -65,3 +65,20 @@ describe('complaints and maintenance', () => {
     expect((await alex.get(`/api/governance/leads?company=${C.VH}`)).body.filter((l: any) => l.area === 'complaints_oversight')).toHaveLength(2);
   });
 });
+
+describe('logged without a visit', () => {
+  it('a phone-call complaint and drop-in findings need no visit, and record how they reached us', async () => {
+    const sam = await as('sam');
+    const c = await sam.post(`/api/properties/${prop(1)}/complaints`).send({ source: 'neighbour', category: 'noise', channel: 'phone', summary: 'Neighbour rang about loud music last night.' });
+    expect(c.status).toBe(201);
+    expect(c.body).toMatchObject({ channel: 'phone', visit_id: null });
+    expect((await pool.query(`select body from complaint_events where complaint_id = $1 and kind = 'created'`, [c.body.id])).rows[0].body).toBe('Complaint logged (received by phone).');
+    expect((await sam.post(`/api/properties/${prop(1)}/findings`).send({ kitchen: 2, note: 'Bins overflowing.', channel: 'in_person' })).status).toBe(201);
+    const p = (await sam.get(`/api/properties/${prop(1)}`)).body;
+    expect(p.condition).toMatchObject({ score: 40, latest_note: 'Bins overflowing.' });
+    expect(p.complaints[0].channel).toBe('phone');
+    expect((await sam.post(`/api/properties/${prop(1)}/findings`).send({ note: 'nothing rated' })).status).toBe(400);
+    expect((await sam.post('/api/visits/manual').send(manual({ complaint: { source: 'resident', category: 'noise', channel: 'phone', summary: 'Raised with me on the visit.' } }))).status).toBe(201);
+    expect((await pool.query(`select channel from property_complaints where summary = 'Raised with me on the visit.'`)).rows[0].channel).toBe('visit');
+  });
+});

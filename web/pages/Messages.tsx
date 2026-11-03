@@ -83,6 +83,7 @@ function ChatThread({ id, onActivity }: { id: string; onActivity: () => void }) 
   const [report, setReport] = useState<any>(null);
   const [adding, setAdding] = useState(false);
   const [viewing, setViewing] = useState<any>(null);
+  const [forwarding, setForwarding] = useState<any>(null);
   const requestId = useRef(crypto.randomUUID());
   const scroller = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -153,6 +154,7 @@ function ChatThread({ id, onActivity }: { id: string; onActivity: () => void }) 
                       {!mine && startRun && group && <span className="bubble-author">{m.author_name}</span>}
                       <div className={`bubble${image && !m.body ? ' photo-only' : ''}`} onClick={(e) => { if (matchMedia('(hover: none)').matches && !(e.target as HTMLElement).closest('button')) setReactFor(reactFor === m.id ? null : m.id); }}>
                         <span className="sr-only">{mine ? 'You' : m.author_name}, {fmtTime(m.created_at)}: </span>
+                        {m.forwarded_from && <span className="bubble-fwd">Forwarded from {m.forwarded_from}</span>}
                         {image && <button type="button" className="bubble-img" onClick={() => setViewing(m)} aria-label={`Open photo ${m.file_name}`}><AuthImage url={`/files/${m.file_id}`} alt="" /></button>}
                         {m.file_id && !image && <button type="button" className="bubble-file" onClick={() => download(`/files/${m.file_id}`, m.file_name)}><Icon name="file" size={18} />{m.file_name}</button>}
                         {m.body && <p>{m.body}</p>}
@@ -169,6 +171,7 @@ function ChatThread({ id, onActivity }: { id: string; onActivity: () => void }) 
                       {reactFor === m.id && (
                         <div className="react-bar" role="group" aria-label="Choose a reaction">
                           {REACTIONS.map((e) => <button key={e} type="button" onClick={() => react.run(m.id, e)} aria-label={`React ${e}`}>{e}</button>)}
+                          <button type="button" className="small" onClick={() => { setReactFor(null); setForwarding(m); }}>Forward</button>
                           {!mine && <button type="button" className="small" onClick={() => { setReactFor(null); setReport({ id: m.id, reason: '' }); }}>Report</button>}
                         </div>
                       )}
@@ -216,6 +219,7 @@ function ChatThread({ id, onActivity }: { id: string; onActivity: () => void }) 
         <p>A company administrator will see this message (and only this message) and decide what to do.</p>
         <ErrorSummary error={doReport.error} /><Field label="Why are you reporting it?"><textarea name="reason" value={report?.reason ?? ''} onChange={(e) => setReport({ ...report, reason: e.target.value })} /></Field>
       </Dialog>
+      {forwarding && <ForwardDialog message={forwarding} fromId={id} onClose={() => setForwarding(null)} onSent={(n) => { setForwarding(null); toast(`Forwarded to ${n} chat${n === 1 ? '' : 's'}.`); onActivity(); }} />}
       <Dialog open={adding} onClose={() => setAdding(false)} title="Add people to this group" variant="modal">
         <ErrorSummary error={add.error} />
         <ul className="list">{(people.data ?? []).filter((p) => !members.some((m: any) => m.id === p.id)).map((p) => (
@@ -223,6 +227,37 @@ function ChatThread({ id, onActivity }: { id: string; onActivity: () => void }) 
         ))}</ul>
       </Dialog>
     </div>
+  );
+}
+
+// Forward to other chats; admins and managers can also send to everyone in a company.
+function ForwardDialog({ message: m, fromId, onClose, onSent }: { message: any; fromId: string; onClose: () => void; onSent: (n: number) => void }) {
+  const hub = useHub();
+  const meId = hub.me.person.id;
+  const chats = useApi<any[]>('/conversations');
+  const [picked, setPicked] = useState<string[]>([]);
+  const [everyone, setEveryone] = useState<string[]>([]);
+  const broadcast = hub.me.companies.filter((c) => hub.can('messaging.broadcast', c.id));
+  const toggle = (list: string[], set: (v: string[]) => void, v: string) => set(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+  const send = useSubmit(async () => { const r = await post<{ sent: number }>(`/messages/${m.id}/forward`, { conversation_ids: picked, everyone_company_ids: everyone }); onSent(r.sent); });
+  const options = (chats.data ?? []).filter((c) => c.id !== fromId && !(c.everyone && everyone.includes(c.company_id)));
+  return (
+    <Dialog open onClose={onClose} title="Forward message" variant="modal"
+      footer={<Button busy={send.busy} disabled={!picked.length && !everyone.length} onClick={() => send.run()}>Forward{picked.length + everyone.length ? ` (${picked.length + everyone.length})` : ''}</Button>}>
+      <ErrorSummary error={send.error} />
+      <blockquote className="fwd-quote">{m.body || 'Photo'}<span className="small muted">From {m.author_name}</span></blockquote>
+      {broadcast.length > 0 && (
+        <fieldset className="fwd-list"><legend>Send to everyone</legend>
+          {broadcast.map((c) => <label key={c.id} className="check"><input type="checkbox" checked={everyone.includes(c.id)} onChange={() => toggle(everyone, setEveryone, c.id)} /> Everyone at {c.name}</label>)}
+          <p className="small muted">Goes to the company’s “Everyone” group, which includes all current staff.</p>
+        </fieldset>
+      )}
+      <fieldset className="fwd-list"><legend>Your chats</legend>
+        {chats.loading && !chats.data ? <Skeleton /> : options.length === 0 ? <p className="muted">No other chats yet.</p> : options.map((c) => (
+          <label key={c.id} className="check fwd-chat"><input type="checkbox" checked={picked.includes(c.id)} onChange={() => toggle(picked, setPicked, c.id)} /><ChatAvatar c={c} meId={meId} /><span className="truncate">{chatName(c, meId)}</span></label>
+        ))}
+      </fieldset>
+    </Dialog>
   );
 }
 

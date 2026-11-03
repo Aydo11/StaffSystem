@@ -27,6 +27,29 @@ describe('chat', () => {
     expect((await priya.post(`/api/messages/${m.body.id}/reactions`).send({ emoji: 'hello' })).status).toBe(400);
     expect((await (await as('taylor')).post(`/api/messages/${m.body.id}/reactions`).send({ emoji: '👍' })).status).toBe(404);
   });
+  it('forwards to own chats, and only admins and managers send to everyone', async () => {
+    const sam = await as('sam'), alex = await as('alex');
+    const m = await sam.post(`/api/conversations/${TEAM}/messages`).field('client_request_id', rid()).field('body', 'Fire alarm test on Friday').attach('file', png, 'alarm.png');
+    const dm = (await sam.post('/api/conversations').send({ company_id: C.VH, kind: 'direct', member_ids: [P.priya] })).body.id;
+    expect((await sam.post(`/api/messages/${m.body.id}/forward`).send({ conversation_ids: [dm] })).body).toEqual({ sent: 1 });
+    const fwd = (await sam.get(`/api/conversations/${dm}/messages`)).body.messages.at(-1);
+    expect(fwd).toMatchObject({ body: 'Fire alarm test on Friday', forwarded_from: expect.any(String), file_type: 'image/png' });
+    expect(fwd.file_id).not.toBe(m.body.file_id);
+    expect((await sam.post(`/api/messages/${m.body.id}/forward`).send({ everyone_company_ids: [C.VH] })).status).toBe(403);
+    expect((await (await as('taylor')).post(`/api/messages/${m.body.id}/forward`).send({ conversation_ids: [dm] })).status).toBe(404);
+    // Alex is not in the team chat, so forwards from a chat Alex is in.
+    const a = await alex.post(`/api/conversations/${dm}/messages`).field('client_request_id', rid()).field('body', 'x');
+    expect(a.status).toBe(404);
+    const own = (await alex.post('/api/conversations').send({ company_id: C.VH, kind: 'direct', member_ids: [P.sam] })).body.id;
+    const am = (await alex.post(`/api/conversations/${own}/messages`).field('client_request_id', rid()).field('body', 'Office closed Monday')).body;
+    expect((await alex.post(`/api/messages/${am.id}/forward`).send({ everyone_company_ids: [C.VH] })).status).toBe(201);
+    await alex.post(`/api/messages/${am.id}/forward`).send({ everyone_company_ids: [C.VH] });
+    const groups = (await sam.get('/api/conversations')).body.filter((c: any) => c.everyone);
+    expect(groups).toHaveLength(1);
+    const g = (await sam.get(`/api/conversations/${groups[0].id}/messages`)).body;
+    expect(g.messages.map((x: any) => x.body)).toEqual(['Office closed Monday', 'Office closed Monday']);
+    expect(g.members.map((x: any) => x.id)).toEqual(expect.arrayContaining([P.alex, P.sam, P.priya]));
+  });
 });
 
 describe('team KPIs', () => {

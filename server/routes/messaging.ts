@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { type Db, one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, idParam, notFound, notify, parse, text, uuid } from '../http.ts';
 import { ACTIVE_APPT, type Access, can, companiesWith, need, scope } from '../perm.ts';
-import { deleteFile, saveFile } from '../storage.ts';
+import { deleteFile, readFile, saveFile } from '../storage.ts';
 import { upload } from './people.ts';
 
 export const messaging = Router();
@@ -23,7 +23,7 @@ async function currentInCompany(db: Db, personIds: string[], companyId: string) 
 
 messaging.get('/conversations', async (req, res) => {
   res.json(await q(`
-    select c.id, c.kind, c.title, c.company_id, co.code as company_code, co.name as company_name, c.property_id, p.name as property_name,
+    select c.id, c.kind, c.title, c.everyone, c.company_id, co.code as company_code, co.name as company_name, c.property_id, p.name as property_name,
            (select json_agg(json_build_object('id', pe.id, 'name', ${name('pe')}, 'has_photo', pe.photo_path is not null) order by pe.full_name) from conversation_members cm join people pe on pe.id = cm.person_id where cm.conversation_id = c.id and cm.left_at is null) as members,
            (select json_build_object('body', coalesce(nullif(left(ms.body, 120), ''), 'Sent a photo'), 'at', ms.created_at, 'author', ${name('au')}) from messages ms join people au on au.id = ms.author_id where ms.conversation_id = c.id order by ms.created_at desc limit 1) as last,
            (select count(*) from messages ms where ms.conversation_id = c.id and ms.author_id <> $1 and ms.created_at > coalesce(m.last_read_at, '-infinity'))::int as unread
@@ -62,7 +62,7 @@ messaging.get('/conversations/:id/messages', async (req, res) => {
   const c = await membership(req.access, idParam(req.params.id));
   const before = req.query.before ? parse(z.iso.datetime({ offset: true }), req.query.before) : null;
   const rows = await q(`select ms.id, ms.body, ms.created_at, ms.author_id, ${name('au')} as author_name, au.photo_path is not null as author_has_photo,
-                                ms.file_id, f.original_name as file_name, f.mime_type as file_type,
+                                ms.file_id, ms.forwarded_from, f.original_name as file_name, f.mime_type as file_type,
                                 coalesce((select json_agg(json_build_object('emoji', r.emoji, 'count', r.n, 'mine', r.mine) order by r.first)
                                             from (select emoji, count(*)::int n, bool_or(person_id = $3) mine, min(created_at) first from message_reactions where message_id = ms.id group by emoji) r), '[]') as reactions
                           from messages ms join people au on au.id = ms.author_id left join files f on f.id = ms.file_id
@@ -84,6 +84,43 @@ messaging.post('/conversations/:id/messages', upload.single('file'), async (req,
   });
   await q('update conversation_members set last_read_at = now() where conversation_id = $1 and person_id = $2', [c.id, req.person.id]);
   res.status(201).json(m);
+});
+// Forward a message to other chats the sender is in, and/or (messaging.broadcast) to everyone in a company. The
+// company's "Everyone" group is created on first use and brought up to date with current staff on each send.
+messaging.post('/messages/:id/forward', async (req, res) => {
+  const b = parse(z.object({ conversation_ids: z.array(uuid).max(50).default([]), everyone_company_ids: z.array(uuid).max(3).default([]) }), req.body);
+  if (!b.conversation_ids.length && !b.everyone_company_ids.length) throw bad('Choose where to forward it.');
+  const src = await one<any>(`select ms.*, ${name('au')} as author_name, f.original_name, f.storage_path from messages ms join people au on au.id = ms.author_id left join files f on f.id = ms.file_id where ms.id = $1`, [idParam(req.params.id)]);
+  if (!src) throw notFound();
+  await membership(req.access, src.conversation_id);
+  for (const co of b.everyone_company_ids) if (!can(req.access, 'messaging.broadcast', co)) throw forbidden('Only administrators and managers can send to everyone.');
+  const targets: any[] = [];
+  for (const cid of b.conversation_ids) targets.push(await membership(req.access, cid));
+  const buf = src.file_id ? await readFile(src.storage_path) : null;
+  const sent = await tx(async (db) => {
+    for (const co of b.everyone_company_ids) {
+      let c = await one<any>('select * from conversations where company_id = $1 and everyone', [co], db);
+      if (!c) {
+        const coName = (await one<{ name: string }>('select name from companies where id = $1', [co], db))!.name;
+        c = await one('insert into conversations (company_id, kind, title, created_by, everyone) values ($1,$2,$3,$4,true) returning *', [co, 'team', `Everyone at ${coName}`, req.person.id], db);
+      }
+      await q(`insert into conversation_members (conversation_id, person_id, added_by)
+               select distinct $1::uuid, a.person_id, $3::uuid from appointments a where a.company_id = $2 and ${ACTIVE_APPT('a')}
+                  and not exists (select 1 from conversation_members m where m.conversation_id = $1 and m.person_id = a.person_id)`, [c.id, co, req.person.id], db);
+      await q('update conversation_members set left_at = null where conversation_id = $1 and person_id = $2', [c.id, req.person.id], db);
+      targets.push(c);
+    }
+    let n = 0;
+    for (const c of targets) {
+      if (c.id === src.conversation_id) continue;
+      const file = buf ? await saveFile(db, { companyId: c.company_id, entityType: 'message', entityId: c.id, name: src.original_name, buf, uploadedBy: req.person.id }) : null;
+      await q('insert into messages (conversation_id, author_id, body, file_id, forwarded_from) values ($1,$2,$3,$4,$5)', [c.id, req.person.id, src.body, file?.id ?? null, src.author_name], db);
+      n++;
+    }
+    if (b.everyone_company_ids.length) await audit(db, req.person.id, b.everyone_company_ids[0], 'message', src.id, 'broadcast', { companies: b.everyone_company_ids }); // who sent what to everyone, without the text
+    return n;
+  });
+  res.status(201).json({ sent });
 });
 // One tap adds a reaction, a second tap on the same emoji removes it.
 export const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🎉', '✅'];

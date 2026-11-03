@@ -13,7 +13,8 @@ import { MapEmbed } from '../geo.tsx';
 function Photo({ id, has, name }: { id: string; has: boolean; name: string }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => { let u: string | null = null; if (has) blobUrl(`/properties/${id}/photo`).then((x) => { u = x; setSrc(x); }); return () => { if (u) URL.revokeObjectURL(u); }; }, [id, has]);
-  return <div className="prop-photo">{src ? <img src={src} alt={`Photo of ${name}`} /> : <span aria-hidden="true">{name.split(' ').map((w) => w[0]).join('').slice(0, 2)}</span>}</div>;
+  // The whole photo is shown (no cropping), over a blurred copy that fills the frame, so every house is recognisable.
+  return <div className={`prop-photo${src ? ' has-img' : ''}`}>{src ? <><img className="bg" src={src} alt="" aria-hidden="true" /><img className="fg" src={src} alt={`Photo of ${name}`} /></> : <span aria-hidden="true">{name.split(' ').map((w) => w[0]).join('').slice(0, 2)}</span>}</div>;
 }
 
 export function Properties() {

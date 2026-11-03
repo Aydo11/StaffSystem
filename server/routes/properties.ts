@@ -7,7 +7,7 @@ import { deleteFile, readFile, saveFile } from '../storage.ts';
 import { onLeave } from './leave.ts';
 import { propertyVisible, taskVisible, visitVisible } from '../visibility.ts';
 import { upload } from './people.ts';
-import { complaintBody, conditionLists, logComplaint } from '../condition.ts';
+import { complaintBody, conditionLists, logComplaint, ratingBody, saveRating } from '../condition.ts';
 import { pinProperties } from '../geo.ts';
 
 export const properties = Router();
@@ -86,6 +86,16 @@ properties.post('/properties/:id/complaints', async (req, res) => {
   const p = await visibleProperty(req.access, idParam(req.params.id));
   const b = parse(complaintBody, req.body);
   res.status(201).json(await tx((db) => logComplaint(db, req.person.id, p, null, b)));
+});
+// House mood findings without a visit (dropped in, or reported on a call), by anyone who can see the property.
+properties.post('/properties/:id/findings', async (req, res) => {
+  const p = await visibleProperty(req.access, idParam(req.params.id));
+  const b = parse(ratingBody, req.body);
+  res.status(201).json(await tx(async (db) => {
+    const r = await saveRating(db, req.person.id, p, null, b);
+    await audit(db, req.person.id, p.company_id, 'condition_rating', r!.id, 'create', { channel: b.channel ?? 'other' });
+    return r;
+  }));
 });
 
 // Current or planned appointments a manager could allocate to this property (its company or an authorised linked one), not already allocated.

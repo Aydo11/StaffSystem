@@ -15,15 +15,20 @@ const SIGNATURES: [string, (b: Buffer) => boolean][] = [
 // Word (.docx) is a zip whose entries live under word/. Only allowed where a caller opts in (staff documents such as CVs).
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const isDocx = (b: Buffer) => b.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) && b.includes('word/');
-export function sniff(buf: Buffer, imagesOnly = false, allowWord = false): string {
+// Spreadsheets (.xlsx/.xlsm zips, or CSV text) only where a caller opts in (remittances and expense lists kept as evidence).
+const isXlsx = (b: Buffer) => b.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) && b.includes('xl/workbook');
+const isCsv = (b: Buffer) => b.length > 0 && !b.includes(0) && /^[^\n]*,/.test(b.subarray(0, 4096).toString('utf8'));
+export function sniff(buf: Buffer, imagesOnly = false, allowWord = false, allowSheet = false): string {
   if (allowWord && isDocx(buf)) return DOCX;
+  if (allowSheet && isXlsx(buf)) return buf.includes('vbaProject.bin') ? 'application/vnd.ms-excel.sheet.macroEnabled.12' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (allowSheet && isCsv(buf)) return 'text/csv';
   const hit = SIGNATURES.find(([type, test]) => test(buf) && (!imagesOnly || type.startsWith('image/')));
   if (!hit) throw bad(imagesOnly ? 'Please upload a JPEG, PNG or WebP image.' : allowWord ? 'Please upload a PDF, Word (.docx) document or a JPEG, PNG or WebP image.' : 'Please upload a JPEG, PNG, WebP image or a PDF.');
   return hit[0];
 }
 
-export async function saveFile(db: Db, f: { companyId: string | null; entityType: string; entityId: string; name: string; buf: Buffer; uploadedBy: string; imagesOnly?: boolean; allowWord?: boolean }) {
-  const mime = sniff(f.buf, f.imagesOnly, f.allowWord);
+export async function saveFile(db: Db, f: { companyId: string | null; entityType: string; entityId: string; name: string; buf: Buffer; uploadedBy: string; imagesOnly?: boolean; allowWord?: boolean; allowSheet?: boolean }) {
+  const mime = sniff(f.buf, f.imagesOnly, f.allowWord, f.allowSheet);
   const path = `${f.companyId ?? 'shared'}/${f.entityType}/${f.entityId}/${randomUUID()}`;
   const safeName = f.name.replace(/[^\w.\- ()]/g, '_').slice(0, 120) || 'file';
   const row = await one('insert into files (company_id, entity_type, entity_id, storage_path, original_name, mime_type, size_bytes, uploaded_by) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id, original_name, mime_type, size_bytes, uploaded_at',

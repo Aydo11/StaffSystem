@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { parseCsv } from '../csv.ts';
 import { type Db, one, pool, q, tx } from '../db.ts';
 import {
-  accountBalance, accrual, addDays, CATEGORIES, cash, cashBalance, day, daysBetween, DEPARTMENTS, DIRECT, FINANCING, forecast, INCOME, loadBooks, occurrences, outstanding, p, planTotals,
+  accountBalance, accrual, addDays, addMonths, EXPENSE, periodRange, planLines, CATEGORIES, cash, cashBalance, day, daysBetween, DEPARTMENTS, DIRECT, FINANCING, forecast, INCOME, loadBooks, occurrences, outstanding, p, planTotals,
   type Books, type Filters, type Scenario,
 } from '../financehub.ts';
 import { audit, bad, conflict, forbidden, idParam, isoDate, LONDON_TODAY, notFound, parse, text, uuid } from '../http.ts';
@@ -203,11 +203,11 @@ financehub.get('/finance/forecast', async (req, res) => {
   }));
   // Plan v actual cash by plan period, for periods started so far.
   const plan_vs_actual = b.plans.flatMap((pl) => Array.from({ length: pl.periods }, (_, i) => {
-    const ps = addDays(day(pl.start_date), i * pl.period_days), pe = addDays(ps, pl.period_days - 1);
+    const [ps, pe] = periodRange(pl, i + 1);
     if (ps > t) return null;
     const r = { from: ps, to: pe < t ? pe : t };
     const plan = planTotals({ ...b, plans: [pl] }, { from: ps, to: pe }), c = cash({ ...b, txns: b.txns.filter((x) => x.company_id === pl.company_id) }, r);
-    return { company_id: pl.company_id, period: `P${i + 1}`, start: ps, end: pe, complete: pe < t, plan_in: plan.income, plan_out: plan.expenses, plan_net: plan.net, actual_in: c.inflow, actual_out: c.outflow, actual_net: c.net };
+    return { company_id: pl.company_id, period: periodName(pl, i + 1), start: ps, end: pe, complete: pe < t, plan_in: plan.income, plan_out: plan.expenses, plan_net: plan.net, actual_in: c.inflow, actual_out: c.outflow, actual_net: c.net };
   }).filter(Boolean));
   res.json({ today: t, opening, opening_set: opening != null, min_cash: b.settings.reduce((a, x) => a + p(x.min_cash), 0), scenarios: sc, results: out, plan_vs_actual,
     loans: b.commitments.filter((c) => c.kind === 'loan').map((c) => ({ id: c.id, label: c.label, schedule: occurrences(c, t, addDays(t, 3650)).slice(0, 120) })) });
@@ -309,14 +309,14 @@ financehub.get('/finance/transactions', async (req, res) => {
 });
 const txnBody = z.object({ account_id: uuid, txn_date: isoDate, amount: signedMoney, fx_rate: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).optional(), description: text(300).min(1), counterparty: text(200).nullable().optional(),
   category: category.nullable().optional(), department: department.nullable().optional(), property_id: uuid.nullable().optional(), counterparty_company_id: uuid.nullable().optional(), note: text(1000).nullable().optional() });
-async function accountFor(db: Db, a: any, id: string) {
+export async function accountFor(db: Db, a: any, id: string) {
   const acc = await one('select * from finance_accounts where id = $1', [id], db);
   if (!acc) throw notFound();
   need(a, 'finance.manage', acc.company_id);
   if (acc.archived) throw conflict('This account is archived.');
   return acc;
 }
-function checkDate(acc: any, d: string) { if (d < day(acc.opening_date)) throw bad(`This account's opening balance is dated ${day(acc.opening_date)}; enter only later transactions, or move the opening date back.`, { fields: { txn_date: 'Before the opening balance' } }); }
+export function checkDate(acc: any, d: string) { if (d < day(acc.opening_date)) throw bad(`This account's opening balance is dated ${day(acc.opening_date)}; enter only later transactions, or move the opening date back.`, { fields: { txn_date: 'Before the opening balance' } }); }
 financehub.post('/finance/transactions', async (req, res) => {
   const b = parse(txnBody, req.body);
   if (Number(b.amount) === 0) throw bad('Enter an amount.', { fields: { amount: 'Cannot be zero' } });
@@ -452,7 +452,7 @@ financehub.post('/finance/accounts/:id/import', upload.single('file'), async (re
     if (iDate < 0 || iDesc < 0 || (iAmt < 0 && (iIn < 0 || iOut < 0))) throw bad('Could not find the date, description and amount columns. Use headings like Date, Description, Amount (or Paid in, Paid out).');
     const known = new Map((await q(`select lower(description) d, category from finance_transactions where company_id = $1 and category is not null and transfer_id is null order by created_at`, [acc.company_id], db)).map((r) => [r.d, r.category]));
     const seen = new Map<string, number>();
-    let imported = 0, duplicates = 0, skipped = 0;
+    let imported = 0, duplicates = 0, skipped = 0, matched = 0;
     const errors: string[] = [];
     for (const [n, r] of rows.slice(1).entries()) {
       const raw = (r[iDate] ?? '').trim();
@@ -467,13 +467,19 @@ financehub.post('/finance/accounts/:id/import', upload.single('file'), async (re
       const key = `${date}|${Number(amount).toFixed(2)}|${desc.toLowerCase()}`;
       const k = (seen.get(key) ?? 0) + 1; seen.set(key, k);  // two identical rows on one day are both kept (the nth copy has its own hash)
       const hash = createHash('sha256').update(`${key}|${k}`).digest('hex');
+      if (await one('select 1 from finance_transactions where account_id = $1 and import_hash = $2', [acc.id, hash], db)) { duplicates++; continue; }
+      // Already entered by hand (an expense, a payment, a transfer or a whole remittance): link it to this row instead of adding it again.
+      const claim = await one(`select (array_agg(id order by created_at))[1] id from finance_transactions
+                                where account_id = $1 and source <> 'import' and txn_date between $2::date - 3 and $2::date + 3
+                                group by coalesce(remittance_id, id) having sum(amount) = $3::numeric and bool_and(import_hash is null) limit 1`, [acc.id, date, amount], db);
+      if (claim) { await q('update finance_transactions set import_hash = $2 where id = $1', [claim.id, hash], db); matched++; continue; }
       const r2 = await one(`insert into finance_transactions (company_id, account_id, txn_date, amount, fx_rate, description, counterparty, category, source, import_hash, created_by)
                             values ($1,$2,$3,$4::numeric,$5::numeric,$6,$7,$8,'import',$9,$10) on conflict (account_id, import_hash) do nothing returning id`,
         [acc.company_id, acc.id, date, amount, acc.currency === 'GBP' ? 1 : acc.opening_fx_rate, desc, iWho >= 0 ? (r[iWho] ?? '').trim().slice(0, 200) || null : null, known.get(desc.toLowerCase()) ?? null, hash, req.person.id], db);
       if (r2) imported++; else duplicates++;
     }
-    await audit(db, req.person.id, acc.company_id, 'finance_account', acc.id, 'import', { imported, duplicates, skipped, errors: errors.length });
-    return { imported, duplicates, skipped_before_opening: skipped, errors: errors.slice(0, 20) };
+    await audit(db, req.person.id, acc.company_id, 'finance_account', acc.id, 'import', { imported, duplicates, matched, skipped, errors: errors.length });
+    return { imported, duplicates, matched, skipped_before_opening: skipped, errors: errors.slice(0, 20) };
   });
   res.status(201).json(out);
 });
@@ -516,23 +522,61 @@ financehub.patch('/finance/commitments/:id', async (req, res) => {
 });
 
 // ── Plan (budget) ──
+const periodName = (pl: any, k: number) => (pl.period_kind === 'month' ? new Date(`${periodRange(pl, k)[0]}T12:00:00Z`).toLocaleDateString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' }) : `P${k}`);
 financehub.get('/finance/plan', async (req, res) => {
   const cs = scope(req.access, 'finance.view', req.query.company);
-  const plans = await q(`select p.*, co.code as company_code from finance_plans p join companies co on co.id = p.company_id where p.company_id = any($1::uuid[]) and p.active`, [cs]);
+  const plans = (await q(`select p.*, co.code as company_code from finance_plans p join companies co on co.id = p.company_id where p.company_id = any($1::uuid[]) and p.active`, [cs]))
+    .map((pl) => ({ ...pl, period_starts: Array.from({ length: pl.periods }, (_, i) => periodRange(pl, i + 1)[0]), period_names: Array.from({ length: pl.periods }, (_, i) => periodName(pl, i + 1)) }));
   const lines = await q(`select l.*, pr.name as property_name from finance_plan_lines l left join properties pr on pr.id = l.property_id where l.plan_id = any($1::uuid[]) order by l.direction desc, l.category, l.label, l.period_no`, [plans.map((x) => x.id)]);
   res.json({ plans, lines });
 });
 financehub.patch('/finance/plan-lines/:id', async (req, res) => {
-  const b = parse(z.object({ amount: signedMoney, all_periods: z.boolean().default(false) }), req.body);
+  // apply: this period only, this period and every later one (e.g. a pay rise from January), or every period.
+  const b = parse(z.object({ amount: signedMoney, apply: z.enum(['one', 'from_here', 'all']).default('one') }), req.body);
   await tx(async (db) => {
     const l = await one('select l.*, p.company_id from finance_plan_lines l join finance_plans p on p.id = l.plan_id where l.id = $1', [idParam(req.params.id)], db);
     if (!l) throw notFound();
     need(req.access, 'finance.manage', l.company_id);
-    const n = await q(`update finance_plan_lines set amount = $2::numeric where ${b.all_periods ? 'plan_id = $3 and label = $4 and direction = $5 and category = $6' : 'id = $1'} returning id`,
-      b.all_periods ? [l.id, b.amount, l.plan_id, l.label, l.direction, l.category] : [l.id, b.amount], db);
-    await audit(db, req.person.id, l.company_id, 'finance_plan_line', l.id, 'update', { label: l.label, period: b.all_periods ? 'all' : l.period_no, from: l.amount, to: b.amount, lines: n.length });
+    const n = await q(`update finance_plan_lines set amount = $1::numeric where ${b.apply === 'one' ? 'id = $2' : 'plan_id = $2 and label = $3 and direction = $4 and category = $5 and period_no >= $6'} returning id`,
+      b.apply === 'one' ? [b.amount, l.id] : [b.amount, l.plan_id, l.label, l.direction, l.category, b.apply === 'all' ? 1 : l.period_no], db);
+    await audit(db, req.person.id, l.company_id, 'finance_plan_line', l.id, 'update', { label: l.label, period: l.period_no, apply: b.apply, from: l.amount, to: b.amount, lines: n.length });
   });
   res.json({ ok: true });
+});
+
+// ── Monthly figures: actual totals typed in by month and category, for one company and financial year (April–March) ──
+financehub.get('/finance/monthly', async (req, res) => {
+  const company = parse(uuid, req.query.company);
+  if (!can(req.access, 'finance.view', company)) throw forbidden();
+  const t = await today();
+  const fy = req.query.fy ? parse(z.coerce.number().int().min(2020).max(2100), req.query.fy) : Number(t.slice(0, 4)) - (t.slice(5, 7) < '04' ? 1 : 0);
+  const b = await loadBooks(pool, [company]);
+  const months = Array.from({ length: 12 }, (_, i) => addMonths(`${fy}-04-01`, i));
+  const cats = [...INCOME, ...EXPENSE];
+  const cells = months.flatMap((m) => {
+    const r = { from: m, to: addDays(addMonths(m, 1), -1) };
+    const rec = accrual(b, r, false), plan = planLines(b, r);
+    return cats.map((c) => {
+      const typed = b.manual.find((x) => day(x.month) === m && x.category === c);
+      const records = Math.abs(rec.rows.filter((x) => x.category === c).reduce((s2, x) => s2 + x.amount, 0));
+      const budget = Math.round(plan.filter((x) => x.category === c).reduce((s2, x) => s2 + x.amount, 0));
+      return { month: m, category: c, typed: typed ? p(typed.amount) : null, records, budget };
+    });
+  });
+  res.json({ fy, months, income: INCOME, direct: DIRECT, expense: EXPENSE, cells, can_edit: can(req.access, 'finance.manage', company) });
+});
+financehub.put('/finance/monthly', async (req, res) => {
+  const b = parse(z.object({ company_id: uuid, cells: z.array(z.object({ month: isoDate.refine((d) => d.endsWith('-01'), 'Use the first of the month'), category: z.enum([...INCOME, ...EXPENSE]), amount: money.nullable() })).min(1).max(600) }), req.body);
+  need(req.access, 'finance.manage', b.company_id);
+  await tx(async (db) => {
+    for (const c of b.cells) {
+      if (c.amount == null) await q('delete from finance_monthly_figures where company_id = $1 and month = $2 and category = $3', [b.company_id, c.month, c.category], db);
+      else await q(`insert into finance_monthly_figures (company_id, month, category, amount, updated_by) values ($1,$2,$3,$4::numeric,$5)
+                    on conflict (company_id, month, category) do update set amount = excluded.amount, updated_by = excluded.updated_by, updated_at = now()`, [b.company_id, c.month, c.category, c.amount, req.person.id], db);
+    }
+    await audit(db, req.person.id, b.company_id, 'finance_monthly', b.company_id, 'update', { cells: b.cells });
+  });
+  res.json({ ok: true, saved: b.cells.length });
 });
 
 // ── Settings, document coding, saved views ──

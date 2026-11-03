@@ -8,11 +8,14 @@ beforeEach(async () => { await resetDb(); await pool.query('select load_valor_pl
 const hub = async (qs: string) => (await (await as('alex')).get(`/api/finance/hub?company=${C.VH}&${qs}`)).body;
 
 describe('finance hub', () => {
-  it('loads the 2.4 plan from 1 April 2026 with the model totals', async () => {
-    const h = await hub('from=2026-04-01&to=2026-04-28');
-    expect(h.kpis.budget_income).toBe(13591942);
-    expect(h.kpis.budget_expenses).toBe(12788385);
-    expect(h.kpis.budget_net).toBe(803557);
+  it('loads the 2.4 plan from 1 April 2026, converted to calendar months, with the model totals for the year', async () => {
+    const h = await hub('from=2026-04-01&to=2027-03-31');
+    const near = (v: number, want: number) => expect(Math.abs(v - want)).toBeLessThanOrEqual(60);  // per-line, per-month penny rounding only
+    near(h.kpis.budget_income, 13 * 13591942);
+    near(h.kpis.budget_expenses, 13 * 12788385);
+    near(h.kpis.budget_net, 13 * 803557);
+    const plan = (await (await as('alex')).get(`/api/finance/plan?company=${C.VH}`)).body.plans[0];
+    expect([plan.period_kind, plan.periods, plan.period_starts[0], plan.period_names[11]]).toEqual(['month', 12, '2026-04-01', 'Mar 2027']);
     expect(h.kpis.cash_balance).toBeNull();                       // no accounts: never shown as £0
     expect(h.alerts.some((a: any) => a.tab === 'bank')).toBe(true);
   });
@@ -59,10 +62,11 @@ describe('finance hub', () => {
     expect(f0.weeks[0].opening).toBe(250000);
     for (let i = 1; i < 13; i++) expect(f0.weeks[i].opening).toBe(f0.weeks[i - 1].closing);
     for (const w of f0.weeks) expect(w.closing).toBe(w.opening + w.net);
-    expect(sumIn(f0.events, '2026-11-11', '2026-12-08')).toBe(803557);          // P9 (11 Nov–8 Dec) in full = the model's £8,035.57
-    await alex.post('/api/finance/commitments').send({ company_id: C.VH, kind: 'payroll', label: 'Payroll', direction: 'out', amount: '500.00', frequency: 'once', next_date: '2026-11-20', certainty: 'committed', category: 'staffing' });
+    const dec = (await hub('from=2026-12-01&to=2026-12-31')).kpis.budget_net;
+    expect(Math.abs(sumIn(f0.events, '2026-12-01', '2026-12-31') - dec)).toBeLessThanOrEqual(1);   // December in full = December's plan
+    await alex.post('/api/finance/commitments').send({ company_id: C.VH, kind: 'payroll', label: 'Payroll', direction: 'out', amount: '500.00', frequency: 'once', next_date: '2026-12-10', certainty: 'committed', category: 'staffing' });
     const f1 = forecast(await loadBooks(pool, [C.VH]), '2026-11-02', '2027-10-31', sc, 250000);
-    expect(sumIn(f1.events, '2026-11-11', '2026-12-08')).toBe(803557);          // the payroll replaces part of the planned staffing, not on top of it
+    expect(Math.abs(sumIn(f1.events, '2026-12-01', '2026-12-31') - dec)).toBeLessThanOrEqual(1);   // the payroll replaces part of the planned staffing, not on top of it
     expect(f1.events.filter((e) => e.type === 'committed' && e.category === 'staffing')).toHaveLength(1);
     const pess = forecast(b, '2026-11-02', '2027-10-31', { ...sc, revenue_pct: -5 }, 250000);
     expect(pess.months.at(-1)!.closing).toBeLessThan(f0.months.at(-1)!.closing);
@@ -75,5 +79,36 @@ describe('finance hub', () => {
     expect(s.reduce((a, o) => a + (o.principal ?? 0), 0)).toBe(120000);
     expect(occurrences({ next_date: '2027-01-31', frequency: 'monthly', amount: '1.00' }, '2027-01-01', '2027-03-31').map((o) => o.date)).toEqual(['2027-01-31', '2027-02-28', '2027-03-31']);
     expect((await (await as('sam')).get(`/api/finance/hub?company=${C.VH}`)).status).toBe(403);
+  });
+
+  it('monthly figures: typed totals replace the records for that month and line, and blanks fall back to the records', async () => {
+    const alex = await as('alex');
+    const acc = (await alex.post('/api/finance/accounts').send({ company_id: C.VH, name: 'Current', kind: 'bank', opening_balance: '0', opening_date: '2026-08-01' })).body;
+    await alex.post('/api/finance/transactions').send({ account_id: acc.id, txn_date: '2026-08-10', amount: '500.00', description: 'HB', category: 'rent' });
+    await alex.post('/api/finance/transactions').send({ account_id: acc.id, txn_date: '2026-08-12', amount: '-80.00', description: 'Electric', category: 'utilities' });
+    const put = (cells: object[]) => alex.put('/api/finance/monthly').send({ company_id: C.VH, cells });
+    expect((await put([{ month: '2026-08-01', category: 'rent', amount: '12000.00' }, { month: '2026-08-01', category: 'staffing', amount: '7000.50' }])).status).toBe(200);
+    const h = await hub('from=2026-08-01&to=2026-08-31');
+    expect(h.kpis.revenue).toBe(1200000);                        // the typed rent replaces the £500 bank item
+    expect(h.kpis.net_profit).toBe(1200000 - 700050 - 8000);     // utilities still come from the records
+    const g = (await alex.get(`/api/finance/monthly?company=${C.VH}&fy=2026`)).body;
+    const cell = (m: string, c: string) => g.cells.find((x: any) => x.month === m && x.category === c);
+    expect(g.months).toHaveLength(12);
+    expect(cell('2026-08-01', 'rent')).toMatchObject({ typed: 1200000, records: 50000 });
+    expect(cell('2026-08-01', 'utilities')).toMatchObject({ typed: null, records: 8000 });
+    expect(cell('2026-08-01', 'rent').budget).toBeGreaterThan(0);
+    expect((await put([{ month: '2026-08-01', category: 'rent', amount: null }])).status).toBe(200);   // cleared: back to the records
+    expect((await hub('from=2026-08-01&to=2026-08-31')).kpis.revenue).toBe(50000);
+    expect((await put([{ month: '2026-08-15', category: 'rent', amount: '1.00' }])).status).toBe(400);
+    expect((await (await as('sam')).put('/api/finance/monthly').send({ company_id: C.VH, cells: [{ month: '2026-08-01', category: 'rent', amount: '1.00' }] })).status).toBe(403);
+  });
+
+  it('a plan line can be changed for one month, from a month onwards, or every month', async () => {
+    const alex = await as('alex');
+    const lines = (await alex.get(`/api/finance/plan?company=${C.VH}`)).body.lines.filter((l: any) => l.category === 'staffing');
+    const label = lines[0].label, row = (n: number) => lines.find((l: any) => l.label === label && l.period_no === n);
+    expect((await alex.patch(`/api/finance/plan-lines/${row(10).id}`).send({ amount: '999.00', apply: 'from_here' })).status).toBe(200);
+    const after = (await alex.get(`/api/finance/plan?company=${C.VH}`)).body.lines.filter((l: any) => l.label === label);
+    expect(after.filter((l: any) => l.amount === '999.00').map((l: any) => l.period_no)).toEqual([10, 11, 12]);
   });
 });

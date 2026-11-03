@@ -18,6 +18,7 @@ import { performance } from './routes/performance.ts';
 import { cases } from './routes/cases.ts';
 import { complaints } from './routes/complaints.ts';
 import { financehub } from './routes/financehub.ts';
+import { financeimport } from './routes/financeimport.ts';
 import { estates } from './routes/estates.ts';
 import { finance } from './routes/finance.ts';
 import { governance } from './routes/governance.ts';
@@ -66,7 +67,7 @@ export function createApp() {
   api.use(registrationPublic);
   api.use(authenticate);
   api.use(registrationAdmin);
-  api.use(account, core, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, complaints, estates, financehub, finance, messaging, ai, dataops, leave, development, admin);
+  api.use(account, core, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, complaints, estates, financeimport, financehub, finance, messaging, ai, dataops, leave, development, admin);
   api.use(() => { throw new HttpError(404, 'not_found', 'No such API endpoint.'); });
   app.use('/api', api);
 

@@ -7,7 +7,7 @@ import { AllocateDialog } from '../allocate.tsx';
 import { Avatar, Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, LoadError, PageHead, PhotoGrid, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 import { StartVisitDialog } from './Visits.tsx';
 import { ReportRepair } from './Estates.tsx';
-import { ASPECTS, blankExtras, CATEGORIES, ComplaintFields, ConditionBar, SOURCES, Stars, suggestions, tone } from '../condition.tsx';
+import { ASPECTS, blankExtras, CATEGORIES, CHANNEL_TEXT, ComplaintFields, ConditionBar, SOURCES, StarInput, Stars, suggestions, tone } from '../condition.tsx';
 import { MapEmbed } from '../geo.tsx';
 
 function Photo({ id, has, name }: { id: string; has: boolean; name: string }) {
@@ -133,9 +133,10 @@ export function PropertyPage() {
   const hub = useHub();
   const d = useApi<any>(`/properties/${id}`);
   const toast = useToast();
-  const [dlg, setDlg] = useState<null | 'start' | 'edit' | 'key' | 'issue' | 'schedule' | 'assign' | 'complaint' | 'repair' | 'remove'>(null);
+  const [dlg, setDlg] = useState<null | 'start' | 'edit' | 'key' | 'issue' | 'schedule' | 'assign' | 'complaint' | 'findings' | 'repair' | 'remove'>(null);
   const nav = useNavigate();
   const [complaint, setComplaint] = useState(blankExtras().complaint);
+  const [findings, setFindings] = useState(() => ({ rating: blankExtras().rating, note: '', channel: 'in_person' }));
   const [keyId, setKeyId] = useState('');
   const [form, setForm] = useState<any>({});
   const [progress, setProgress] = useState<number | null>(null);
@@ -151,6 +152,11 @@ export function PropertyPage() {
   const staff = useApi<any[]>(dlg === 'schedule' && d.data ? `/people?company=${d.data.property.company_id}` : null);
   const assignable = useApi<any[]>(dlg === 'assign' ? `/properties/${id}/assignable` : null);
   const endAlloc = useSubmit(async (aid: string) => { await post(`/appointment-properties/${aid}/end`); toast('Allocation ended.'); d.reload(); });
+  const saveFindings = useSubmit(async () => {
+    if (!ASPECTS.some(([k]) => findings.rating[k] != null)) throw new ApiError(400, 'invalid', 'Rate at least one part of the home.', { fields: { rating: 'Rate at least one part of the home' } });
+    await post(`/properties/${id}/findings`, { ...findings.rating, note: findings.note.trim() || null, channel: findings.channel });
+    setDlg(null); setFindings({ rating: blankExtras().rating, note: '', channel: 'in_person' }); toast('Findings recorded. The house mood score is updated.'); d.reload();
+  });
   const logComplaint = useSubmit(async () => { await post(`/properties/${id}/complaints`, complaint); setDlg(null); setComplaint(blankExtras().complaint); toast('Complaint logged and sent to the complaints manager.'); d.reload(); });
 
   if (d.error) return <LoadError error={d.error} retry={d.reload} />;
@@ -169,6 +175,8 @@ export function PropertyPage() {
       <PageHead title={p.name} crumbs={[['Properties', '/properties'], [p.name]]} intro={<><CompanyBadge code={p.company_code} name={p.company_name} /> {p.ref} · {p.address_line1}, {p.city} {p.postcode}</>}
         actions={<>
           {my_appointments.length > 0 && <><Button variant="go" disabled={!!hub.me.activeVisit} onClick={() => setDlg('start')}>Start Visit</Button><Link className="btn secondary" to={`/visits/new?property=${p.id}`}>Log Completed Visit</Link></>}
+          <Button variant="secondary" onClick={() => setDlg('complaint')} title="For example a phone call: no visit needed">Log a complaint</Button>
+          <Button variant="secondary" onClick={() => setDlg('findings')} title="House mood findings without a visit">Record findings</Button>
           {can.manage && <Button variant="secondary" onClick={() => setDlg('edit')}>Edit</Button>}
           {can.manage && <Button variant="danger" onClick={() => setDlg('remove')}>Remove</Button>}
         </>} />
@@ -217,7 +225,7 @@ export function PropertyPage() {
         <section className={`card cond-card glow-${tone(condition.score)}`} aria-labelledby="hc-h">
           <h2 id="hc-h">House mood</h2>
           <ConditionBar score={condition.score} />
-          <p className="small muted">{condition.score == null ? 'Rate the home when you finish a visit and the score appears here.' : `From the latest rating of each part of the home (${condition.ratings_count} rating${condition.ratings_count === 1 ? '' : 's'} in the last 12 months, latest ${fmtDate(condition.rated_at)}).`}</p>
+          <p className="small muted">{condition.score == null ? 'Rate the home when you finish a visit, or use Record findings, and the score appears here.' : `From the latest rating of each part of the home (${condition.ratings_count} rating${condition.ratings_count === 1 ? '' : 's'} in the last 12 months, latest ${fmtDate(condition.rated_at)}).`}</p>
           {condition.aspects && (
             <ul className="aspects">{ASPECTS.filter(([k]) => condition.aspects[k] != null).map(([k, t]) => (
               <li key={k} className={`tone-${tone(condition.aspects[k] * 20)}`}><span>{t}</span><Stars n={condition.aspects[k]} /></li>
@@ -236,7 +244,7 @@ export function PropertyPage() {
             <details open={openComplaints.length > 0}><summary>{openComplaints.length} open · {complaints.length - openComplaints.length} resolved</summary>
               <ul className="list">{complaints.map((c: any) => (
                 <li key={c.id}>
-                  <span><Link to={`/complaints/${c.id}`}><strong>{c.ref}</strong></Link> · <strong>{CATEGORIES.find(([k]) => k === c.category)?.[1] ?? c.category}</strong> · from {SOURCES.find(([k]) => k === c.source)?.[1].toLowerCase()}<br />
+                  <span><Link to={`/complaints/${c.id}`}><strong>{c.ref}</strong></Link> · <strong>{CATEGORIES.find(([k]) => k === c.category)?.[1] ?? c.category}</strong> · from {SOURCES.find(([k]) => k === c.source)?.[1].toLowerCase()}{c.channel && c.channel !== 'visit' && ` ${CHANNEL_TEXT[c.channel]}`}<br />
                     <span className="small">{c.summary}</span><br />
                     <span className="muted small">Logged by {c.raised_by_name}, {fmtDate(c.created_at)} · {c.handler_name ? `with ${c.handler_name}` : 'no complaints manager set'}</span></span>
                   <Status s={c.task_status === 'completed' ? 'completed' : c.task_status ?? 'not_started'} text={c.task_status === 'completed' ? 'Resolved' : c.task_status === 'in_progress' ? 'Being handled' : 'Open'} />
@@ -328,7 +336,15 @@ export function PropertyPage() {
       )}
       <Dialog open={dlg === 'complaint'} onClose={() => setDlg(null)} title={`Log a complaint at ${p.name}`} footer={<Button busy={logComplaint.busy} onClick={() => logComplaint.run()}>Send to complaints manager</Button>}>
         <ErrorSummary error={logComplaint.error} />
-        <ComplaintFields value={complaint} onChange={setComplaint} error={logComplaint.error?.fields.summary} />
+        <p className="small muted">No visit needed: use this for a complaint made on a phone call, by email or in passing.</p>
+        <ComplaintFields askChannel value={complaint} onChange={setComplaint} error={logComplaint.error?.fields.summary} />
+      </Dialog>
+      <Dialog open={dlg === 'findings'} onClose={() => setDlg(null)} title={`Record findings at ${p.name}`} footer={<Button busy={saveFindings.busy} onClick={() => saveFindings.run()}>Save findings</Button>}>
+        <ErrorSummary error={saveFindings.error} />
+        <p className="small muted">No visit needed. Rate what you saw or were told about; choose “Not checked” for the rest. It updates the house mood score.</p>
+        <Field label="How did you find this out?"><select value={findings.channel} onChange={(e) => setFindings({ ...findings, channel: e.target.value })}><option value="in_person">Dropped in or passed by</option><option value="phone">Phone call</option><option value="other">Another way</option></select></Field>
+        {ASPECTS.map(([k, t]) => <StarInput key={k} name={`find-${k}`} label={t} value={findings.rating[k]} onChange={(v) => setFindings({ ...findings, rating: { ...findings.rating, [k]: v } })} />)}
+        <Field label="What needs improving?" optional><textarea rows={2} maxLength={1000} value={findings.note} onChange={(e) => setFindings({ ...findings, note: e.target.value })} /></Field>
       </Dialog>
       {dlg === 'remove' && <RemoveProperty p={p} onClose={() => setDlg(null)} onDone={(how) => { toast(how === 'deleted' ? `${p.name} was deleted.` : `${p.name} was offboarded: hidden from lists, allocations ended, its history kept.`); nav('/properties'); }} />}
       {dlg === 'repair' && <ReportRepair properties={[p]} onClose={() => setDlg(null)} onSaved={() => { setDlg(null); d.reload(); }} />}

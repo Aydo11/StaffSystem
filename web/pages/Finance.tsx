@@ -4,6 +4,8 @@ import { api, download, patch, post, upload, useApi, useSubmit } from '../api.ts
 import { fmtDate, label, londonToday, money } from '../format.ts';
 import { useHub } from '../hub.tsx';
 import { Bank, CAT, Daily, DEPTS, Forecast, Overview, Plan, Reports } from './FinanceHub.tsx';
+import { ExpenseDialog, RemittanceDialog } from './FinanceImport.tsx';
+import { MonthlyFigures } from './FinanceMonthly.tsx';
 import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 
 const KIND: Record<string, string> = { sales_invoice: 'Invoice', contractor_invoice: 'Contractor invoice', payment_statement: 'Payment statement', expense_claim: 'Expense claim', credit_note: 'Credit note' };
@@ -32,21 +34,28 @@ function LinesEditor({ lines, onChange, errors }: { lines: Line[]; onChange: (l:
   );
 }
 
-type Tab = 'overview' | 'forecast' | 'daily' | 'reports' | 'bank' | 'plan' | 'documents' | 'mine' | 'continuity' | 'settings';
+type Tab = 'overview' | 'monthly' | 'forecast' | 'daily' | 'reports' | 'bank' | 'plan' | 'documents' | 'mine' | 'continuity' | 'settings';
 export function Finance() {
   const hub = useHub();
   const [params, setParams] = useSearchParams();
   const fin = hub.can('finance.view');
+  const [dlg, setDlg] = useState<'expense' | 'remittance' | null>(null);
+  const [rev, setRev] = useState(0);   // remounts the open tab after a save so its figures reload
   const tab = (params.get('tab') as Tab) ?? (fin ? 'overview' : 'mine');
   // Changing tab keeps the date and other filters, so a view carries across tabs.
   const go = (t: string, extra: Record<string, string> = {}) => { const n = new URLSearchParams(params); n.set('tab', t); n.delete('status'); for (const [k, v] of Object.entries(extra)) n.set(k, v); setParams(n); };
-  const tabs: [Tab, string][] = [...(fin ? [['overview', 'Overview'], ['forecast', 'Cash forecast'], ['daily', 'Daily'], ['reports', 'Reports'], ['bank', 'Bank & cash'], ['plan', 'Plan & budgets'], ['documents', 'Documents']] as [Tab, string][] : []),
+  const tabs: [Tab, string][] = [...(fin ? [['overview', 'Overview'], ['monthly', 'Monthly figures'], ['forecast', 'Cash forecast'], ['daily', 'Daily'], ['reports', 'Reports'], ['bank', 'Bank & cash'], ['plan', 'Plan & budgets'], ['documents', 'Documents']] as [Tab, string][] : []),
     ['mine', 'My claims and statements'], ...(hub.can('continuity.manage') || hub.can('governance.view') ? [['continuity', 'Continuity'] as [Tab, string]] : []), ...(hub.can('finance.manage') ? [['settings', 'Settings'] as [Tab, string]] : [])];
   return (
     <>
-      <PageHead title="Finance" intro={fin ? 'Profit, cash, forecasts and day-to-day finance for each company. Figures come from invoices, bills and bank records; the plan is shown as plan, never as results.' : 'Each company issues and approves its own documents under its own name and numbering. Nobody approves their own submission.'} />
+      <PageHead title="Finance" intro={fin ? 'Profit, cash, forecasts and day-to-day finance for each company. Figures come from invoices, bills and bank records; the plan is shown as plan, never as results.' : 'Each company issues and approves its own documents under its own name and numbering. Nobody approves their own submission.'}
+        actions={fin && hub.can('finance.manage') && <><Button variant="secondary" onClick={() => setDlg('expense')}>Add expenses</Button><Button variant="secondary" onClick={() => setDlg('remittance')}>Process a remittance</Button></>} />
+      {dlg === 'expense' && <ExpenseDialog open onClose={() => setDlg(null)} onDone={() => setRev(rev + 1)} />}
+      {dlg === 'remittance' && <RemittanceDialog open onClose={() => setDlg(null)} onDone={() => setRev(rev + 1)} />}
       <Tabs label="Finance sections" tabs={tabs} value={tab} onChange={(t) => go(t)} />
+      <div key={rev} className="contents">
       {tab === 'overview' && fin && <Overview go={go} />}
+      {tab === 'monthly' && fin && <MonthlyFigures />}
       {tab === 'forecast' && fin && <Forecast go={go} />}
       {tab === 'daily' && fin && <Daily go={go} />}
       {tab === 'reports' && fin && <Reports />}
@@ -56,6 +65,7 @@ export function Finance() {
       {tab === 'mine' && <Mine />}
       {tab === 'continuity' && <Continuity />}
       {tab === 'settings' && <Settings />}
+      </div>
     </>
   );
 }

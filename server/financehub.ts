@@ -5,9 +5,11 @@
 //  • Accrual (actual): issued invoices and approved bills by issue date (net of VAT), plus categorised bank items that
 //    have no invoice or bill. A bank payment linked to a bill is cash only, so the bill is not counted twice.
 //  • Committed: unpaid invoices and bills, and commitments marked committed. Estimate: commitments marked estimate.
-//  • Plan: the active plan, spread evenly over each 4-week period. In the forecast it only fills the gap left by
+//  • Plan: the active plan, spread evenly over the days of each period (calendar month, or 4-week period). In the forecast it only fills the gap left by
 //    actuals already received in that period and the committed/estimated items in it.
 //  • Assumption: one-off amounts typed into a scenario.
+//  • Monthly figures: actual totals typed in by month and category. In the accrual figures a typed total replaces the
+//    records for that company, month and category (so nothing is counted twice); it carries no department or property.
 import { type Db, one, q } from './db.ts';
 
 export const INCOME = ['rent', 'service_charge', 'support_income', 'grant', 'other_income'] as const;
@@ -28,7 +30,7 @@ export const day = (d: unknown) => (d instanceof Date ? d.toISOString() : String
 export const addDays = (d: string, n: number) => { const x = new Date(`${d}T12:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
 export const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / 86400e3);
 const monthStart = (d: string) => `${d.slice(0, 7)}-01`;
-const addMonths = (d: string, n: number) => { const x = new Date(`${monthStart(d)}T12:00:00Z`); x.setUTCMonth(x.getUTCMonth() + n); return x.toISOString().slice(0, 10); };
+export const addMonths = (d: string, n: number) => { const x = new Date(`${monthStart(d)}T12:00:00Z`); x.setUTCMonth(x.getUTCMonth() + n); return x.toISOString().slice(0, 10); };
 // Same day n months on; the 31st becomes the last day of a shorter month.
 const addMonthsClamp = (d: string, n: number) => { const m = addMonths(d, n), last = addDays(addMonths(d, n + 1), -1); const dd = d.slice(8); return dd > last.slice(8) ? last : `${m.slice(0, 8)}${dd}`; };
 
@@ -36,7 +38,7 @@ export type Filters = { from: string; to: string; department?: string; property?
 export type Scenario = { collect_delay_days: number; pay_delay_days: number; revenue_pct: number; cost_pct: number; one_offs: { date: string; label: string; amount: string }[] };
 
 export async function loadBooks(db: Db, companies: string[]) {
-  const [accounts, txns, docs, commitments, plans, settings] = await Promise.all([
+  const [accounts, txns, docs, commitments, plans, settings, manual] = await Promise.all([
     q(`select a.*, c.code as company_code from finance_accounts a join companies c on c.id = a.company_id where a.company_id = any($1::uuid[]) order by c.code, a.name`, [companies], db),
     q(`select t.*, a.name as account_name, pr.name as property_name, (select count(*)::int from files f where f.entity_type = 'finance_txn' and f.entity_id = t.id) as files
          from finance_transactions t join finance_accounts a on a.id = t.account_id left join properties pr on pr.id = t.property_id
@@ -50,8 +52,9 @@ export async function loadBooks(db: Db, companies: string[]) {
     q(`select p.*, (select json_agg(l order by l.period_no, l.direction, l.category) from finance_plan_lines l where l.plan_id = p.id) as lines
          from finance_plans p where p.company_id = any($1::uuid[]) and p.active`, [companies], db),
     q(`select * from finance_hub_settings where company_id = any($1::uuid[])`, [companies], db),
+    q(`select company_id, month, category, amount from finance_monthly_figures where company_id = any($1::uuid[])`, [companies], db),
   ]);
-  return { companies, accounts, txns, docs, commitments, plans, settings };
+  return { companies, accounts, txns, docs, commitments, plans, settings, manual };
 }
 export type Books = Awaited<ReturnType<typeof loadBooks>>;
 
@@ -74,12 +77,21 @@ export function cashBalance(b: Books, asOf: string, account?: string) {
   return all.filter((a) => day(a.opening_date) <= asOf).reduce((s, a) => s + accountBalance(a, b.txns, asOf).gbp, 0);
 }
 
-type Row = { type: 'transaction' | 'document' | 'plan' | 'commitment'; id: string; date: string; description: string; category: string | null; amount: number; link?: string };
+type Row = { type: 'transaction' | 'document' | 'plan' | 'commitment' | 'manual'; id: string; date: string; description: string; category: string | null; amount: number; link?: string };
 // Accrual P&L lines for a range, each with the record behind it (for drill-down and reconciliation).
-export function accrual(b: Books, f: Filters) {
+export function accrual(b: Books, f: Filters, useManual = true) {
   const rows: Row[] = [];
+  // Typed monthly totals have no department or property, so they apply only to unfiltered views.
+  const manual = useManual && !f.department && !f.property && !f.account ? b.manual : [];
+  const typed = new Set(manual.map((m) => `${m.company_id}|${day(m.month).slice(0, 7)}|${m.category}`));
+  const replaced = (company: string, date: string, category: string | null) => typed.has(`${company}|${date.slice(0, 7)}|${category}`);
+  for (const m of manual) {
+    const ms = day(m.month);
+    if (!inRange(ms, f)) continue;
+    rows.push({ type: 'manual', id: `${m.company_id}:${ms}:${m.category}`, date: ms, description: `Monthly figure typed in: ${m.category.replace(/_/g, ' ')}`, category: m.category, amount: (isIncome(m.category) ? 1 : -1) * p(m.amount), link: `/finance?tab=monthly` });
+  }
   for (const d of b.docs) {
-    if (!dims(f, d) || !inRange(docDate(d), f)) continue;
+    if (!dims(f, d) || !inRange(docDate(d), f) || replaced(d.company_id, docDate(d), docCategory(d))) continue;
     const sign = d.kind === 'credit_note' ? -1 : 1;
     if (RECEIVABLE.includes(d.kind) || d.kind === 'credit_note') {
       if (!['issued', 'part_paid', 'paid', 'credited'].includes(d.status)) continue;
@@ -89,7 +101,7 @@ export function accrual(b: Books, f: Filters) {
     }
   }
   for (const t of b.txns) {
-    if (t.document_id || !counts(b, t) || !dims(f, t) || !inRange(day(t.txn_date), f) || (f.account && t.account_id !== f.account)) continue;
+    if (t.document_id || !counts(b, t) || !dims(f, t) || !inRange(day(t.txn_date), f) || (f.account && t.account_id !== f.account) || replaced(t.company_id, day(t.txn_date), t.category)) continue;
     if (isIncome(t.category) || isExpense(t.category)) rows.push({ type: 'transaction', id: t.id, date: day(t.txn_date), description: t.description, category: t.category, amount: p(t.amount_gbp) });
   }
   const sum = (pred: (r: Row) => boolean) => rows.filter(pred).reduce((s, r) => s + r.amount, 0);
@@ -109,15 +121,21 @@ export function cash(b: Books, f: Filters) {
   return { rows, inflow, outflow, net: inflow - outflow };
 }
 
+// A plan period's first and last day: a calendar month, or a fixed run of days.
+export function periodRange(pl: any, k: number): [string, string] {
+  if (pl.period_kind === 'month') return [addMonths(day(pl.start_date), k - 1), addDays(addMonths(day(pl.start_date), k), -1)];
+  const s = addDays(day(pl.start_date), (k - 1) * pl.period_days);
+  return [s, addDays(s, pl.period_days - 1)];
+}
 // Plan amounts over a date range, spread evenly over each period's days.
 export function planLines(b: Books, f: Filters) {
   const out: { category: string; direction: string; department: string | null; property_id: string | null; amount: number; label: string; id: string }[] = [];
   for (const pl of b.plans) for (const l of pl.lines ?? []) {
     if (!dims(f, l)) continue;
-    const ps = addDays(day(pl.start_date), (l.period_no - 1) * pl.period_days), pe = addDays(ps, pl.period_days - 1);
+    const [ps, pe] = periodRange(pl, l.period_no);
     const a = ps > f.from ? ps : f.from, z = pe < f.to ? pe : f.to;
     if (a > z) continue;
-    out.push({ id: l.id, category: l.category, direction: l.direction, department: l.department, property_id: l.property_id, label: l.label, amount: (p(l.amount) * (daysBetween(a, z) + 1)) / pl.period_days });
+    out.push({ id: l.id, category: l.category, direction: l.direction, department: l.department, property_id: l.property_id, label: l.label, amount: (p(l.amount) * (daysBetween(a, z) + 1)) / (daysBetween(ps, pe) + 1) });
   }
   return out;
 }
@@ -174,7 +192,7 @@ export function forecast(b: Books, today: string, horizonEnd: string, sc: Scenar
   for (const x of sc.one_offs ?? []) if (x.date >= today && x.date <= horizonEnd) ev.push({ company_id: '', date: x.date, amount: p(x.amount), type: 'assumption', category: p(x.amount) >= 0 ? 'other_income' : 'other_expense', label: x.label });
   // Plan fills the gap per period and category: plan − actual so far − committed/estimated items in the period.
   for (const pl of b.plans) for (let k = 1; k <= pl.periods; k++) {
-    const ps = addDays(day(pl.start_date), (k - 1) * pl.period_days), pe = addDays(ps, pl.period_days - 1);
+    const [ps, pe] = periodRange(pl, k);
     if (pe < today || ps > horizonEnd) continue;
     const from = ps > today ? ps : today;
     const byCat = new Map<string, number>();

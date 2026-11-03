@@ -11,6 +11,9 @@ const TIPS: Record<string, string> = {
   communal: 'Clean hallways and stairs, keep fire exits clear and check lighting and fire doors.',
 };
 export const SOURCES: [string, string][] = [['resident', 'A resident'], ['neighbour', 'A neighbour'], ['visitor', 'A visitor or family member'], ['staff', 'A member of staff'], ['other', 'Someone else']];
+// How a complaint reached us when it was not raised on a visit.
+export const CHANNELS: [string, string][] = [['phone', 'Phone call'], ['in_person', 'In person (not on a visit)'], ['email', 'Email'], ['text', 'Text or WhatsApp'], ['letter', 'Letter'], ['other', 'Another way']];
+export const CHANNEL_TEXT: Record<string, string> = { visit: 'on a visit', phone: 'by phone', in_person: 'in person', email: 'by email', text: 'by text', letter: 'by letter', other: 'another way' };
 export const CATEGORIES: [string, string][] = [['noise', 'Noise'], ['cleanliness', 'Cleanliness'], ['repairs', 'Repairs or condition'], ['behaviour', 'Behaviour'], ['staff_conduct', 'Staff conduct'], ['safety', 'Safety'], ['other', 'Other']];
 
 export type Tone = 'low' | 'mid' | 'high' | 'none';
@@ -35,7 +38,7 @@ export function Stars({ n }: { n: number }) {
 }
 
 // One aspect: five star radios plus "Not checked".
-function StarInput({ name, label, value, onChange }: { name: string; label: string; value: number | null; onChange: (v: number | null) => void }) {
+export function StarInput({ name, label, value, onChange }: { name: string; label: string; value: number | null; onChange: (v: number | null) => void }) {
   return (
     <fieldset className="star-input">
       <legend>{label}</legend>
@@ -53,18 +56,20 @@ function StarInput({ name, label, value, onChange }: { name: string; label: stri
 }
 
 export const EXTRA_LABELS = { rating: 'House mood rating', 'complaint.summary': 'Complaint', 'repair.title': 'Maintenance' };
-export type Extras = { rating: Record<string, number | null>; note: string; complaint: { source: string; category: string; summary: string }; repair: { title: string; urgency: string; description: string } };
-export const blankExtras = (): Extras => ({ rating: Object.fromEntries(ASPECTS.map(([k]) => [k, null])), note: '', complaint: { source: 'resident', category: 'noise', summary: '' }, repair: { title: '', urgency: 'routine', description: '' } });
+export type Extras = { rating: Record<string, number | null>; note: string; complaint: { source: string; category: string; summary: string; channel: string }; repair: { title: string; urgency: string; description: string } };
+export const blankExtras = (): Extras => ({ rating: Object.fromEntries(ASPECTS.map(([k]) => [k, null])), note: '', complaint: { source: 'resident', category: 'noise', summary: '', channel: 'phone' }, repair: { title: '', urgency: 'routine', description: '' } });
 export const rated = (x: Extras) => ASPECTS.some(([k]) => x.rating[k] != null);
 // What the visit save sends; the complaint and repair are only sent when filled in.
 export const extrasPayload = (x: Extras) => ({
   rating: rated(x) ? { ...x.rating, note: x.note.trim() || null } : undefined,
-  complaint: x.complaint.summary.trim() ? { ...x.complaint, summary: x.complaint.summary.trim() } : undefined,
+  complaint: x.complaint.summary.trim() ? { ...x.complaint, channel: undefined, summary: x.complaint.summary.trim() } : undefined,
   repair: x.repair.title.trim() ? { title: x.repair.title.trim(), urgency: x.repair.urgency, description: x.repair.description.trim() || null } : undefined,
 });
 
-export function ComplaintFields({ value: c, onChange, error }: { value: Extras['complaint']; onChange: (c: Extras['complaint']) => void; error?: string }) {
+// askChannel: logged away from a visit (e.g. a phone call), so ask how it reached us.
+export function ComplaintFields({ value: c, onChange, error, askChannel }: { value: Extras['complaint']; onChange: (c: Extras['complaint']) => void; error?: string; askChannel?: boolean }) {
   return <>
+    {askChannel && <Field label="How did the complaint reach you?"><select value={c.channel} onChange={(e) => onChange({ ...c, channel: e.target.value })}>{CHANNELS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>}
     <div className="grid-2 tight">
       <Field label="Who made the complaint?"><select value={c.source} onChange={(e) => onChange({ ...c, source: e.target.value })}>{SOURCES.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>
       <Field label="What is it about?"><select value={c.category} onChange={(e) => onChange({ ...c, category: e.target.value })}>{CATEGORIES.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>

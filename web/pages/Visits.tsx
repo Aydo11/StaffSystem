@@ -27,10 +27,10 @@ function WorkType({ value, onChange, error }: { value: string; onChange: (v: str
 
 // Uploads chosen photos one by one after the visit is saved; returns how many failed (the visit itself is already safe).
 // Uploads to a visit's photos, or to any other photo endpoint given as a path (e.g. a repair reported from the visit).
-export async function uploadPhotos(visitId: string, files: File[], onProgress: (n: number | null) => void) {
+export async function uploadPhotos(visitId: string, files: File[], onProgress: (n: number | null) => void, fields: Record<string, string> = {}) {
   let failed = 0;
   for (const [i, f] of files.entries()) {
-    try { await upload(visitId.startsWith('/') ? visitId : `/visits/${visitId}/photos`, f, f.name, (pct) => onProgress(Math.round(((i + pct / 100) / files.length) * 100))); } catch { failed++; }
+    try { await upload(visitId.startsWith('/') ? visitId : `/visits/${visitId}/photos`, f, f.name, (pct) => onProgress(Math.round(((i + pct / 100) / files.length) * 100)), fields); } catch { failed++; }
   }
   onProgress(null);
   return failed;

@@ -41,7 +41,7 @@ properties.get('/properties', async (req, res) => {
            (select coalesce(sum(va.minutes), 0) from visit_allocations va join visits v on v.id = va.visit_id where v.property_id = p.id and v.status = 'approved' and v.started_at >= ${MONTH}) as approved_minutes_month,
            pc.score as condition_score, pc.aspects as condition_aspects,
            (select count(*)::int from property_complaints k join tasks t on t.id = k.task_id where k.property_id = p.id and t.status <> 'completed') as open_complaints,
-           (select count(*)::int from repairs r where r.property_id = p.id and r.status <> 'closed') as open_repairs
+           (select count(*)::int from repairs r where r.property_id = p.id and r.status not in ('verified','closed','cancelled')) as open_repairs
       from properties p join companies c on c.id = p.company_id left join people m on m.id = p.manager_person_id left join property_condition pc on pc.property_id = p.id
      where ${propertyVisible('p', 1, 2)} and ($5::uuid is null or p.company_id = $5) and p.status <> 'offboarded'
      order by allocated_to_me desc, p.ref`,

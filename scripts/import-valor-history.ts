@@ -95,7 +95,7 @@ export async function importValorHistory(db: Db, sheets: Sheet[], actorId: strin
     if (!['routine', 'urgent', 'emergency'].includes(urgency)) throw new Error(`Unknown priority for ${r.A}`);
     await insert('repairs', { id: key('Maintenance', r.A), company_id: company.id, property_id: propertyId, title: `${r.F} [${r.A}]`, urgency,
       description: `Reported ${date(r.B)} by ${r.H}; area: ${r.D}; category: ${r.E}; source status: ${r.L}; source cost: GBP ${r.M || 'not supplied'} (not a payment).\n${source('Maintenance', r)}`,
-      contractor: r.I || null, due_on: r.J ? date(r.J) : null, completed_on: completed, status: completed ? 'awaiting_verification' : 'reported', reported_by: actorId });
+      contractor: r.I || null, due_on: r.J ? date(r.J) : null, completed_on: completed, reported_on: date(r.B), status: completed ? 'completed' : 'reported', reported_by: actorId });
   }
   return report;
 }

@@ -7,6 +7,7 @@ import { fmtDate, fmtDateTime, label, londonToday } from '../format.ts';
 import { useHub } from '../hub.tsx';
 import { Button, Dialog, Empty, ErrorSummary, Field, FilePicker, Icon, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 import { StatStrip } from './Governance.tsx';
+import { CHANNELS, CHANNEL_TEXT } from '../condition.tsx';
 
 export const STAGES: [string, string, string][] = [
   ['new', 'New', 'Review it and give it an owner'],
@@ -53,7 +54,7 @@ export function Complaints() {
 
   return (
     <>
-      <PageHead title="Complaints" intro={workspace ? 'Every complaint in one place: who is responsible, what has happened, what happens next and when it is due.' : 'Complaints you logged or are helping with. To log one about a property, use the property page.'}
+      <PageHead title="Complaints" intro={workspace ? 'Every complaint in one place: who is responsible, what has happened, what happens next and when it is due.' : 'Complaints you logged or are helping with. To log one (a phone call is fine, no visit needed), open the property and choose Log a complaint.'}
         actions={workspace && <Button onClick={() => setAdding(true)}><Icon name="plus" size={18} />Log a complaint</Button>} />
       {d.error ? <LoadError error={d.error} retry={d.reload} /> : !d.data ? <Skeleton lines={6} /> : !workspace ? <CaseRows cases={cases} /> : (
         <>
@@ -283,7 +284,7 @@ function NewComplaint({ companies, confidential, onClose }: { companies: string[
   const hub = useHub();
   const nav = useNavigate();
   const first = hub.company !== 'all' && companies.includes(hub.company) ? hub.company : companies[0];
-  const [f, setF] = useState({ company_id: first, title: '', category: 'service', source: 'resident', complainant_name: '', property_id: '', department: '', priority: 'medium', owner_id: '', due_on: '', summary: '', confidential: false });
+  const [f, setF] = useState({ company_id: first, title: '', category: 'service', source: 'resident', channel: 'phone', complainant_name: '', property_id: '', department: '', priority: 'medium', owner_id: '', due_on: '', summary: '', confidential: false });
   const people = useApi<any[]>(`/people?company=${f.company_id}`);
   const props = useApi<any[]>('/properties');
   const save = useSubmit(async () => {
@@ -302,6 +303,7 @@ function NewComplaint({ companies, confidential, onClose }: { companies: string[
       <Field label="Short title" error={save.error?.fields.title}><input name="title" value={f.title} onChange={set('title')} placeholder="e.g. Repeated noise from room 3" /></Field>
       <Field label="Category"><select name="category" value={f.category} onChange={set('category')}>{CATEGORIES.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>
       <Field label="Who made the complaint?"><select name="source" value={f.source} onChange={set('source')}>{SOURCES.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>
+      <Field label="How did it reach you?"><select name="channel" value={f.channel} onChange={set('channel')}>{CHANNELS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>
       <Field label="Complainant's name" optional hint="Leave blank if they want to stay anonymous."><input name="complainant_name" value={f.complainant_name} onChange={set('complainant_name')} /></Field>
       <Field label="Property" optional error={save.error?.fields.property_id}><select name="property_id" value={f.property_id} onChange={set('property_id')}><option value="">Not about a property</option>{props.data?.filter((p) => p.company_id === f.company_id || p.linked_company_ids?.includes?.(f.company_id)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
       <Field label="Responsible department" optional hint="Chosen from the category if left blank."><select name="department" value={f.department} onChange={set('department')}><option value="">From the category</option>{DEPTS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>
@@ -386,7 +388,7 @@ export function ComplaintPage() {
               <dt>Category</dt><dd>{name(CATEGORIES, c.category)}</dd>
               <dt>Department</dt><dd>{name(DEPTS, c.department)}</dd>
               <dt>Property</dt><dd>{c.property_id ? <Link to={`/properties/${c.property_id}`}>{c.property_name}</Link> : 'Not about a property'}</dd>
-              <dt>From</dt><dd>{name(SOURCES, c.source)}{c.complainant_name && ` — ${c.complainant_name}`}</dd>
+              <dt>From</dt><dd>{name(SOURCES, c.source)}{c.complainant_name && ` — ${c.complainant_name}`}{c.channel && `, ${CHANNEL_TEXT[c.channel]}`}</dd>
               <dt>Logged</dt><dd>{fmtDateTime(c.created_at)} by {c.raised_by_name}</dd>
               <dt>Company</dt><dd>{c.company_name}</dd>
               {c.resolved_at && <><dt>Resolved</dt><dd>{fmtDate(c.resolved_at)} ({daysBetween(c.created_at, c.resolved_at)} days)</dd></>}

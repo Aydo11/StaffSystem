@@ -104,9 +104,10 @@ describe('managing agents', () => {
     const agent = await as('agent'), priya = await as('priya');
     expect((await agent.post(`/api/repairs/${REPAIR}/status`).send({ status: 'closed', note: 'Done' })).status).toBe(409);
     expect((await agent.post(`/api/repairs/${REPAIR}/status`).send({ status: 'in_progress', note: 'Engineer booked' })).status).toBe(200);
-    expect((await agent.post(`/api/repairs/${REPAIR}/status`).send({ status: 'awaiting_verification', note: 'Pressure valve replaced' })).status).toBe(200);
-    expect((await agent.post(`/api/repairs/${REPAIR}/status`).send({ status: 'closed', note: 'Self-verify' })).status).toBe(403);
-    expect((await priya.post(`/api/repairs/${REPAIR}/status`).send({ status: 'closed', note: 'Checked boiler pressure holds overnight.' })).status).toBe(200);
+    expect((await agent.post(`/api/repairs/${REPAIR}/status`).send({ status: 'completed', note: 'Done', work_description: 'Pressure valve replaced' })).status).toBe(200);
+    expect((await agent.post(`/api/repairs/${REPAIR}/status`).send({ status: 'verified', note: 'Self-verify' })).status).toBe(403);
+    expect((await priya.post(`/api/repairs/${REPAIR}/status`).send({ status: 'verified', note: 'Checked boiler pressure holds overnight.' })).status).toBe(200);
+    expect((await priya.post(`/api/repairs/${REPAIR}/status`).send({ status: 'closed', note: 'Closed' })).status).toBe(200);
   });
   it('rejects resident details in repair reports', async () => {
     const r = await (await as('sam')).post('/api/repairs').send({ property_id: prop(1), title: 'Leak in Room B', description: 'Resident name is on the door', urgency: 'routine' });

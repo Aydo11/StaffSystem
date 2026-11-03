@@ -36,13 +36,13 @@ function ChatShell({ openId }: { openId?: string }) {
   useEffect(() => { if (term.trim().length < 2) { setHits(null); return; } const t = setTimeout(() => get<any[]>(`/messages/search?q=${encodeURIComponent(term)}`).then(setHits).catch(() => setHits([])), 300); return () => clearTimeout(t); }, [term]);
   const shown = (list.data ?? []).filter((c) => !term.trim() || chatName(c, meId).toLowerCase().includes(term.trim().toLowerCase()));
   return (
-    <>
-      <PageHead title="Chat" intro={ADMIN_NOTE} actions={<Button onClick={() => setCreating(true)}><Icon name="plus" size={18} />New chat</Button>} />
+    <div className={`chat-page${openId ? ' thread-open' : ''}`}>
+      <PageHead title="Chat" intro={ADMIN_NOTE} actions={<Button className="new-chat" onClick={() => setCreating(true)} aria-label="New chat"><Icon name="compose" size={18} /><span className="hide-mobile">New chat</span></Button>} />
       {hub.can('messaging.moderate') && <Tabs label="Message sections" tabs={[['chats', 'Chats'], ['reports', 'Reported messages']]} value={tab} onChange={(t) => setParams(t === 'chats' ? {} : { tab: t })} />}
       {tab === 'reports' ? <Reports /> : (
         <div className={`chat${openId ? ' has-open' : ''}`}>
           <aside className="chat-list card" aria-label="Conversations">
-            <div className="field" style={{ margin: 0 }}><label htmlFor="msg-q" className="sr-only">Search chats and messages</label><input id="msg-q" type="search" placeholder="Search chats and messages" value={term} onChange={(e) => setTerm(e.target.value)} /></div>
+            <div className="field chat-search" style={{ margin: 0 }}><label htmlFor="msg-q" className="sr-only">Search chats and messages</label><Icon name="search" size={18} /><input id="msg-q" type="search" placeholder="Search" value={term} onChange={(e) => setTerm(e.target.value)} /></div>
             {!hub.me.person.photo_path && <p className="small chat-nudge"><Icon name="camera" size={16} /> <Link to="/profile">Add a profile photo</Link> so colleagues recognise you.</p>}
             {hits && hits.length > 0 && <div className="small" aria-live="polite"><strong>Messages</strong><ul className="chat-hits">{hits.map((h) => <li key={h.id}><Link to={`/messages/${h.conversation_id}`}>{h.author_name}: {h.body}</Link></li>)}</ul></div>}
             {list.loading && !list.data ? <Skeleton /> : shown.length === 0 ? <Empty>{term ? 'No chats match.' : 'No chats yet. Start one with New chat.'}</Empty> : (
@@ -58,6 +58,7 @@ function ChatShell({ openId }: { openId?: string }) {
                 </li>
               ))}</ul>
             )}
+            <p className="small muted chat-privacy hide-desktop"><Icon name="shield" size={14} /> {ADMIN_NOTE}</p>
           </aside>
           <section className="chat-pane card" aria-label="Conversation">
             {openId ? <ChatThread key={openId} id={openId} onActivity={list.reload} /> : <div className="chat-empty"><Icon name="note" size={36} /><p>Choose a chat, or start a new one with a colleague or a group.</p><Button onClick={() => setCreating(true)}>New chat</Button></div>}
@@ -65,7 +66,7 @@ function ChatShell({ openId }: { openId?: string }) {
         </div>
       )}
       {creating && <NewConversation onClose={() => setCreating(false)} />}
-    </>
+    </div>
   );
 }
 
@@ -124,11 +125,17 @@ function ChatThread({ id, onActivity }: { id: string; onActivity: () => void }) 
           <h2 className="truncate" style={{ margin: 0, fontSize: '1.125rem' }}>{title}</h2>
           <span className="small muted truncate" style={{ display: 'block' }}><CompanyBadge code={c.company_code} /> {group ? members.map((m: any) => (m.id === meId ? 'You' : m.name)).join(', ') : label(c.kind) + ' message'}</span>
         </div>
-        {group && <Button variant="secondary" onClick={() => setAdding(true)}><Icon name="users" size={18} />Add people</Button>}
-        <Button variant="ghost" busy={leave.busy} onClick={() => leave.run()}>Leave</Button>
+        <details className="thread-menu">
+          <summary className="btn ghost icon-btn" aria-label="Chat options"><Icon name="more" /></summary>
+          <div className="menu-pop" role="group" aria-label="Chat options">
+            {group && <button type="button" onClick={(e) => { e.currentTarget.closest('details')!.open = false; setAdding(true); }}><Icon name="users" size={18} />Add people</button>}
+            <button type="button" className="danger-text" disabled={leave.busy} onClick={() => { if (confirm(group ? 'Leave this group?' : 'Leave this chat?')) leave.run(); }}><Icon name="back" size={18} />{group ? 'Leave group' : 'Leave chat'}</button>
+          </div>
+        </details>
       </header>
 
       <div className="thread-body" ref={scroller} onScroll={(e) => { const el = e.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
+        <p className="thread-note small">Don’t share resident details here. Use the support system for those.</p>
         {messages.length === 0 ? <div className="chat-empty"><p>No messages yet. Say hello 👋</p></div> : (
           <ol className="bubbles" aria-label="Messages" aria-live="polite">
             {messages.map((m: any, i: number) => {
@@ -144,7 +151,7 @@ function ChatThread({ id, onActivity }: { id: string; onActivity: () => void }) 
                     {!mine && <span className="bubble-avatar">{startRun && <Avatar personId={m.author_id} name={m.author_name} hasPhoto={m.author_has_photo} />}</span>}
                     <div className="bubble-col">
                       {!mine && startRun && group && <span className="bubble-author">{m.author_name}</span>}
-                      <div className={`bubble${image && !m.body ? ' photo-only' : ''}`}>
+                      <div className={`bubble${image && !m.body ? ' photo-only' : ''}`} onClick={(e) => { if (matchMedia('(hover: none)').matches && !(e.target as HTMLElement).closest('button')) setReactFor(reactFor === m.id ? null : m.id); }}>
                         <span className="sr-only">{mine ? 'You' : m.author_name}, {fmtTime(m.created_at)}: </span>
                         {image && <button type="button" className="bubble-img" onClick={() => setViewing(m)} aria-label={`Open photo ${m.file_name}`}><AuthImage url={`/files/${m.file_id}`} alt="" /></button>}
                         {m.file_id && !image && <button type="button" className="bubble-file" onClick={() => download(`/files/${m.file_id}`, m.file_name)}><Icon name="file" size={18} />{m.file_name}</button>}
@@ -185,19 +192,20 @@ function ChatThread({ id, onActivity }: { id: string; onActivity: () => void }) 
         )}
         {emoji && <div className="emoji-grid" role="group" aria-label="Emoji">{EMOJIS.map((e) => <button key={e} type="button" onClick={() => insert(e)} aria-label={`Insert ${e}`}>{e}</button>)}</div>}
         <div className="composer-row">
+          <div className="composer-pill">
+          <button type="button" className="btn ghost icon-btn" aria-label="Emoji" aria-expanded={emoji} onClick={() => setEmoji(!emoji)}><Icon name="smile" /></button>
+          <label htmlFor="chat-input" className="sr-only">Message</label>
+          <textarea id="chat-input" ref={input} rows={1} value={body} placeholder="Message…" title="Enter to send, Shift+Enter for a new line"
+            onChange={(e) => { setBody(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`; }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (canSend) send.run(); } }}
+            onPaste={(e) => { const f = [...e.clipboardData.files].find((x) => x.type.startsWith('image/')); if (f) { e.preventDefault(); setFile(f); } }} />
           <label className="btn ghost icon-btn" title="Attach a photo or PDF">
             <Icon name="paperclip" /><span className="sr-only">Attach a photo or PDF</span>
             <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="sr-only" onChange={(e) => { setFile(e.target.files?.[0] ?? null); e.target.value = ''; }} />
           </label>
-          <button type="button" className="btn ghost icon-btn" aria-label="Emoji" aria-expanded={emoji} onClick={() => setEmoji(!emoji)}><Icon name="smile" /></button>
-          <label htmlFor="chat-input" className="sr-only">Message</label>
-          <textarea id="chat-input" ref={input} rows={1} value={body} placeholder="Write a message… (Enter to send, Shift+Enter for a new line)"
-            onChange={(e) => { setBody(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`; }}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (canSend) send.run(); } }}
-            onPaste={(e) => { const f = [...e.clipboardData.files].find((x) => x.type.startsWith('image/')); if (f) { e.preventDefault(); setFile(f); } }} />
+          </div>
           <Button type="submit" className="send-btn" busy={send.busy} busyText="" disabled={!canSend} aria-label="Send"><Icon name="send" size={18} /></Button>
         </div>
-        <p className="small muted" style={{ margin: '4px 0 0' }}>Do not share resident details here; use the support system for those.</p>
       </form>
 
       <Dialog open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `Photo from ${viewing.author_id === meId ? 'you' : viewing.author_name}` : 'Photo'} variant="modal"

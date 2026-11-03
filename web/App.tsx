@@ -58,7 +58,7 @@ function Session() {
   }, []);
   useEffect(() => { reloadMe(); }, [reloadMe]);
   const setCompany = (c: string) => { setCompanyState(c); try { localStorage.setItem('hub.company', c); } catch { /* convenience only */ } };
-  const hub = useMemo(() => me && makeHub(me, me.companies.some((c) => c.id === company) ? company : 'all', setCompany, reloadMe), [me, company, reloadMe]);
+  const hub = useMemo(() => me && makeHub(me, me.companies.some((c) => c.id === company) ? company : me.companies.length === 1 ? me.companies[0].id : 'all', setCompany, reloadMe), [me, company, reloadMe]);
   if (err) return (
     <main className="content" style={{ maxWidth: 560 }}>
       <div className="notice bad" role="alert"><strong>{err.message}</strong></div>

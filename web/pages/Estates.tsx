@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { download, patch, post, upload, useApi, useSubmit } from '../api.ts';
-import { fmtDate, fmtDateTime, label, londonToday } from '../format.ts';
+import { patch, post, upload, useApi, useSubmit } from '../api.ts';
+import { fmtDate, label, londonToday } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, PhotoGrid, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
-import { uploadPhotos } from './Visits.tsx';
+import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 import { NewAction } from './Governance.tsx';
+import { REPAIR_STATUS, ReportRepair, Repairs } from './Repairs.tsx';
 
-const REPAIR_STATUS: Record<string, [string, string]> = { reported: ['info', 'Reported'], triaged: ['info', 'Triaged'], assigned: ['planned', 'Assigned'], in_progress: ['review', 'In Progress'], awaiting_verification: ['submitted', 'Awaiting Verification'], closed: ['completed', 'Closed'] };
-const URGENCY: Record<string, [string, string]> = { emergency: ['urgent', 'Emergency'], urgent: ['high', 'Urgent'], routine: ['normal', 'Routine'] };
+export { RepairPage, ReportRepair } from './Repairs.tsx';
+
 const SAFETY_STATE: Record<string, [string, string]> = { never_done: ['action', 'Never recorded'], failed: ['action', 'Failed'], overdue: ['action', 'Overdue'], due_soon: ['review', 'Due soon'], in_date: ['verified', 'In date'] };
 
 type Tab = 'repairs' | 'safety' | 'agents';
@@ -24,113 +24,6 @@ export function Estates() {
       {tab === 'repairs' && <Repairs />}
       {tab === 'safety' && <Safety property={params.get('property')} />}
       {tab === 'agents' && showAgents && <Agents />}
-    </>
-  );
-}
-
-export function ReportRepair({ properties, onClose, onSaved }: { properties: any[]; onClose: () => void; onSaved: () => void }) {
-  const toast = useToast();
-  const [f, setF] = useState({ property_id: properties.length === 1 ? properties[0].id : '', title: '', description: '', impact: '', urgency: 'routine', immediate_action: '' });
-  const [photos, setPhotos] = useState<File[]>([]);
-  const [progress, setProgress] = useState<number | null>(null);
-  const save = useSubmit(async () => {
-    const r = await post('/repairs', { ...f, description: f.description || null, impact: f.impact || null, immediate_action: f.immediate_action || null });
-    const failed = photos.length ? await uploadPhotos(`/repairs/${r.id}/photos`, photos, setProgress) : 0;
-    toast(failed ? `Repair reported. ${failed} photo${failed === 1 ? '' : 's'} did not upload — add ${failed === 1 ? 'it' : 'them'} on the repair.` : 'Repair reported. The repairs manager has it as a task.'); onSaved();
-  });
-  return (
-    <Dialog open onClose={onClose} title="Report a repair" footer={<Button busy={save.busy} onClick={() => save.run()}>Report</Button>}>
-      <div className="notice warn">If anyone is in danger, call 999 first. For gas, call the National Gas Emergency number.</div>
-      <ErrorSummary error={save.error} />
-      <Field label="Property" error={save.error?.fields.property_id}><select name="property_id" value={f.property_id} onChange={(e) => setF({ ...f, property_id: e.target.value })}><option value="">Choose…</option>{properties.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.ref})</option>)}</select></Field>
-      <Field label="What is wrong?" error={save.error?.fields.title}><input name="title" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></Field>
-      <Field label="Details" optional hint="Property details only — use room labels, not names."><textarea name="description" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
-      <Field label="Urgency"><select name="urgency" value={f.urgency} onChange={(e) => setF({ ...f, urgency: e.target.value })}><option value="emergency">Emergency — risk to safety now</option><option value="urgent">Urgent — within a week</option><option value="routine">Routine</option></select></Field>
-      <Field label="Impact" optional><input name="impact" value={f.impact} onChange={(e) => setF({ ...f, impact: e.target.value })} /></Field>
-      <Field label="Immediate action taken" optional><input name="immediate_action" value={f.immediate_action} onChange={(e) => setF({ ...f, immediate_action: e.target.value })} /></Field>
-      <FilePicker label="Photos of the problem" hint="Up to 20. Do not photograph residents." accept="image/jpeg,image/png,image/webp" multiple busy={progress !== null} progress={progress} onChange={setPhotos} />
-    </Dialog>
-  );
-}
-
-function Repairs() {
-  const hub = useHub();
-  const d = useApi<any[]>(`/repairs${hub.q()}`);
-  const props = useApi<any[]>(`/properties${hub.q()}`);
-  const [reporting, setReporting] = useState(false);
-  const [showClosed, setShowClosed] = useState(false);
-  const rows = (d.data ?? []).filter((r) => showClosed || r.status !== 'closed');
-  return (
-    <>
-      <div className="row between" style={{ marginBottom: 12 }}><label className="check"><input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} /> Show closed repairs</label><Button onClick={() => setReporting(true)}>Report a repair</Button></div>
-      {d.loading && !d.data ? <Skeleton /> : rows.length === 0 ? <Empty>No open repairs.</Empty> : (
-        <div className="table-wrap"><table><thead><tr><th>Repair</th><th>Property</th><th>Urgency</th><th>Assigned to</th><th>Due</th><th>Status</th></tr></thead>
-          <tbody>{rows.map((r) => <tr key={r.id}><td><Link to={`/estates/repairs/${r.id}`}>{r.title}</Link></td><td>{r.property_name} <CompanyBadge code={r.company_code} name={r.company_name} /></td><td><Status s={URGENCY[r.urgency][0]} text={URGENCY[r.urgency][1]} /></td><td>{r.assignee_name ?? r.agent_name ?? r.contractor ?? '—'}</td><td>{fmtDate(r.due_on)}{r.overdue && <div><Status s="action" text="Overdue" /></div>}</td><td><Status s={REPAIR_STATUS[r.status][0]} text={REPAIR_STATUS[r.status][1]} /></td></tr>)}</tbody></table></div>
-      )}
-      {reporting && <ReportRepair properties={props.data ?? []} onClose={() => setReporting(false)} onSaved={() => { setReporting(false); d.reload(); }} />}
-    </>
-  );
-}
-
-// Calendar days from reporting to the work being done.
-const daysBetween = (from: string, to: string) => { const n = Math.round((Date.parse(to) - Date.parse(from.slice(0, 10))) / 864e5); return n <= 0 ? 'Same day' : `${n} day${n === 1 ? '' : 's'}`; };
-
-export function RepairPage() {
-  const { id } = useParams();
-  const d = useApi<any>(`/repairs/${id}`);
-  const toast = useToast();
-  const [move, setMove] = useState<string | null>(null);
-  const [note, setNote] = useState('');
-  const [upd, setUpd] = useState({ body: '', file: null as File | null });
-  const [pickerKey, setPickerKey] = useState(0); // remounts the picker to clear it after an update
-  const [assign, setAssign] = useState<any>(null);
-  const people = useApi<any[]>(assign && d.data ? `/people?company=${d.data.repair.company_id}` : null);
-  const agents = useApi<any[]>(assign && d.data ? `/agents?company=${d.data.repair.company_id}` : null);
-  const status = useSubmit(async () => { await post(`/repairs/${id}/status`, { status: move, note }); setMove(null); setNote(''); toast('Repair updated.'); d.reload(); });
-  const addUpd = useSubmit(async () => { await upload(`/repairs/${id}/updates`, upd.file, upd.file?.name ?? '', undefined, { body: upd.body }); setUpd({ body: '', file: null }); setPickerKey((k) => k + 1); d.reload(); });
-  const [photoProgress, setPhotoProgress] = useState<number | null>(null);
-  const addPhotos = useSubmit(async (fs: File[]) => { const failed = await uploadPhotos(`/repairs/${id}/photos`, fs, setPhotoProgress); toast(failed ? `${failed} photo${failed === 1 ? '' : 's'} did not upload.` : 'Photos added.'); d.reload(); });
-  const saveAssign = useSubmit(async () => { await patch(`/repairs/${id}`, { assignee_id: assign.assignee_id || null, agent_id: assign.agent_id || null, contractor: assign.contractor || null, due_on: assign.due_on || null, urgency: assign.urgency }); setAssign(null); toast('Saved.'); d.reload(); });
-  if (d.error) return <LoadError error={d.error} />;
-  if (!d.data) return <Skeleton lines={8} />;
-  const { repair: r, updates, files, can } = d.data;
-  return (
-    <>
-      <PageHead title={r.title} crumbs={[['Repairs', '/estates'], [r.title]]} intro={<>{r.property_name} · <span className="badge co">{r.company_code}</span> · reported by {r.reported_by_name} on {fmtDate(r.created_at)}</>}
-        actions={<><Status s={URGENCY[r.urgency][0]} text={URGENCY[r.urgency][1]} /><Status s={REPAIR_STATUS[r.status][0]} text={REPAIR_STATUS[r.status][1]} /></>} />
-      <ErrorSummary error={status.error ?? addUpd.error ?? addPhotos.error} />
-      <div className="grid-2">
-        <section className="card" aria-labelledby="rd-h"><h2 id="rd-h">Details</h2>
-          <dl className="facts"><dt>Details</dt><dd>{r.description ?? '—'}</dd><dt>Impact</dt><dd>{r.impact ?? '—'}</dd><dt>Immediate action</dt><dd>{r.immediate_action ?? '—'}</dd><dt>Repairs manager</dt><dd>{r.manager_name ?? 'Not set — choose one in Governance → Leads'}</dd><dt>Assigned</dt><dd>{r.assignee_name ?? r.agent_name ?? r.contractor ?? 'Not yet'}</dd><dt>Due</dt><dd>{fmtDate(r.due_on)}</dd>{r.completed_on && <><dt>Work completed</dt><dd>{fmtDate(r.completed_on)}</dd></>}{r.verified_at && <><dt>Verified and closed</dt><dd>{fmtDateTime(r.verified_at)}</dd><dt>Time to fix</dt><dd>{daysBetween(r.created_at, r.completed_on)} · {r.completed_on <= r.due_on ? <Status s="verified" text="On time" /> : <Status s="action" text="Late" />}</dd></>}</dl>
-          <h3 style={{ marginTop: 16 }}>What happens next</h3>
-          <div className="row">
-            {can.manage && r.status !== 'closed' && <Button variant="secondary" onClick={() => setAssign({ assignee_id: r.assignee_id ?? '', agent_id: r.agent_id ?? '', contractor: r.contractor ?? '', due_on: r.due_on ?? '', urgency: r.urgency })}>Assign or change</Button>}
-            {can.next.map((s: string) => <Button key={s} variant={s === 'closed' ? 'go' : 'primary'} onClick={() => setMove(s)}>{s === 'closed' ? 'Verify and close' : s === 'in_progress' && r.status === 'awaiting_verification' ? 'Send back — not finished' : `Move to ${REPAIR_STATUS[s][1]}`}</Button>)}
-          </div>
-        </section>
-        <section className="card" aria-labelledby="ru-h"><h2 id="ru-h">Updates</h2>
-          {updates.length === 0 ? <p className="muted">No updates.</p> : <ul className="list">{updates.map((u: any) => <li key={u.id}><div><strong>{u.author_name}</strong> <span className="muted small">{fmtDateTime(u.created_at)}</span>{u.status_to && <span className="small"> · {REPAIR_STATUS[u.status_from]?.[1]} → {REPAIR_STATUS[u.status_to][1]}</span>}<p style={{ margin: '4px 0 0' }}>{u.body}</p></div></li>)}</ul>}
-          {files.some((f: any) => f.is_image) && <><h3>Photos</h3><PhotoGrid photos={files.filter((f: any) => f.is_image)} caption={(f) => fmtDateTime(f.uploaded_at)} /></>}
-          {files.some((f: any) => !f.is_image) && <p>Documents: {files.filter((f: any) => !f.is_image).map((f: any) => <button key={f.id} type="button" className="btn ghost" onClick={() => download(`/files/${f.id}`, f.original_name)}>{f.original_name}</button>)}</p>}
-          {(can.work || can.photos) && r.status !== 'closed' && <FilePicker label="Add photos" hint="Before and after photos help the repairs manager verify the work." accept="image/jpeg,image/png,image/webp" multiple instant busy={photoProgress !== null} progress={photoProgress} onChange={(fs) => addPhotos.run(fs)} />}
-          {can.work && r.status !== 'closed' && <><Field label="Add an update"><textarea name="body" value={upd.body} onChange={(e) => setUpd({ ...upd, body: e.target.value })} /></Field>
-            <FilePicker key={pickerKey} label="Photo or document" accept="image/*,application/pdf" onChange={(fs) => setUpd({ ...upd, file: fs[0] ?? null })} />
-            <Button variant="secondary" busy={addUpd.busy} disabled={upd.body.trim().length < 2} onClick={() => addUpd.run()}>Add update</Button></>}
-        </section>
-      </div>
-      <Dialog open={!!move} onClose={() => setMove(null)} title={move === 'closed' ? 'Verify and close' : `Move to ${move ? REPAIR_STATUS[move][1] : ''}`} variant="modal" footer={<Button busy={status.busy} disabled={note.trim().length < 2} onClick={() => status.run()}>Confirm</Button>}>
-        {move === 'closed' && <p>Only close it when you have checked the work is done. Someone other than the person who did the work must verify it.</p>}
-        <ErrorSummary error={status.error} />
-        <Field label={move === 'closed' ? 'What did you check?' : 'Note'}><textarea name="note" value={note} onChange={(e) => setNote(e.target.value)} /></Field>
-      </Dialog>
-      <Dialog open={!!assign} onClose={() => setAssign(null)} title="Assign repair" footer={<Button busy={saveAssign.busy} onClick={() => saveAssign.run()}>Save</Button>}>
-        {assign && <><ErrorSummary error={saveAssign.error} />
-          <Field label="Urgency"><select name="urgency" value={assign.urgency} onChange={(e) => setAssign({ ...assign, urgency: e.target.value })}>{Object.entries(URGENCY).map(([k, [, t]]) => <option key={k} value={k}>{t}</option>)}</select></Field>
-          <Field label="Staff member" optional><select name="assignee_id" value={assign.assignee_id} onChange={(e) => setAssign({ ...assign, assignee_id: e.target.value })}><option value="">None</option>{people.data?.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></Field>
-          <Field label="Managing agent" optional><select name="agent_id" value={assign.agent_id} onChange={(e) => setAssign({ ...assign, agent_id: e.target.value })}><option value="">None</option>{agents.data?.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
-          <Field label="Contractor" optional><input name="contractor" value={assign.contractor} onChange={(e) => setAssign({ ...assign, contractor: e.target.value })} /></Field>
-          <Field label="Deadline" optional><input name="due_on" type="date" value={assign.due_on} onChange={(e) => setAssign({ ...assign, due_on: e.target.value })} /></Field></>}
-      </Dialog>
     </>
   );
 }

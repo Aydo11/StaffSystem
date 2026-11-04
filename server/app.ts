@@ -21,6 +21,7 @@ import { financehub } from './routes/financehub.ts';
 import { financeimport } from './routes/financeimport.ts';
 import { estates } from './routes/estates.ts';
 import { compliance } from './routes/compliance.ts';
+import { safety } from './routes/safety.ts';
 import { finance } from './routes/finance.ts';
 import { governance } from './routes/governance.ts';
 import { messaging } from './routes/messaging.ts';
@@ -68,7 +69,7 @@ export function createApp() {
   api.use(registrationPublic);
   api.use(authenticate);
   api.use(registrationAdmin);
-  api.use(account, core, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, complaints, estates, compliance, financeimport, financehub, finance, messaging, ai, dataops, leave, development, admin);
+  api.use(account, core, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, complaints, estates, compliance, safety, financeimport, financehub, finance, messaging, ai, dataops, leave, development, admin);
   api.use(() => { throw new HttpError(404, 'not_found', 'No such API endpoint.'); });
   app.use('/api', api);
 

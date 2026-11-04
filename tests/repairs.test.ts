@@ -25,12 +25,13 @@ describe('repairs workflow', () => {
     const detail = (await priya.get(`/api/repairs/${r.body.id}`)).body;
     expect(detail.repair.manager_name).toBeTruthy();
     expect(detail.files[0].is_image).toBe(true);
-    await priya.post(`/api/repairs/${r.body.id}/status`).send({ status: 'triaged', note: 'Needs a plumber' });
+    await priya.post(`/api/repairs/${r.body.id}/status`).send({ status: 'under_review', note: 'Needs a plumber' });
     await priya.patch(`/api/repairs/${r.body.id}`).send({ assignee_id: P.sam });
     await priya.post(`/api/repairs/${r.body.id}/status`).send({ status: 'assigned', note: 'Sam to fix' });
     await sam.post(`/api/repairs/${r.body.id}/status`).send({ status: 'in_progress', note: 'Washer bought' });
-    await sam.post(`/api/repairs/${r.body.id}/status`).send({ status: 'awaiting_verification', note: 'Washer replaced' });
-    expect((await priya.post(`/api/repairs/${r.body.id}/status`).send({ status: 'closed', note: 'No drip after an hour' })).status).toBe(200);
+    await sam.post(`/api/repairs/${r.body.id}/status`).send({ status: 'completed', note: 'Done', work_description: 'Washer replaced', cost: 4.5 });
+    expect((await priya.post(`/api/repairs/${r.body.id}/status`).send({ status: 'verified', note: 'No drip after an hour' })).status).toBe(200);
+    expect((await priya.post(`/api/repairs/${r.body.id}/status`).send({ status: 'closed', note: 'Closed' })).status).toBe(200);
 
     const done = (await pool.query('select status, completed_at from tasks where id = $1', [r.body.task_id])).rows[0];
     expect(done.status).toBe('completed');
@@ -46,7 +47,7 @@ describe('repairs workflow', () => {
 
   it('a repair reported from a visit returns its id so the form can add photos', async () => {
     const sam = await as('sam');
-    const v = await sam.post('/api/visits/manual').send({ property_id: prop(1), appointment_id: '00000000-0000-4000-8000-000000000b01', start_local: `${new Date().toISOString().slice(0, 10)}T09:00`, minutes: 30, work_category: 'inspection', summary: 'Checked', client_request_id: crypto.randomUUID(), repair: { title: 'Broken fence panel', urgency: 'routine' } });
+    const v = await sam.post('/api/visits/manual').send({ property_id: prop(1), appointment_id: '00000000-0000-4000-8000-000000000b01', start_local: `${new Date(Date.now() - 864e5).toISOString().slice(0, 10)}T09:00`, minutes: 30, work_category: 'inspection', summary: 'Checked', client_request_id: crypto.randomUUID(), repair: { title: 'Broken fence panel', urgency: 'routine' } });
     expect(v.status).toBe(201);
     expect(v.body.visit.repair_id).toBeTruthy();
     expect((await sam.post(`/api/repairs/${v.body.visit.repair_id}/photos`).attach('file', png, 'fence.png')).status).toBe(201);

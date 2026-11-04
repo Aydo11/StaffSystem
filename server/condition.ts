@@ -80,8 +80,8 @@ export const conditionLists = (db: Db, propertyId: string) => Promise.all([
   q(`select c.id, c.ref, c.stage, c.source, c.channel, c.category, c.summary, c.created_at, c.task_id, case when c.stage in ('resolved','closed') then 'completed' else t.status end as task_status, coalesce(c.resolved_at, t.completed_at) as completed_at, coalesce(o.preferred_name, o.full_name) as handler_name, coalesce(rb.preferred_name, rb.full_name) as raised_by_name
        from property_complaints c join people rb on rb.id = c.raised_by left join tasks t on t.id = c.task_id left join people o on o.id = c.owner_id
       where c.property_id = $1 and not c.confidential order by (c.stage in ('resolved','closed')), c.created_at desc limit 50`, [propertyId], db),
-  q(`select id, title, urgency, status, due_on from repairs where property_id = $1 and status <> 'closed' order by case urgency when 'emergency' then 0 when 'urgent' then 1 else 2 end, created_at limit 20`, [propertyId], db),
+  q(`select id, title, urgency, status, due_on from repairs where property_id = $1 and status not in ('verified','closed','cancelled') order by case urgency when 'emergency' then 0 when 'urgent' then 1 else 2 end, created_at limit 20`, [propertyId], db),
   // Fixed repairs, with how long they took (reported → work done) and whether that was on time.
-  q(`select id, title, urgency, created_at, completed_on, verified_at, due_on, (completed_on - (created_at at time zone 'Europe/London')::date) as days_to_fix, completed_on <= due_on as on_time
-       from repairs where property_id = $1 and status = 'closed' order by verified_at desc limit 20`, [propertyId], db),
+  q(`select id, title, urgency, created_at, completed_on, verified_at, due_on, (completed_on - reported_on) as days_to_fix, completed_on <= due_on as on_time
+       from repairs where property_id = $1 and status in ('verified','closed') order by verified_at desc limit 20`, [propertyId], db),
 ]);

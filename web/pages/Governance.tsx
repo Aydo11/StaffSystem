@@ -37,7 +37,7 @@ export function StatStrip({ label: aria, items, filter, onFilter }: { label: str
 
 const ACTION_STATUS: Record<string, [string, string]> = { open: ['info', 'Open'], evidence_submitted: ['review', 'Evidence submitted'], verified: ['verified', 'Verified'], closed: ['completed', 'Closed'], reopened: ['action', 'Reopened'] };
 
-function PersonSelect({ companyId, value, onChange, label: l, optional }: { companyId: string; value: string; onChange: (v: string) => void; label: string; optional?: boolean }) {
+export function PersonSelect({ companyId, value, onChange, label: l, optional }: { companyId: string; value: string; onChange: (v: string) => void; label: string; optional?: boolean }) {
   const people = useApi<any[]>(companyId ? `/people?company=${companyId}` : null);
   return <Field label={l} optional={optional}><select name={l} value={value} onChange={(e) => onChange(e.target.value)}><option value="">{optional ? 'None' : 'Choose…'}</option>{people.data?.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></Field>;
 }

@@ -64,6 +64,8 @@ export function startWorkers() {
   setInterval(() => run(async () => (await import('./aiops.ts')).dailyReports()), 3600_000).unref(); // at most one report per company per day
   setInterval(() => run(async () => (await import('./geo.ts')).pinProperties()), 3600_000).unref();
   setInterval(() => run(async () => (await import('./routes/complaints.ts')).complaintReminders()), 3600_000).unref(); // one reminder per case per day
+  setInterval(() => run(async () => (await import('./routes/estates.ts')).escalateRepairs()), 3600_000).unref(); // once per overdue repair
+  setInterval(() => run(async () => (await import('./routes/reports.ts')).safetyReminders()), 3600_000).unref(); // repairs due tomorrow, overdue actions, compliance deadlines; each once
   run(queueReminders);
   run(async () => (await import('./geo.ts')).pinProperties()); // pin properties from their postcodes
 }

@@ -114,10 +114,10 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
          from cases k join companies c on c.id = k.company_id
         where k.status = 'received' and k.company_id = any($2::uuid[]) and not ($1 = any(k.implicated_ids)) and k.raised_by is distinct from $1 and k.subject_person_id is distinct from $1`, [me, scope(a, 'cases.handle', company)]),
     q(`select 'repair_open' kind, initcap(r.urgency) || ' repair: ' || r.title || ' (' || p.name || ')' title, ${C}, r.due_on::text due, 'You (repairs)' owner,
-              case r.status when 'reported' then 'Triage it' when 'awaiting_verification' then 'Check the work and close it' else 'Make sure it is progressing' end next_step,
+              case r.status when 'reported' then 'Review it' when 'reopened' then 'Review it again' when 'completed' then 'Check the work and verify it' when 'verified' then 'Close it' else 'Make sure it is progressing' end next_step,
               '/estates/repairs/' || r.id link, case when r.urgency = 'emergency' or r.due_on < ${LONDON_TODAY} then 'action' else 'review' end severity
          from repairs r join properties p on p.id = r.property_id join companies c on c.id = r.company_id
-        where r.company_id = any($1::uuid[]) and (r.status in ('reported','awaiting_verification') or (r.status <> 'closed' and (r.urgency = 'emergency' or r.due_on < ${LONDON_TODAY})))`, [scope(a, 'repairs.manage', company)]),
+        where r.company_id = any($1::uuid[]) and (r.status in ('reported','reopened','completed','verified') or (r.status not in ('verified','closed','cancelled') and (r.urgency = 'emergency' or r.due_on < ${LONDON_TODAY})))`, [scope(a, 'repairs.manage', company)]),
     q(`select 'safety_overdue' kind, 'Safety check overdue: ' || sr.name || ' (' || p.name || ')' title, ${C}, (last.done_on + sr.interval_days)::text due, 'Responsible: ' || sr.responsible owner,
               'Arrange the check and record the result' next_step, '/estates?property=' || p.id link, 'action' severity
          from safety_requirements sr join properties p on p.id = sr.property_id join companies c on c.id = sr.company_id

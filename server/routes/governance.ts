@@ -150,6 +150,11 @@ governance.post('/decisions', async (req, res) => {
 });
 
 // ── Risk register ──
+// A risk stays open until every action raised against it has been verified.
+export async function assertRiskActionsVerified(riskId: string) {
+  const n = (await one<{ n: number }>(`select count(*)::int n from improvement_actions where source_type = 'risk' and source_id = $1 and status not in ('verified','closed')`, [riskId]))!.n;
+  if (n) throw conflict(`${n} action${n === 1 ? ' is' : 's are'} not verified yet. A risk stays open until its actions are verified.`);
+}
 governance.get('/risks', async (req, res) => {
   res.json(await q(`select r.*, r.likelihood * r.impact as score, ${name('o')} as owner_name, c.code as company_code, c.name as company_name,
                            (select count(*) from improvement_actions x where x.source_type = 'risk' and x.source_id = r.id and x.status <> 'closed')::int as open_actions
@@ -170,7 +175,9 @@ governance.post('/risks', async (req, res) => {
 });
 governance.patch('/risks/:id', async (req, res) => {
   const r = await loadOwned(req.access, 'risks', idParam(req.params.id), 'governance.manage');
-  res.json(await patchRow('risks', r.id, { ...parse(riskFields.strict(), req.body), updated_at: new Date().toISOString() }));
+  const b = parse(riskFields.strict(), req.body);
+  if (b.status === 'closed' && r.status !== 'closed') await assertRiskActionsVerified(r.id);
+  res.json(await patchRow('risks', r.id, { ...b, updated_at: new Date().toISOString() }));
 });
 governance.post('/risks/:id/assess', async (req, res) => {
   const r = await loadOwned(req.access, 'risks', idParam(req.params.id), 'governance.manage');
@@ -224,12 +231,13 @@ governance.patch('/audits/:id', async (req, res) => {
 });
 
 // ── Improvement actions: Finding → Action → Owner → Deadline → Evidence → Verification → Effectiveness review ──
-const SOURCE_PERM: Record<string, string> = { safety_check: 'safety.manage', agent: 'agents.manage' };
+// Property safety actions are also run by whoever manages property safety, not only governance.
+const SOURCE_PERM: Record<string, string> = { safety_check: 'safety.manage', agent: 'agents.manage', inspection: 'safety.manage', risk: 'safety.manage', compliance_record: 'compliance.manage' };
 async function loadAction(a: Access, id: string) {
   const x = await one(`select x.*, ${name('o')} as owner_name, ${name('v')} as verified_by_name, ${name('rv')} as reviewed_by_name, c.code as company_code, c.name as company_name
                          from improvement_actions x join companies c on c.id = x.company_id left join people o on o.id = x.owner_id left join people v on v.id = x.verified_by left join people rv on rv.id = x.reviewed_by where x.id = $1`, [id]);
   if (!x || !(x.owner_id === a.personId || can(a, 'governance.view', x.company_id) || (SOURCE_PERM[x.source_type] && can(a, SOURCE_PERM[x.source_type], x.company_id)))) throw notFound();
-  return { x, manage: can(a, 'governance.manage', x.company_id) && x.owner_id !== a.personId };
+  return { x, manage: (can(a, 'governance.manage', x.company_id) || (!!SOURCE_PERM[x.source_type] && can(a, SOURCE_PERM[x.source_type], x.company_id))) && x.owner_id !== a.personId };
 }
 governance.get('/actions', async (req, res) => {
   const a = req.access;
@@ -243,7 +251,7 @@ governance.get('/actions/:id', async (req, res) => {
   res.json({ action: x, files: await q(`select id, original_name, uploaded_at from files where entity_type = 'action' and entity_id = $1`, [x.id]), can: { manage, evidence: x.owner_id === req.person.id || manage } });
 });
 governance.post('/actions', async (req, res) => {
-  const b = parse(z.object({ company_id: uuid, source_type: z.enum(['audit', 'risk', 'decision', 'safety_check', 'agent', 'meeting', 'other']), source_id: uuid.nullable().optional(), finding: text(4000).min(3), action: text(2000).min(3),
+  const b = parse(z.object({ company_id: uuid, source_type: z.enum(['audit', 'risk', 'decision', 'safety_check', 'agent', 'meeting', 'other', 'inspection']), source_id: uuid.nullable().optional(), finding: text(4000).min(3), action: text(2000).min(3),
     significance: z.enum(['standard', 'significant']).default('standard'), owner_id: uuid.nullable().optional(), due_on: isoDate.nullable().optional(), effectiveness_review_on: isoDate.nullable().optional() }), req.body);
   if (!can(req.access, 'governance.manage', b.company_id) && !(SOURCE_PERM[b.source_type] && can(req.access, SOURCE_PERM[b.source_type], b.company_id))) throw forbidden();
   const x = await one(`insert into improvement_actions (company_id, source_type, source_id, finding, action, significance, owner_id, due_on, effectiveness_review_on, created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`,
@@ -367,9 +375,9 @@ async function pack(db: Db, a: Access, companyId: string, month: string): Promis
       (select count(*) from scheduled_visits s, w where s.company_id = $1 and s.status = 'scheduled' and s.planned_start >= w.ds and s.planned_start < w.de and s.planned_start + make_interval(mins => s.planned_minutes) < now())::int missed,
       (select count(*) from audits x, w where x.company_id = $1 and x.completed_on >= w.ds and x.completed_on < w.de)::int audits_done,
       (select count(*) from audits x where x.company_id = $1 and x.status <> 'completed' and x.planned_on < ${LONDON_TODAY})::int audits_late,
-      (select count(*) from repairs r where r.company_id = $1 and r.status <> 'closed')::int repairs_open,
-      (select count(*) from repairs r where r.company_id = $1 and r.status <> 'closed' and r.urgency = 'emergency')::int repairs_emergency,
-      (select count(*) from repairs r where r.company_id = $1 and r.status <> 'closed' and r.due_on < ${LONDON_TODAY})::int repairs_overdue,
+      (select count(*) from repairs r where r.company_id = $1 and r.status not in ('verified','closed','cancelled'))::int repairs_open,
+      (select count(*) from repairs r where r.company_id = $1 and r.status not in ('verified','closed','cancelled') and r.urgency = 'emergency')::int repairs_emergency,
+      (select count(*) from repairs r where r.company_id = $1 and r.status not in ('verified','closed','cancelled') and r.due_on < ${LONDON_TODAY})::int repairs_overdue,
       (select count(*) from safety_requirements sr where sr.company_id = $1 and sr.retired_at is null
          and coalesce((select max(done_on) from safety_checks sc where sc.requirement_id = sr.id) + sr.interval_days, '1900-01-01') < ${LONDON_TODAY})::int safety_overdue,
       (select count(*) from safety_checks sc join safety_requirements sr on sr.id = sc.requirement_id, w where sr.company_id = $1 and sc.result = 'fail' and sc.done_on >= w.ds and sc.done_on < w.de)::int safety_failed,

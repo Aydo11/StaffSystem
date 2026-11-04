@@ -11,16 +11,16 @@ import { CATEGORIES, suggestUrgency, URGENCY_RANK } from '../repairPriority.ts';
 
 export const estates = Router();
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
-const noResidents = (s: string | null | undefined) => !s || !/\b(resident|tenant|service user)\s+(name|called|is)\b/i.test(s);
-const residentMsg = 'Describe the property issue only. Do not include resident names or personal details.';
+export const noResidents = (s: string | null | undefined) => !s || !/\b(resident|tenant|service user)\s+(name|called|is)\b/i.test(s);
+export const residentMsg = 'Describe the property issue only. Do not include resident names or personal details.';
 
 // Properties an agent user may see: those linked to their agents.
-async function agentPropertyIds(a: Access, db: Db = pool) {
+export async function agentPropertyIds(a: Access, db: Db = pool) {
   if (!a.agentIds.length) return [];
   return (await q<{ property_id: string }>('select property_id from agent_properties where agent_id = any($1::uuid[])', [a.agentIds], db)).map((r) => r.property_id);
 }
 // Staff see estates records for properties they can see; managers by permission; agents for their linked properties.
-async function propertyAccess(a: Access, propertyId: string, perm?: string) {
+export async function propertyAccess(a: Access, propertyId: string, perm?: string) {
   const p = await one(`select p.* from properties p where p.id = $1`, [propertyId]);
   if (!p) throw notFound();
   if ((await agentPropertyIds(a)).includes(p.id)) return { p, agent: true, manage: false };

@@ -991,3 +991,55 @@ button.linkish { background: none; border: 0; padding: 0; font: inherit; color: 
   .rp-table td[data-label]::before { content: attr(data-label); color: var(--text-2); }
   .rp-row:hover td { background: none; }
 }
+
+/* ── Property safety: inspections and cards ── */
+.sf-facts { display: grid; grid-template-columns: auto 1fr; gap: 2px var(--s3); margin: var(--s3) 0; font-size: 0.875rem; }
+.sf-facts dt { color: var(--text-2); }
+.sf-facts dd { margin: 0; text-align: right; }
+.prop-card .prop-body > .btn { margin-top: auto; align-self: flex-start; }
+.ins-list { list-style: none; margin: 0 0 var(--s4); padding: 0; display: grid; gap: var(--s2); }
+.ins-item { border: 1px solid var(--line); border-left: 4px solid var(--line-strong); border-radius: var(--r-ctl); padding: var(--s3); background: #fff; transition: border-color 160ms var(--ease-out); }
+.ins-item.pass { border-left-color: var(--ok); }
+.ins-item.fail { border-left-color: var(--danger); background: #fffafa; }
+.ins-item.na { border-left-color: var(--line-strong); }
+.ins-item fieldset { border: 0; margin: 0; padding: 0; }
+.ins-item legend { font-weight: 600; margin-bottom: var(--s2); }
+.ins-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s2); }
+.ins-opt { position: relative; display: grid; place-items: center; min-height: 44px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); font-weight: 600; cursor: pointer; background: #fff; }
+.ins-opt input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.ins-opt:has(input:focus-visible) { outline: 3px solid var(--teal); outline-offset: 2px; }
+.ins-opt.r-pass:has(input:checked) { background: var(--ok); border-color: var(--ok); color: #fff; }
+.ins-opt.r-fail:has(input:checked) { background: var(--danger); border-color: var(--danger); color: #fff; }
+.ins-opt.r-na:has(input:checked) { background: var(--navy); border-color: var(--navy); color: #fff; }
+.ins-fail { margin-top: var(--s3); }
+@media (prefers-reduced-motion: reduce) { .ins-item { transition: none; } }
+
+/* ── Phase 3: scorecards, activity history, issue detection, printable reports ── */
+.sc-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
+.sc-card { margin: 0; }
+.sc-metrics { margin: var(--s3) 0 0; display: grid; gap: var(--s1); }
+.sc-m { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); padding: var(--s2) var(--s3); border-radius: var(--r-ctl); border-left: 4px solid var(--line-strong); background: var(--surface-2, #f7f8fa); }
+.sc-m.green { border-left-color: var(--ok); }
+.sc-m.amber { border-left-color: var(--warn, #b26a00); }
+.sc-m.red { border-left-color: var(--danger); }
+.sc-m dt { font-size: 0.875rem; }
+.sc-m dd { margin: 0; white-space: nowrap; }
+.sf-why { grid-column: 1 / -1; text-align: left !important; }
+.insights { margin-bottom: var(--s4); }
+.tl { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--line); }
+.tl li { display: grid; grid-template-columns: 11rem 1fr; gap: var(--s3); padding: var(--s2) 0 var(--s2) var(--s4); position: relative; }
+.tl li::before { content: ''; position: absolute; left: -5px; top: 0.9rem; width: 8px; height: 8px; border-radius: 50%; background: var(--teal); }
+.tl time { color: var(--text-2); font-size: 0.875rem; }
+@media (max-width: 600px) { .tl li { grid-template-columns: 1fr; gap: 2px; } }
+ul.plain { margin: 0; padding-left: 1.1em; }
+.report { max-width: 60rem; }
+.report-head { border-bottom: 2px solid var(--navy); margin: var(--s4) 0; padding-bottom: var(--s3); }
+.report-prop { margin-bottom: var(--s6, 2rem); }
+.report-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: var(--s4); }
+.report table { width: 100%; border-collapse: collapse; }
+.report th, .report td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); font-size: 0.875rem; }
+@media print {
+  .report-prop { break-after: page; }
+  .report-prop:last-child { break-after: auto; }
+  .report h2, .report h3 { break-after: avoid; }
+}

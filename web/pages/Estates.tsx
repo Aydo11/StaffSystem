@@ -6,12 +6,13 @@ import { useHub } from '../hub.tsx';
 import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 import { NewAction } from './Governance.tsx';
 import { REPAIR_STATUS, ReportRepair, Repairs } from './Repairs.tsx';
+import { InspectionsList, RisksAndActions, SafetyOverview } from './Safety.tsx';
 
 export { RepairPage, ReportRepair } from './Repairs.tsx';
 
 const SAFETY_STATE: Record<string, [string, string]> = { never_done: ['action', 'Never recorded'], failed: ['action', 'Failed'], overdue: ['action', 'Overdue'], due_soon: ['review', 'Due soon'], in_date: ['verified', 'In date'] };
 
-type Tab = 'repairs' | 'safety' | 'agents';
+type Tab = 'repairs' | 'safety' | 'inspections' | 'risks' | 'schedule' | 'agents';
 export function Estates() {
   const hub = useHub();
   const [params, setParams] = useSearchParams();
@@ -20,9 +21,12 @@ export function Estates() {
   return (
     <>
       <PageHead title="Repairs and property safety" intro="Repairs, safety schedules and managing agents. Record property matters only — never resident names or details." />
-      <Tabs label="Sections" tabs={[['repairs', 'Repairs'], ['safety', 'Safety schedule'], ...(showAgents ? [['agents', 'Managing agents'] as [Tab, string]] : [])]} value={tab} onChange={(t) => setParams({ tab: t })} />
+      <Tabs label="Sections" tabs={[['repairs', 'Repairs'], ['safety', 'Property safety'], ['inspections', 'Inspections'], ['risks', 'Risks & actions'], ['schedule', 'Safety schedule'], ...(showAgents ? [['agents', 'Managing agents'] as [Tab, string]] : [])]} value={tab} onChange={(t) => setParams({ tab: t })} />
       {tab === 'repairs' && <Repairs />}
-      {tab === 'safety' && <Safety property={params.get('property')} />}
+      {tab === 'safety' && <SafetyOverview />}
+      {tab === 'inspections' && <InspectionsList />}
+      {tab === 'risks' && <RisksAndActions />}
+      {tab === 'schedule' && <Safety property={params.get('property')} />}
       {tab === 'agents' && showAgents && <Agents />}
     </>
   );

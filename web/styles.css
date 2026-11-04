@@ -1142,6 +1142,26 @@ svg.ok { color: var(--ok); }
 .lx-notes p { margin: 0 0 4px; white-space: pre-wrap; }
 .lx-marks { margin: 0; padding-left: 1.1em; }
 .lx-done { text-align: center; display: grid; justify-items: center; gap: var(--s2); }
+/* Assessments: one question per card, review list, results */
+.lx-quiz { max-width: 760px; }
+.lx-qcard h2 { font-size: 1.15rem; margin: var(--s2) 0 var(--s4); }
+.lx-option { display: flex; gap: var(--s2); padding: var(--s3); border: 1px solid var(--line); border-radius: var(--r-ctl); margin-bottom: var(--s2); }
+.lx-option:has(input:checked) { border-color: var(--teal); background: var(--info-50); }
+.lx-match { display: grid; gap: var(--s3); }
+.lx-match label { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); align-items: center; }
+.lx-order { padding-left: 1.4em; }
+.lx-order li { margin-bottom: var(--s2); }
+.lx-order li > span { display: inline-block; min-width: 60%; padding: var(--s2) var(--s3); border: 1px solid var(--line); border-radius: var(--r-ctl); margin-right: var(--s2); }
+.lx-review { padding-left: 1.4em; }
+.lx-review li .badge { flex: none; align-self: center; }
+.lx-review li { display: flex; justify-content: space-between; gap: var(--s3); padding: var(--s2) 0; border-bottom: 1px solid var(--line); }
+.lx-score { display: flex; align-items: baseline; gap: var(--s3); padding: var(--s4); border-radius: var(--r-ctl); margin: var(--s4) 0; }
+.lx-score strong { font-size: 2rem; }
+.lx-score.pass { background: var(--ok-50); color: var(--ok); }
+.lx-score.fail { background: var(--danger-50); color: var(--danger); }
+.lx-feedback li { margin-bottom: var(--s3); }
+.lx-feedback p { margin: 4px 0 0; }
+@media (max-width: 600px) { .lx-match label { grid-template-columns: 1fr; } .lx-order li > span { min-width: 0; display: block; margin-bottom: 4px; } }
 @media (max-width: 1180px) { .lx-player-grid { grid-template-columns: 260px minmax(0, 1fr); } .lx-panel { grid-column: 2; position: static; max-height: none; } }
 @media (max-width: 860px) {
   .lx-player-grid { grid-template-columns: 1fr; }

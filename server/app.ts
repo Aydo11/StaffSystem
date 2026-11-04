@@ -64,6 +64,7 @@ export function createApp() {
 
   const api = express.Router();
   api.use(rateLimit({ windowMs: 60_000, limit: Number(process.env.RATE_LIMIT_PER_MIN ?? 600), standardHeaders: 'draft-8', legacyHeaders: false }));
+  api.use('/courses/import', express.json({ limit: '5mb' })); // a course pack is a few hundred KB
   api.use(express.json({ limit: '200kb' }));
   api.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); }); // never cache personal data
   api.use(authPublic);

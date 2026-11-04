@@ -7,8 +7,8 @@ import { Award, BookOpen, Bookmark, BookmarkCheck, Check, CheckCircle2, ChevronL
 import { api, post, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtDateTime, label } from '../format.ts';
 import { useHub } from '../hub.tsx';
-import { Button, CompanyBadge, Empty, ErrorSummary, LoadError, PageHead, Skeleton, Status, useToast } from '../ui.tsx';
-import { FileImage, Paragraphs, Quiz } from './Training.tsx';
+import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, LoadError, PageHead, Skeleton, Status, useToast } from '../ui.tsx';
+import { FileImage, Paragraphs, Quiz, QuizResult } from './Training.tsx';
 
 export const CATEGORY: Record<string, { label: string; icon: LucideIcon; tone: string }> = {
   fundamentals: { label: 'Supported accommodation', icon: HeartHandshake, tone: 'c-teal' },
@@ -187,7 +187,7 @@ export function CourseDetail() {
   const d = useApi<any>(`/courses/${id}`);
   if (d.error) return <LoadError error={d.error} />;
   if (!d.data) return <Skeleton lines={10} />;
-  const { course: c, lessons: lp, completed_on, can } = d.data;
+  const { course: c, lessons: lp, completed_on, can, attempts } = d.data;
   const done = new Set(lp.filter((x: any) => x.completed_at).map((x: any) => x.lesson_index));
   const p = pct(done.size, c.lessons.length);
   const started = lp.length > 0;
@@ -229,6 +229,7 @@ export function CourseDetail() {
           </section>
         </div>
         <div className="stack">
+          {attempts?.some((a: any) => a.status !== 'in_progress') && <Attempts course={c} attempts={attempts.filter((a: any) => a.status !== 'in_progress')} />}
           {c.audience && <section className="card" aria-labelledby="au-h"><h2 id="au-h">Who it is for</h2><p>{c.audience}</p></section>}
           {c.source_refs?.length > 0 && <section className="card" aria-labelledby="sr-h"><h2 id="sr-h">Sources and guidance</h2><ul>{c.source_refs.map((r: any) => <li key={r.label}>{r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer">{r.label}</a> : r.label}</li>)}</ul></section>}
           <section className="card"><p className="small muted">Completing a course shows learning, not practical competence. Competence is assessed separately by an observer. Certificates are issued by your organisation and are not external qualifications.</p></section>
@@ -398,5 +399,23 @@ export function LessonPlayer() {
         </aside>
       </div>
     </div>
+  );
+}
+
+const ATTEMPT_STATUS: Record<string, string> = { awaiting_marking: 'Waiting for a trainer', awaiting_approval: 'Waiting for approval' };
+function Attempts({ course, attempts }: { course: any; attempts: any[] }) {
+  const [open, setOpen] = useState<any>(null);
+  const load = useSubmit(async (id: string) => setOpen(await api('GET', `/attempts/${id}`)));
+  return (
+    <section className="card" aria-labelledby="at-h">
+      <h2 id="at-h">Your assessment attempts</h2>
+      <ErrorSummary error={load.error} />
+      <ul className="list">{attempts.map((a) => (
+        <li key={a.id}><span>{fmtDate(a.submitted_at)}<br /><span className="small muted">{ATTEMPT_STATUS[a.status] ?? `${a.score} of ${a.max_score} · ${a.passed ? 'passed' : 'not passed'}`}</span></span>
+          {a.status === 'marked' && <Button variant="secondary" busy={load.busy} onClick={() => load.run(a.id)}>See feedback</Button>}</li>))}</ul>
+      {open && <Dialog open onClose={() => setOpen(null)} title="Your result">
+        <QuizResult inDialog course={course} questions={open.questions} result={{ ...open, max: open.max_score }} onDone={() => setOpen(null)} />
+      </Dialog>}
+    </section>
   );
 }

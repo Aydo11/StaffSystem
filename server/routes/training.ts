@@ -21,7 +21,12 @@ async function loadCourse(a: Access, id: string, db: Db = pool) {
   return { c, manage };
 }
 // Learners never receive which answers are correct.
-const publicQuestions = (qs: any[]) => qs.map(({ options, ...rest }) => ({ ...rest, options: (options ?? []).map(({ correct: _c, ...o }: any) => o) }));
+// Matching and ordering are shown in the shuffled order fixed when the attempt started (`display`).
+const publicQuestions = (qs: any[]) => qs.map(({ options, accepted: _a, explanation: _e, lesson_ref: _l, pairs, items, display, ...rest }) => ({
+  ...rest, options: (options ?? []).map(({ correct: _c, ...o }: any) => o),
+  ...(pairs ? { pairs: pairs.map((p: any) => ({ id: p.id, left: p.left })), rights: (display ?? pairs.map((p: any) => p.id)).map((id: string) => ({ id, text: pairs.find((p: any) => p.id === id)?.right })) } : {}),
+  ...(items ? { items: (display ?? items.map((x: any) => x.id)).map((id: string) => items.find((x: any) => x.id === id)) } : {}),
+}));
 
 export const CATEGORIES = ['fundamentals', 'safeguarding', 'health_safety', 'practice', 'leadership', 'other'] as const;
 const httpsUrl = z.url({ protocol: /^https$/ });
@@ -38,14 +43,35 @@ const lessonSchema = z.object({
     .refine((c) => c.options.some((o) => o.correct), 'Mark at least one good answer')).max(6).optional(),
 }).refine((l) => !l.image_file_id || !!l.image_alt, { message: 'Every image needs a text description (alternative text)', path: ['image_alt'] })
   .refine((l) => !l.video_url || !!l.transcript, { message: 'Every video needs a transcript or captions text', path: ['transcript'] });
+// Question types. Choice, matching, ordering and fill-in answers are marked automatically; written answers, file
+// evidence and observed practice are marked by a trainer.
+export const QTYPES = ['single', 'multiple', 'true_false', 'written', 'matching', 'ordering', 'fill_blank', 'file', 'observation'] as const;
+export const MANUAL = ['written', 'file', 'observation'];
+const CHOICE = ['single', 'multiple', 'true_false'];
+const qid = z.string().min(1).max(40);
 const questionSchema = z.object({
-  id: z.string().min(1).max(40), type: z.enum(['single', 'multiple', 'true_false', 'written']), prompt: text(2000).min(3),
+  id: qid, type: z.enum(QTYPES), prompt: text(2000).min(3),
+  scenario: text(4000).nullable().optional(),                    // a workplace situation the question is about
   image_file_id: uuid.nullable().optional(), image_alt: text(300).nullable().optional(),
-  options: z.array(z.object({ id: z.string().min(1).max(40), text: text(500).min(1), correct: z.boolean() })).max(10).default([]),
+  options: z.array(z.object({ id: qid, text: text(500).min(1), correct: z.boolean() })).max(10).default([]),
+  pairs: z.array(z.object({ id: qid, left: text(300).min(1), right: text(300).min(1) })).max(10).optional(),   // matching
+  items: z.array(z.object({ id: qid, text: text(300).min(1) })).max(10).optional(),                            // ordering, in the right order
+  accepted: z.array(text(200).min(1)).max(10).optional(),                                                       // fill in the blank
+  length: z.enum(['short', 'long']).optional(),                                                                 // written
+  explanation: text(2000).nullable().optional(),                  // shown after submitting when feedback is on
+  lesson_ref: z.coerce.number().int().min(0).nullable().optional(), // lesson to revisit when this is wrong
   marks: z.coerce.number().int().min(1).max(20).default(1),
-}).refine((x) => !x.image_file_id || !!x.image_alt, { message: 'Every image needs a text description', path: ['image_alt'] })
-  .refine((x) => x.type === 'written' ? x.options.length === 0 : x.options.length >= 2, { message: 'Choice questions need at least two options; written answers have none', path: ['options'] })
-  .refine((x) => x.type === 'written' || (x.type === 'multiple' ? x.options.some((o) => o.correct) : x.options.filter((o) => o.correct).length === 1), { message: 'Mark the correct answer (exactly one for single choice and true/false)', path: ['options'] });
+}).superRefine((x, ctx) => {
+  const err = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message });
+  if (x.image_file_id && !x.image_alt) err('image_alt', 'Every image needs a text description');
+  if (CHOICE.includes(x.type)) {
+    if (x.options.length < 2) err('options', 'Choice questions need at least two options');
+    else if (x.type === 'multiple' ? !x.options.some((o) => o.correct) : x.options.filter((o) => o.correct).length !== 1) err('options', 'Mark the correct answer (exactly one for single choice and true/false)');
+  } else if (x.options.length) err('options', 'Only choice questions have options');
+  if (x.type === 'matching' && (x.pairs ?? []).length < 2) err('pairs', 'Add at least two pairs to match');
+  if (x.type === 'ordering' && (x.items ?? []).length < 2) err('items', 'Add at least two steps to put in order');
+  if (x.type === 'fill_blank' && !(x.accepted ?? []).length) err('accepted', 'Add at least one accepted answer');
+});
 const courseFields = z.object({
   title: text(200).min(3), summary: text(2000).nullable(),
   lessons: z.array(lessonSchema).max(100), questions: z.array(questionSchema).max(200)
@@ -57,6 +83,7 @@ const courseFields = z.object({
   roles: z.array(text(40)).max(30), objectives: z.array(text(300).min(1)).max(20),
   source_refs: z.array(z.object({ label: text(300).min(1), url: httpsUrl.nullable().optional() })).max(40),
   certificate_eligible: z.boolean(), content_owner: text(200).nullable(), review_on: isoDate.nullable(),
+  shuffle_questions: z.boolean(), shuffle_options: z.boolean(), show_feedback: z.enum(['none', 'result', 'answers']), approval_required: z.boolean(),
 }).partial();
 const JSON_FIELDS = ['lessons', 'questions', 'objectives', 'source_refs'];
 // Minimum time on a lesson before it can be marked done: a quarter of its reading time at 250 words a minute, 5 s to 2 min.
@@ -143,6 +170,30 @@ training.post('/courses/:id/publish', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Course packs: a JSON file of courses (for example the starter library) added as drafts waiting for a specialist
+// review. Nothing is published; someone who manages training reviews, approves and publishes each course.
+const packCourse = courseFields.extend({ title: text(200).min(3), lessons: z.array(lessonSchema).min(1).max(100) });
+training.post('/courses/import', async (req, res) => {
+  const b = parse(z.object({ company_id: uuid.nullable(), pack: text(200).min(1), courses: z.array(z.unknown()).min(1).max(60) }), req.body);
+  if (!canManageCourse(req.access, b)) throw forbidden(b.company_id ? undefined : 'Only a super administrator can add shared courses.');
+  const courses = b.courses.map((c, i) => { const r = packCourse.safeParse(c); if (!r.success) throw bad(`Course ${i + 1} in the pack is not valid: ${r.error.issues[0]?.path.join('.')} ${r.error.issues[0]?.message}`); return r.data; });
+  const out = await tx(async (db) => {
+    const added: string[] = [], skipped: string[] = [];
+    for (const c of courses) {
+      // Never a second copy of a course this company (or the shared library) already has.
+      if (await one(`select 1 from courses where lower(title) = lower($1) and company_id is not distinct from $2 and status <> 'retired'`, [c.title, b.company_id], db)) { skipped.push(c.title); continue; }
+      const id = randomUUID();
+      const keys = Object.keys(c);
+      await q(`insert into courses (id, root_id, company_id, created_by, review_status, imported_from, ${keys.join(', ')})
+               values ($1, $1, $2, $3, 'pending_review', $4, ${keys.map((_, i) => `$${i + 5}`).join(', ')})`,
+        [id, b.company_id, req.person.id, b.pack, ...keys.map((k) => (JSON_FIELDS.includes(k) ? JSON.stringify((c as any)[k]) : (c as any)[k]))], db);
+      added.push(c.title);
+    }
+    await audit(db, req.person.id, b.company_id, 'course', null, 'import', { pack: b.pack, added: added.length, skipped });
+    return { added, skipped };
+  });
+  res.status(201).json(out);
+});
 // Content marked pending review (for example legal or safeguarding detail) is approved by someone who manages training.
 training.post('/courses/:id/approve-content', async (req, res) => {
   const { c, manage } = await loadCourse(req.access, idParam(req.params.id));
@@ -166,7 +217,7 @@ training.post('/courses/:id/new-version', async (req, res) => {
   res.status(201).json(row);
 });
 
-const COPY = 'category, difficulty, duration_minutes, audience, roles, objectives, source_refs, certificate_eligible, content_owner, review_on, review_status';
+const COPY = 'category, difficulty, duration_minutes, audience, roles, objectives, source_refs, certificate_eligible, content_owner, review_on, review_status, shuffle_questions, shuffle_options, show_feedback, approval_required, imported_from';
 
 // ── Learning: progress, declaration, quiz attempts ──
 training.put('/courses/:id/progress', async (req, res) => {
@@ -284,27 +335,63 @@ training.get('/learning/me', async (req, res) => {
     }), recommended, roles });
 });
 
-function drawQuestions(c: any) {
-  const qs = [...c.questions];
-  if (!c.draw_count) return qs;
-  for (let i = qs.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [qs[i], qs[j]] = [qs[j], qs[i]]; }
-  return qs.slice(0, c.draw_count);
+const shuffle = <T,>(xs: T[]) => { const a = [...xs]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+// The attempt keeps its own copy of the questions: drawn from the bank, in a fixed shuffled order where set.
+export function drawQuestions(c: any) {
+  let qs = c.draw_count || c.shuffle_questions ? shuffle(c.questions) : [...c.questions];
+  if (c.draw_count) qs = qs.slice(0, c.draw_count);
+  return qs.map((qn: any) => ({
+    ...qn,
+    ...(c.shuffle_options && ['single', 'multiple'].includes(qn.type) ? { options: shuffle(qn.options) } : {}),
+    // Matching and ordering always start shuffled, or the answer would be showing.
+    ...(qn.type === 'matching' ? { display: shuffle(qn.pairs.map((p: any) => p.id)) } : qn.type === 'ordering' ? { display: shuffle(qn.items.map((x: any) => x.id)) } : {}),
+  }));
 }
 async function loadAttempt(a: Access, id: string, db: Db = pool) {
-  const at = await one('select qa.*, c.title, c.pass_mark, c.root_id, c.company_id as course_company_id from quiz_attempts qa join courses c on c.id = qa.course_id where qa.id = $1', [id], db);
+  const at = await one(`select qa.*, c.title, c.pass_mark, c.root_id, c.company_id as course_company_id, c.show_feedback, c.approval_required,
+                                (select jsonb_agg(l->>'title') from jsonb_array_elements(c.lessons) l) as lesson_titles
+                           from quiz_attempts qa join courses c on c.id = qa.course_id where qa.id = $1`, [id], db);
   if (!at) throw notFound();
   const own = at.person_id === a.personId;
   if (!own && !(await canMark(a, at))) throw notFound();
   return { at, own };
 }
 // Markers: training.manage in a company where the learner holds an appointment (and the course is visible there).
-async function canMark(a: Access, at: any) {
+export async function canMark(a: Access, at: any) {
   if (at.person_id === a.personId) return false;
   const cos = (await q<{ company_id: string }>('select distinct company_id from appointments where person_id = $1', [at.person_id])).map((r) => r.company_id);
   return cos.some((c) => can(a, 'training.manage', c) && (!at.course_company_id || at.course_company_id === c));
 }
 // Learners never see the answer key (it would spoil later attempts); markers see it.
-const attemptView = (at: any, own: boolean) => ({ ...at, questions: own ? publicQuestions(at.questions) : at.questions });
+const attemptView = (at: any, own: boolean) => ({ ...at, questions: own ? publicQuestions(at.questions) : at.questions,
+  review: own && at.status === 'marked' && at.show_feedback !== 'none' ? review(at) : undefined });
+// After marking: each question right or wrong (manual ones by the marks given), explanations, lessons to revisit and,
+// when the course allows it, the right answers.
+function review(at: any) {
+  const items = at.questions.map((qn: any) => {
+    const got = MANUAL.includes(qn.type) ? Number(at.manual_marks?.[qn.id] ?? 0) : isRight(qn, at.answers[qn.id]) ? qn.marks : 0;
+    return { id: qn.id, marks: got, of: qn.marks, right: got === qn.marks, explanation: qn.explanation ?? null, comment: at.feedback?.[qn.id] ?? null,
+      lesson: qn.lesson_ref != null ? at.lesson_titles?.[qn.lesson_ref] ?? null : null,
+      ...(at.show_feedback === 'answers' ? { answer: rightAnswer(qn) } : {}) };
+  });
+  return { items, revisit: [...new Set(items.filter((x: any) => !x.right && x.lesson).map((x: any) => x.lesson))] };
+}
+const norm = (s: unknown) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+export function isRight(qn: any, ans: any) {
+  const list = ([] as string[]).concat(ans ?? []);
+  if (CHOICE.includes(qn.type)) return JSON.stringify(qn.options.filter((o: any) => o.correct).map((o: any) => o.id).sort()) === JSON.stringify([...list].sort());
+  if (qn.type === 'matching') return list.length === qn.pairs.length && qn.pairs.every((p: any, i: number) => list[i] === p.id);   // answer: the right-hand id chosen for each pair, in pair order
+  if (qn.type === 'ordering') return JSON.stringify(list) === JSON.stringify(qn.items.map((x: any) => x.id));
+  if (qn.type === 'fill_blank') return qn.accepted.some((a: string) => norm(a) === norm(ans));
+  return false;
+}
+function rightAnswer(qn: any) {
+  if (CHOICE.includes(qn.type)) return qn.options.filter((o: any) => o.correct).map((o: any) => o.text).join('; ');
+  if (qn.type === 'matching') return qn.pairs.map((p: any) => `${p.left} → ${p.right}`).join('; ');
+  if (qn.type === 'ordering') return qn.items.map((x: any) => x.text).join(' → ');
+  if (qn.type === 'fill_blank') return qn.accepted[0];
+  return null;
+}
 
 training.post('/courses/:id/attempts', async (req, res) => {
   const { c } = await loadCourse(req.access, idParam(req.params.id));
@@ -325,12 +412,14 @@ training.get('/attempts/:id', async (req, res) => {
 });
 const answersSchema = z.record(z.string().max(40), z.union([z.string().max(4000), z.array(z.string().max(40)).max(10)]));
 const GRACE_MS = 60_000; // allow for a slow connection at the time limit
+// File answers are set only by the upload route, never by the answers the browser sends.
+const keepFiles = (at: any, answers: Record<string, any>) => ({ ...answers, ...Object.fromEntries(at.questions.filter((x: any) => x.type === 'file').map((x: any) => [x.id, at.answers[x.id]]).filter(([, v]: any) => v)) });
 training.put('/attempts/:id/answers', async (req, res) => {
   const { at, own } = await loadAttempt(req.access, idParam(req.params.id));
   if (!own || at.status !== 'in_progress') throw forbidden();
   if (at.deadline && Date.now() > Date.parse(at.deadline) + GRACE_MS) throw conflict('Time is up. Your saved answers will be submitted.');
   const { answers } = parse(z.object({ answers: answersSchema }), req.body);
-  await q('update quiz_attempts set answers = $2 where id = $1', [at.id, JSON.stringify(answers)]);
+  await q('update quiz_attempts set answers = $2 where id = $1', [at.id, JSON.stringify(keepFiles(at, answers))]);
   res.json({ ok: true });
 });
 
@@ -338,17 +427,17 @@ function autoMark(questions: any[], answers: Record<string, any>) {
   let marks = 0, max = 0, written = false;
   for (const qn of questions) {
     max += qn.marks;
-    if (qn.type === 'written') { written = true; continue; }
-    const correct = qn.options.filter((o: any) => o.correct).map((o: any) => o.id).sort();
-    const given = ([] as string[]).concat(answers[qn.id] ?? []).sort();
-    if (JSON.stringify(correct) === JSON.stringify(given)) marks += qn.marks; // all-or-nothing per question
+    if (MANUAL.includes(qn.type)) { written = true; continue; }
+    if (isRight(qn, answers[qn.id])) marks += qn.marks; // all-or-nothing per question
   }
   return { marks, max, written };
 }
 async function finish(db: Db, at: any, score: number, max: number, markedBy: string | null) {
   const passed = Math.round((score * 100) / max) >= at.pass_mark;
-  await q(`update quiz_attempts set status = 'marked', score = $2, max_score = $3, passed = $4, marked_by = $5, marked_at = now() where id = $1`, [at.id, score, max, passed, markedBy], db);
-  if (passed) await q(`insert into training_records (person_id, course_root_id, course_id, title, source, completed_on, attempt_id, created_by) values ($1,$2,$3,$4,'course', ${LONDON_TODAY}, $5, $1)`, [at.person_id, at.root_id, at.course_id, at.title, at.id], db);
+  // A pass on a course that needs approval waits for someone who manages training before it counts.
+  const status = passed && at.approval_required ? 'awaiting_approval' : 'marked';
+  await q(`update quiz_attempts set status = $6, score = $2, max_score = $3, passed = $4, marked_by = $5, marked_at = now() where id = $1`, [at.id, score, max, passed, markedBy, status], db);
+  if (passed && status === 'marked') await q(`insert into training_records (person_id, course_root_id, course_id, title, source, completed_on, attempt_id, created_by) values ($1,$2,$3,$4,'course', ${LONDON_TODAY}, $5, $1)`, [at.person_id, at.root_id, at.course_id, at.title, at.id], db);
   return passed;
 }
 training.post('/attempts/:id/submit', async (req, res) => {
@@ -357,43 +446,70 @@ training.post('/attempts/:id/submit', async (req, res) => {
     if (!own || at.status !== 'in_progress') throw forbidden();
     const late = at.deadline && Date.now() > Date.parse(at.deadline) + GRACE_MS;
     // Answers sent after the time limit are ignored; the last answers saved in time are marked.
-    const answers = !late && req.body?.answers ? parse(answersSchema, req.body.answers) : at.answers;
+    const answers = !late && req.body?.answers ? keepFiles(at, parse(answersSchema, req.body.answers)) : at.answers;
     const m = autoMark(at.questions, answers);
     await q(`update quiz_attempts set answers = $2, submitted_at = now(), auto_marks = $3, status = $4 where id = $1`, [at.id, JSON.stringify(answers), m.marks, m.written ? 'awaiting_marking' : 'in_progress'], db);
     if (m.written) return { status: 'awaiting_marking', late };
     const passed = await finish(db, at, m.marks, m.max, null);
-    return { status: 'marked', score: m.marks, max: m.max, passed, late };
+    return { status: passed && at.approval_required ? 'awaiting_approval' : 'marked', score: m.marks, max: m.max, passed, late };
   });
-  res.json(result);
+  const { at } = await loadAttempt(req.access, idParam(req.params.id));
+  res.json({ ...result, review: attemptView(at, true).review });
 });
 training.get('/marking', async (req, res) => {
   const cs = scope(req.access, 'training.manage', req.query.company);
-  const rows = await q(`select qa.id, qa.submitted_at, qa.person_id, ${name('p')} as person_name, c.title, c.company_id as course_company_id
+  const rows = await q(`select qa.id, qa.status, qa.score, qa.max_score, qa.submitted_at, qa.person_id, ${name('p')} as person_name, c.title, c.company_id as course_company_id
                           from quiz_attempts qa join courses c on c.id = qa.course_id join people p on p.id = qa.person_id
-                         where qa.status = 'awaiting_marking' and qa.person_id <> $1
+                         where qa.status in ('awaiting_marking','awaiting_approval') and qa.person_id <> $1
                            and exists (select 1 from appointments a where a.person_id = qa.person_id and a.company_id = any($2::uuid[]) and (c.company_id is null or c.company_id = a.company_id))
                          order by qa.submitted_at`, [req.person.id, cs]);
   res.json(rows);
 });
 training.post('/attempts/:id/mark', async (req, res) => {
-  const { marks } = parse(z.object({ marks: z.record(z.string(), z.coerce.number().int().min(0)) }), req.body);
+  const { marks, feedback } = parse(z.object({ marks: z.record(z.string(), z.coerce.number().int().min(0)), feedback: z.record(z.string(), text(2000)).optional() }), req.body);
   const result = await tx(async (db) => {
     const { at, own } = await loadAttempt(req.access, idParam(req.params.id), db);
     if (own || at.status !== 'awaiting_marking') throw forbidden('You cannot mark your own attempt.');
     let manual = 0;
-    for (const qn of at.questions.filter((x: any) => x.type === 'written')) {
+    for (const qn of at.questions.filter((x: any) => MANUAL.includes(x.type))) {
       const m = marks[qn.id];
-      if (m === undefined || m > qn.marks) throw bad(`Give a mark from 0 to ${qn.marks} for every written answer.`);
+      if (m === undefined || m > qn.marks) throw bad(`Give a mark from 0 to ${qn.marks} for every written answer, piece of evidence and observation.`);
       manual += m;
     }
     const max = at.questions.reduce((s: number, x: any) => s + x.marks, 0);
-    await q('update quiz_attempts set manual_marks = $2 where id = $1', [at.id, JSON.stringify(marks)], db);
+    await q('update quiz_attempts set manual_marks = $2, feedback = $3 where id = $1', [at.id, JSON.stringify(marks), feedback ? JSON.stringify(feedback) : null], db);
     const passed = await finish(db, at, at.auto_marks + manual, max, req.person.id);
     await audit(db, req.person.id, at.course_company_id, 'quiz_attempt', at.id, 'mark', { score: at.auto_marks + manual, max, passed });
-    await notify(db, at.person_id, at.course_company_id, `Your ${at.title} quiz has been marked: ${passed ? 'passed' : 'not passed yet'}`, '/training');
+    await notify(db, at.person_id, at.course_company_id, `Your ${at.title} assessment has been marked: ${passed ? (at.approval_required ? 'passed, waiting for approval' : 'passed') : 'not passed yet'}`, `/training/courses/${at.course_id}`);
     return { passed, score: at.auto_marks + manual, max };
   });
   res.json(result);
+});
+// Approval of a pass, by someone who manages training for the learner (never the learner).
+training.post('/attempts/:id/approve', async (req, res) => {
+  const b = parse(z.object({ approve: z.boolean(), note: text(2000).min(3, 'Say what you checked') }), req.body);
+  await tx(async (db) => {
+    const { at, own } = await loadAttempt(req.access, idParam(req.params.id), db);
+    if (own || at.status !== 'awaiting_approval') throw forbidden();
+    await q(`update quiz_attempts set status = 'marked', passed = $2, approved_by = $3, approved_at = now(), approval_note = $4 where id = $1`, [at.id, b.approve, req.person.id, b.note], db);
+    if (b.approve) await q(`insert into training_records (person_id, course_root_id, course_id, title, source, completed_on, attempt_id, created_by) values ($1,$2,$3,$4,'course', ${LONDON_TODAY}, $5, $6)`, [at.person_id, at.root_id, at.course_id, at.title, at.id, req.person.id], db);
+    await audit(db, req.person.id, at.course_company_id, 'quiz_attempt', at.id, b.approve ? 'approve' : 'decline', { note: b.note });
+    await notify(db, at.person_id, at.course_company_id, `${at.title}: ${b.approve ? 'completion approved' : 'completion not approved yet'}`, `/training/courses/${at.course_id}`);
+  });
+  res.json({ ok: true });
+});
+// Evidence for a file question: one file per question, replaced if uploaded again, while the attempt is open.
+training.post('/attempts/:id/files/:qid', upload.single('file'), async (req, res) => {
+  const { at, own } = await loadAttempt(req.access, idParam(req.params.id));
+  const qn = at.questions.find((x: any) => x.id === req.params.qid);
+  if (!own || at.status !== 'in_progress' || qn?.type !== 'file') throw forbidden();
+  if (!req.file) throw bad('Choose a file.');
+  const f = await tx(async (db) => {
+    const saved = await saveFile(db, { companyId: null, entityType: 'quiz_attempt', entityId: at.id, name: req.file!.originalname, buf: req.file!.buffer, uploadedBy: req.person.id });
+    await q(`update quiz_attempts set answers = answers || jsonb_build_object($2::text, $3::text) where id = $1`, [at.id, qn.id, saved.id], db);
+    return saved;
+  });
+  res.status(201).json({ id: f.id, name: req.file.originalname });
 });
 
 // ── Matrix, requirements, assignments, equivalences ──

@@ -8,6 +8,7 @@ import { useHub } from '../hub.tsx';
 import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, PhotoGrid, Skeleton, Status, useToast } from '../ui.tsx';
 import { uploadPhotos } from './Visits.tsx';
 import { CATEGORIES, suggestUrgency, URGENCY_RANK, type Urgency } from '../../server/repairPriority.ts';
+import { BulkRepairs, CustomiseTiles, useTiles } from './Reports.tsx';
 
 export const REPAIR_STATUS: Record<string, [string, string]> = {
   reported: ['info', 'Reported'], under_review: ['info', 'Under review'], assigned: ['planned', 'Assigned'], in_progress: ['review', 'In progress'],
@@ -116,6 +117,9 @@ export function Repairs() {
   const [category, setCategory] = useState('');
   const [open, setOpen] = useState<any>(null);
   const [sla, setSla] = useState(false);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [bulk, setBulk] = useState(false);
+  const tiles = useTiles('repairs.tiles', KPIS.map((k) => k.key));
   const today = londonToday();
   const reload = () => { d.reload(); s.reload(); };
   const rows = useMemo(() => (d.data ?? []).filter((r) => {
@@ -139,12 +143,13 @@ export function Repairs() {
         <div><h2>Repairs</h2><p className="muted small">{s.data ? `Figures for ${fmtDate(s.data.period_from)} – ${fmtDate(s.data.period_to)} where a period applies. Counts come only from repair records.` : ' '}</p></div>
         <div className="rp-head-actions">
           <select aria-label="Property" value={property} onChange={(e) => setProperty(e.target.value)}><option value="">All properties</option>{props.data?.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.ref})</option>)}</select>
+          <CustomiseTiles tiles={tiles} labels={Object.fromEntries(KPIS.map((k) => [k.key, k.label]))} />
           {manageAny && <Button variant="secondary" onClick={() => setSla(true)} aria-label="Repair targets"><Settings2 size={18} aria-hidden="true" /><span className="hide-sm">Targets</span></Button>}
           <Button onClick={() => setReporting(true)}><Plus size={18} aria-hidden="true" />Report repair</Button>
         </div>
       </div>
       {s.error ? <LoadError error={s.error} retry={s.reload} /> : !s.data ? <Skeleton lines={3} /> : (
-        <ul className="rp-kpis" aria-label="Repair figures">{KPIS.map((k) => { const I = k.icon; return (
+        <ul className="rp-kpis" aria-label="Repair figures">{KPIS.filter((k) => tiles.shown(k.key)).map((k) => { const I = k.icon; return (
           <li key={k.key}><button type="button" className={`rp-kpi ${k.tone ?? ''}`} aria-pressed={filter === k.filter && !['avg_days', 'within_target', 'spend'].includes(k.key) && (k.key !== 'completed' || filter === 'completed')} onClick={() => pick(k.filter)}>
             <span className="rp-kpi-icon"><I size={20} aria-hidden="true" /></span>
             <span className="rp-kpi-value">{k.fmt ? k.fmt(s.data) : s.data[k.key]}</span>
@@ -165,8 +170,10 @@ export function Repairs() {
         <select aria-label="Category" value={category} onChange={(e) => setCategory(e.target.value)}><option value="">Any category</option>{CATEGORIES.map((c) => <option key={c} value={c}>{catLabel(c)}</option>)}<option value="uncategorised">Uncategorised</option></select>
       </div>
       {d.error ? <LoadError error={d.error} retry={d.reload} /> : d.loading && !d.data ? <Skeleton /> : rows.length === 0 ? <Empty>No repairs match.</Empty> : (
-        <div className="table-wrap rp-table"><table><thead><tr><th>Repair</th><th>Property</th><th>Category</th><th>Priority</th><th>Stage</th><th>Assigned</th><th>Target</th></tr></thead>
+        <>{manageAny && sel.size > 0 && <div className="notice row between"><span>{sel.size} selected</span><span className="row"><Button onClick={() => setBulk(true)}>Change selected</Button><Button variant="secondary" onClick={() => setSel(new Set())}>Clear</Button></span></div>}
+        <div className="table-wrap rp-table"><table><thead><tr>{manageAny && <th><input type="checkbox" aria-label="Select all shown" checked={rows.length > 0 && rows.every((r) => sel.has(r.id))} onChange={(e) => setSel(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())} /></th>}<th>Repair</th><th>Property</th><th>Category</th><th>Priority</th><th>Stage</th><th>Assigned</th><th>Target</th></tr></thead>
           <tbody>{rows.map((r) => <tr key={r.id} className="rp-row" onClick={() => setOpen(r)}>
+            {manageAny && <td onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`Select ${r.title}`} checked={sel.has(r.id)} onChange={(e) => { const n = new Set(sel); e.target.checked ? n.add(r.id) : n.delete(r.id); setSel(n); }} /></td>}
             <td><button type="button" className="linkish" onClick={(e) => { e.stopPropagation(); setOpen(r); }}>{r.title}</button>{r.location && <div className="muted small">{r.location}</div>}</td>
             <td data-label="Property">{r.property_name} <CompanyBadge code={r.company_code} name={r.company_name} /></td>
             <td data-label="Category">{catLabel(r.category)}{r.repeat && <span className="rp-tag" title="Same property and category within 90 days"><Repeat size={12} aria-hidden="true" /> Repeat</span>}</td>
@@ -174,7 +181,7 @@ export function Repairs() {
             <td data-label="Stage"><Status s={REPAIR_STATUS[r.status][0]} text={REPAIR_STATUS[r.status][1]} /></td>
             <td data-label="Assigned">{r.assignee_name ?? r.agent_name ?? r.contractor ?? '—'}</td>
             <td data-label="Target">{fmtDate(r.due_on)}{r.overdue && <div><Status s="action" text="Overdue" /></div>}</td>
-          </tr>)}</tbody></table></div>
+          </tr>)}</tbody></table></div></>
       )}
       <p className="small muted">{rows.length} shown{d.data && d.data.length >= 1000 ? ' (latest 1,000 repairs)' : ''}.{s.data?.uncategorised ? ` ${s.data.uncategorised} open repair${s.data.uncategorised === 1 ? ' has' : 's have'} no category yet.` : ''}</p>
       {open && <Dialog open onClose={() => setOpen(null)} title={open.title} footer={<Link className="btn" to={`/estates/repairs/${open.id}`}>Open full record</Link>}>
@@ -189,6 +196,7 @@ export function Repairs() {
       </Dialog>}
       {reporting && <ReportRepair properties={props.data ?? []} onClose={() => setReporting(false)} onSaved={() => { setReporting(false); reload(); }} />}
       {sla && <SlaDialog onClose={() => setSla(false)} />}
+      {bulk && <BulkRepairs ids={[...sel]} onClose={() => setBulk(false)} onSaved={() => { setBulk(false); setSel(new Set()); reload(); }} />}
     </div>
   );
 }

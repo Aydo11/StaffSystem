@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, blobUrl, download, patch, post, serverNow, upload, useApi, useSubmit } from '../api.ts';
+import { api, ApiError, blobUrl, download, patch, post, serverNow, upload, useApi, useSubmit } from '../api.ts';
 import { fmtDate, fmtElapsed, label, londonToday } from '../format.ts';
 import { useHub } from '../hub.tsx';
 import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 import { CATEGORY, CourseLibrary, LearningHome } from './Learning.tsx';
 
+const CHOICE_TYPES = ['single', 'multiple', 'true_false'];
 const MATRIX_STATUS: Record<string, [string, string]> = { current: ['verified', 'Up to date'], expiring: ['submitted', 'Renew soon'], due: ['info', 'Due'], overdue: ['action', 'Overdue'] };
 
 export function Paragraphs({ text }: { text?: string | null }) {
@@ -25,17 +26,20 @@ export function Training() {
   const tab = (params.get('tab') as Tab) ?? 'mine';
   const nav = useNavigate();
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const canCreate = hub.me.companies.some((c) => c.perms.includes('training.manage')) || hub.me.superAdmin;
   const tabs: [Tab, string][] = [['mine', 'Dashboard'], ['courses', 'Course library'], ['record', 'My record'], ...(manager ? [['manage', 'Manage training'] as [Tab, string]] : [])];
   return (
     <>
-      <PageHead title="Training & coaching" intro="Courses, assessments and your training record. Completing training shows learning, not competence; competence is assessed separately." />
+      <PageHead title="Training & coaching" intro="Courses, assessments and your training record. Completing training shows learning, not competence; competence is assessed separately."
+        actions={canCreate && tab === 'manage' ? <Button variant="secondary" onClick={() => setImporting(true)}>Import course pack</Button> : undefined} />
       <Tabs label="Training sections" tabs={tabs} value={tab} onChange={(t) => setParams({ tab: t })} />
       {tab === 'mine' && <LearningHome onTab={(t) => setParams({ tab: t })} />}
       {tab === 'courses' && <CourseLibrary onBuild={canCreate ? () => setCreating(true) : undefined} />}
       {tab === 'record' && <MyTraining />}
       {creating && <NewCourse onClose={() => setCreating(false)} onSaved={(id) => nav(`/training/courses/${id}/edit`)} />}
       {tab === 'manage' && manager && <Manage />}
+      {importing && <ImportPack onClose={() => setImporting(false)} />}
     </>
   );
 }
@@ -85,6 +89,37 @@ function MyTraining() {
   );
 }
 
+/** A course pack is a JSON file ({ format: 'hub-course-pack', pack, courses: [...] }); every course arrives as a draft waiting for content review. */
+function ImportPack({ onClose }: { onClose: () => void }) {
+  const hub = useHub();
+  const toast = useToast();
+  const cos = hub.me.companies.filter((c) => c.perms.includes('training.manage'));
+  const [company, setCompany] = useState(cos[0]?.id ?? '');
+  const [pack, setPack] = useState<any>(null);
+  const [done, setDone] = useState<any>(null);
+  const read = useSubmit(async (f: File) => {
+    let j: any; try { j = JSON.parse(await f.text()); } catch { throw new ApiError(400, 'validation', 'This file is not a course pack (it is not valid JSON).'); }
+    if (j?.format !== 'hub-course-pack' || !Array.isArray(j.courses)) throw new ApiError(400, 'validation', 'This file is not a Hub course pack.');
+    setPack(j);
+  });
+  const save = useSubmit(async () => { const r = await api('POST', '/courses/import', { company_id: company || null, pack: pack.pack, courses: pack.courses }); setDone(r); toast(`${r.added.length} course${r.added.length === 1 ? '' : 's'} added as drafts.`); });
+  return (
+    <Dialog open onClose={onClose} title="Import a course pack" variant="modal" footer={done ? <Button onClick={onClose}>Close</Button> : <Button busy={save.busy} disabled={!pack} onClick={() => save.run()}>Add as drafts</Button>}>
+      <ErrorSummary error={read.error ?? save.error} />
+      {done ? <>
+        <p>{done.added.length} added as drafts waiting for content review{done.skipped.length ? `; ${done.skipped.length} skipped because a course with the same title already exists` : ''}.</p>
+        <p className="small muted">Open each course from the library, check it, approve the content and publish it.</p>
+      </> : <>
+        <p className="small">Courses arrive as drafts marked <strong>waiting for content review</strong>. Nobody sees them until someone checks, approves and publishes each one. A course whose title already exists is skipped.</p>
+        <Field label="Owned by"><select name="company_id" value={company} onChange={(e) => setCompany(e.target.value)}>{cos.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}{hub.me.superAdmin && <option value="">Shared learning (all companies)</option>}</select></Field>
+        <FilePicker label="Course pack file (.json)" accept="application/json,.json" onChange={(fs) => (fs[0] ? read.run(fs[0]) : setPack(null))} />
+        {pack && <><p><strong>{pack.pack}</strong> · {pack.courses.length} course{pack.courses.length === 1 ? '' : 's'}</p>
+          <ul className="small">{pack.courses.map((c: any) => <li key={c.title}>{c.title}{c.duration_minutes ? ` · ${c.duration_minutes} min` : ''}</li>)}</ul></>}
+      </>}
+    </Dialog>
+  );
+}
+
 function NewCourse({ onClose, onSaved }: { onClose: () => void; onSaved: (id: string) => void }) {
   const hub = useHub();
   const cos = hub.me.companies.filter((c) => c.perms.includes('training.manage'));
@@ -99,65 +134,165 @@ function NewCourse({ onClose, onSaved }: { onClose: () => void; onSaved: (id: st
   );
 }
 
+const answered = (qn: any, v: any) => qn.type === 'observation' || (Array.isArray(v) ? v.length > 0 && v.every(Boolean) : !!String(v ?? '').trim());
+
+/** One question's answer control. Answers: choice → [ids]; matching → right ids in pair order; ordering → ids; written/fill → text; file → file id (server-set). */
+function Answer({ qn, value, set, attemptId }: { qn: any; value: any; set: (v: any) => void; attemptId: string }) {
+  const evidence = useSubmit(async (f: File) => { const r = await upload(`/attempts/${attemptId}/files/${qn.id}`, f, f.name); set(r.id); });
+  if (CHOICE_TYPES.includes(qn.type)) return <>{qn.options.map((o: any) => (
+    <label key={o.id} className="check lx-option">
+      <input type={qn.type === 'multiple' ? 'checkbox' : 'radio'} name={qn.id} checked={(value ?? []).includes(o.id)}
+        onChange={(e) => set(qn.type === 'multiple' ? (e.target.checked ? [...(value ?? []), o.id] : (value ?? []).filter((x: string) => x !== o.id)) : [o.id])} /> {o.text}
+    </label>))}</>;
+  if (qn.type === 'written') return <textarea aria-label={`Answer: ${qn.prompt}`} rows={qn.length === 'long' ? 10 : 4} value={value ?? ''} onChange={(e) => set(e.target.value)} />;
+  if (qn.type === 'fill_blank') return <Field label="Your answer"><input value={value ?? ''} onChange={(e) => set(e.target.value)} /></Field>;
+  if (qn.type === 'matching') {
+    const v: string[] = value ?? qn.pairs.map(() => '');
+    return <div className="lx-match">{qn.pairs.map((p: any, i: number) => (
+      <label key={p.id}><span>{p.left}</span>
+        <select value={v[i] ?? ''} onChange={(e) => set(v.map((x, j) => (j === i ? e.target.value : x)))}>
+          <option value="">Choose…</option>{qn.rights.map((r: any) => <option key={r.id} value={r.id}>{r.text}</option>)}
+        </select></label>))}</div>;
+  }
+  if (qn.type === 'ordering') {
+    const ids: string[] = value?.length ? value : qn.items.map((x: any) => x.id);
+    const text = (id: string) => qn.items.find((x: any) => x.id === id)?.text;
+    return <ol className="lx-order">{ids.map((id, i) => (
+      <li key={id}><span>{text(id)}</span>
+        <Button variant="secondary" disabled={i === 0} aria-label={`Move "${text(id)}" up`} onClick={() => set(move(ids, i, -1))}>↑</Button>
+        <Button variant="secondary" disabled={i === ids.length - 1} aria-label={`Move "${text(id)}" down`} onClick={() => set(move(ids, i, 1))}>↓</Button></li>))}</ol>;
+  }
+  if (qn.type === 'file') return <>
+    <FilePicker label="Upload your evidence (PDF or photo)" accept="application/pdf,image/jpeg,image/png,image/webp" instant busy={evidence.busy} error={evidence.error?.message}
+      buttonText={value ? 'Replace file' : undefined} onChange={(fs) => fs[0] && evidence.run(fs[0])} />
+    {value && <p className="small">File uploaded. A trainer will mark it.</p>}
+    <p className="muted small">Remove names and anything that could identify a resident before you upload.</p></>;
+  return <p className="notice">Your manager or a trainer assesses this by watching your practice. Nothing to answer here.</p>; // observation
+}
+
 export function Quiz({ course, onDone }: { course: any; onDone: () => void }) {
   const [at, setAt] = useState<any>(null);
   const [answers, setAnswers] = useState<Record<string, any>>({});
+  const [step, setStep] = useState(0);   // question index; questions.length = review screen
   const [result, setResult] = useState<any>(null);
   const [now, setNow] = useState(serverNow());
   const start = useSubmit(async () => { const a = await post(`/courses/${course.id}/attempts`); setAt(a); setAnswers(a.answers ?? {}); });
-  const submit = useSubmit(async () => { setResult(await post(`/attempts/${at.id}/submit`, { answers })); });
+  const submit = useSubmit(async () => { setResult(await post(`/attempts/${at.id}/submit`, { answers })); window.scrollTo(0, 0); });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const head = useRef<HTMLHeadingElement>(null);
   useEffect(() => { start.run(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!at?.deadline) return; const t = setInterval(() => setNow(serverNow()), 1000); return () => clearInterval(t); }, [at]);
+  useEffect(() => { head.current?.focus(); }, [step]);
   const set = (qid: string, v: any) => {
     const next = { ...answers, [qid]: v };
     setAnswers(next);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => { api('PUT', `/attempts/${at.id}/answers`, { answers: next }).catch(() => {}); }, 800); // autosave; submit sends everything anyway
   };
-  if (start.error) return <><PageHead title={`${course.title}: quiz`} /><ErrorSummary error={start.error} /><Link className="btn" to="/training">Back to Training & coaching</Link></>;
+  if (start.error) return <><PageHead title={`${course.title}: assessment`} /><ErrorSummary error={start.error} /><Link className="btn" to="/training">Back to Training & coaching</Link></>;
   if (!at) return <Skeleton lines={6} />;
-  if (result) return (
-    <div className="card" style={{ maxWidth: 560, margin: '0 auto' }}>
-      <h1 id="page-title" tabIndex={-1}>Quiz submitted</h1>
-      {result.late && <div className="notice warn">The time limit had passed, so the answers saved before then were marked.</div>}
-      {result.status === 'awaiting_marking' ? <p>Your written answers will be marked by a trainer. You will get a notification with the result.</p>
-        : <p>You scored {result.score} out of {result.max}. {result.passed ? <strong>You passed.</strong> : `The pass mark is ${course.pass_mark}%. You can try again if attempts remain.`}</p>}
-      <Button onClick={onDone}>Continue</Button>
-    </div>
-  );
+  const qs: any[] = at.questions;
+  if (result) return <QuizResult course={course} result={result} questions={qs} onDone={onDone} />;
   const remaining = at.deadline ? Date.parse(at.deadline) - now : null;
+  const done = qs.filter((qn) => answered(qn, answers[qn.id])).length;
+  const qn = qs[step];
   return (
     <>
-      <PageHead title={`${course.title}: quiz`} intro={`Pass mark ${course.pass_mark}%. Your answers are saved as you go.`} />
+      <PageHead title={`${course.title}: assessment`} intro={`Pass mark ${course.pass_mark}%. Your answers are saved as you go.`} />
       {remaining !== null && <div className={`notice ${remaining < 120000 ? 'warn' : ''}`} role="timer" aria-live={remaining < 120000 ? 'polite' : 'off'}>Time left: <strong>{remaining > 0 ? fmtElapsed(remaining) : 'none — submit now'}</strong></div>}
-      <form className="card" style={{ maxWidth: 820 }} noValidate onSubmit={(e) => { e.preventDefault(); submit.run(); }}>
-        <ErrorSummary error={submit.error} />
-        <ol style={{ paddingLeft: 20 }}>{at.questions.map((qn: any) => (
-          <li key={qn.id} style={{ marginBottom: 24 }}>
-            <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
-              <legend style={{ fontWeight: 600 }}>{qn.prompt} <span className="muted small">({qn.marks} mark{qn.marks > 1 ? 's' : ''}{qn.type === 'multiple' ? ', choose all that apply' : ''})</span></legend>
-              {qn.image_file_id && <FileImage id={qn.image_file_id} alt={qn.image_alt} />}
-              {qn.type === 'written' ? <textarea aria-label={`Answer: ${qn.prompt}`} value={answers[qn.id] ?? ''} onChange={(e) => set(qn.id, e.target.value)} /> :
-                qn.options.map((o: any) => (
-                  <label key={o.id} className="check">
-                    <input type={qn.type === 'multiple' ? 'checkbox' : 'radio'} name={qn.id} checked={(answers[qn.id] ?? []).includes(o.id)}
-                      onChange={(e) => set(qn.id, qn.type === 'multiple' ? (e.target.checked ? [...(answers[qn.id] ?? []), o.id] : (answers[qn.id] ?? []).filter((x: string) => x !== o.id)) : [o.id])} /> {o.text}
-                  </label>
-                ))}
+      <div className="lx-quiz">
+        <div className="lx-progress" role="progressbar" aria-label="Questions answered" aria-valuemin={0} aria-valuemax={qs.length} aria-valuenow={done}><span style={{ width: `${(done / qs.length) * 100}%` }} /></div>
+        <p className="muted small">{done} of {qs.length} answered</p>
+        {qn ? (
+          <section className="card lx-qcard" aria-labelledby="q-title">
+            <p className="muted small">Question {step + 1} of {qs.length} · {qn.marks} mark{qn.marks > 1 ? 's' : ''}{qn.type === 'multiple' ? ' · choose all that apply' : ''}</p>
+            {qn.scenario && <div className="lx-scenario"><strong>Scenario</strong><Paragraphs text={qn.scenario} /></div>}
+            <h2 id="q-title" ref={head} tabIndex={-1}>{qn.prompt}</h2>
+            {qn.image_file_id && <FileImage id={qn.image_file_id} alt={qn.image_alt} />}
+            <fieldset style={{ border: 0, padding: 0, margin: 0 }}><legend className="sr-only">{qn.prompt}</legend>
+              <Answer key={qn.id} qn={qn} value={answers[qn.id]} set={(v) => set(qn.id, v)} attemptId={at.id} />
             </fieldset>
-          </li>
-        ))}</ol>
-        <Button type="submit" variant="go" busy={submit.busy} busyText="Submitting…">Submit answers</Button>
-      </form>
+            <div className="row" style={{ justifyContent: 'space-between', marginTop: 16 }}>
+              <Button variant="secondary" disabled={step === 0} onClick={() => setStep(step - 1)}>Previous</Button>
+              <Button onClick={() => setStep(step + 1)}>{step === qs.length - 1 ? 'Review answers' : 'Next'}</Button>
+            </div>
+          </section>
+        ) : (
+          <section className="card lx-qcard">
+            <h2 ref={head} tabIndex={-1}>Check your answers</h2>
+            <ErrorSummary error={submit.error} />
+            <ol className="lx-review">{qs.map((x, i) => (
+              <li key={x.id}><button type="button" className="linkish" onClick={() => setStep(i)}>{x.prompt}</button>
+                {answered(x, answers[x.id]) ? <Status s="verified" text="Answered" /> : <Status s="action" text="Not answered" />}</li>))}</ol>
+            {done < qs.length && <p className="notice warn">{qs.length - done} question{qs.length - done > 1 ? 's are' : ' is'} not answered. Unanswered questions score nothing.</p>}
+            <div className="row" style={{ justifyContent: 'space-between' }}>
+              <Button variant="secondary" onClick={() => setStep(qs.length - 1)}>Back</Button>
+              <Button variant="go" busy={submit.busy} busyText="Submitting…" onClick={() => submit.run()}>Submit assessment</Button>
+            </div>
+          </section>
+        )}
+      </div>
     </>
+  );
+}
+
+export function QuizResult({ course, result, questions, onDone, inDialog }: { course: any; result: any; questions: any[]; onDone: () => void; inDialog?: boolean }) {
+  const prompt = (id: string) => questions.find((q) => q.id === id)?.prompt;
+  const items: any[] = result.review?.items ?? [];
+  const pct = result.max ? Math.round((result.score / result.max) * 100) : 0;
+  return (
+    <div className={inDialog ? 'lx-result' : 'card lx-result'} style={{ maxWidth: 760, margin: '0 auto' }}>
+      {!inDialog && <h1 id="page-title" tabIndex={-1}>Assessment submitted</h1>}
+      {result.late && <div className="notice warn">The time limit had passed, so the answers saved before then were marked.</div>}
+      {result.status === 'awaiting_marking' ? <p>Some answers are marked by a trainer (written answers, evidence or observed practice). You will get a notification with your result.</p> : <>
+        <div className={`lx-score ${result.passed ? 'pass' : 'fail'}`}><strong>{pct}%</strong><span>{result.score} of {result.max} marks · pass mark {course.pass_mark}%</span></div>
+        {result.status === 'awaiting_approval' ? <p className="notice">You reached the pass mark. The course counts as complete once a manager approves it.</p>
+          : result.passed ? <p><strong>You passed.</strong></p> : <p>You did not reach the pass mark this time. You can try again if attempts remain.</p>}
+      </>}
+      {items.length > 0 && <>
+        {items.some((x) => x.right) && <><h2>Strengths</h2><ul>{items.filter((x) => x.right).map((x) => <li key={x.id}>{prompt(x.id)}</li>)}</ul></>}
+        {items.some((x) => !x.right) && <><h2>To improve</h2><ul className="lx-feedback">{items.filter((x) => !x.right).map((x) => (
+          <li key={x.id}><strong>{prompt(x.id)}</strong> <span className="muted small">({x.marks} of {x.of})</span>
+            {x.answer && <p className="small">Right answer: {x.answer}</p>}
+            {x.explanation && <p className="small">{x.explanation}</p>}
+            {x.comment && <p className="small">Trainer: {x.comment}</p>}</li>))}</ul></>}
+        {result.review.revisit?.length > 0 && <><h2>Lessons to revisit</h2><ul>{result.review.revisit.map((l: string) => <li key={l}>{l}</li>)}</ul></>}
+      </>}
+      {!inDialog && <Button onClick={onDone}>Continue</Button>}
+    </div>
   );
 }
 
 // ── Course editor: lessons and quiz builder, preview, publish, new version ──
 const blankLesson = () => ({ title: 'New lesson', body: '' });
-const blankQuestion = (type = 'single') => ({ id: Math.random().toString(36).slice(2, 8), type, prompt: '', marks: 1, options: type === 'written' ? [] : type === 'true_false' ? [{ id: 't', text: 'True', correct: true }, { id: 'f', text: 'False', correct: false }] : [{ id: 'a', text: '', correct: true }, { id: 'b', text: '', correct: false }] });
+const rid = () => Math.random().toString(36).slice(2, 8);
+const blankQuestion = (type = 'single') => ({ id: rid(), type, prompt: '', marks: 1,
+  options: !CHOICE_TYPES.includes(type) ? [] : type === 'true_false' ? [{ id: 't', text: 'True', correct: true }, { id: 'f', text: 'False', correct: false }] : [{ id: 'a', text: '', correct: true }, { id: 'b', text: '', correct: false }],
+  ...(type === 'matching' ? { pairs: [{ id: rid(), left: '', right: '' }, { id: rid(), left: '', right: '' }] } : type === 'ordering' ? { items: [{ id: rid(), text: '' }, { id: rid(), text: '' }] } : type === 'fill_blank' ? { accepted: [''] } : {}) });
+const QUESTION_KINDS: [string, string][] = [['single', 'Single choice'], ['multiple', 'Multiple choice'], ['true_false', 'True/false'], ['matching', 'Matching'], ['ordering', 'Ordering'], ['fill_blank', 'Fill in the blank'], ['written', 'Written'], ['file', 'File evidence'], ['observation', 'Observed practice']];
+const MANUAL_NOTE: Record<string, string> = { written: 'A trainer marks written answers. The result waits until they do.', file: 'The learner uploads a document or photo; a trainer marks it.', observation: 'A manager or trainer marks this after watching the learner in practice.' };
 function move<T>(list: T[], i: number, by: number) { const out = [...list]; const j = i + by; if (j < 0 || j >= out.length) return out; [out[i], out[j]] = [out[j], out[i]]; return out; }
+
+function AddQuestion({ onAdd }: { onAdd: (type: string) => void }) {
+  const [t, setT] = useState('single');
+  return <div className="row"><select aria-label="Question type" value={t} onChange={(e) => setT(e.target.value)} style={{ width: 'auto' }}>{QUESTION_KINDS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select>
+    <Button variant="secondary" onClick={() => onAdd(t)}>Add question</Button></div>;
+}
+function ListEditor({ title, rows, cols, onChange, blank, edit, error }: { title: string; rows: any[]; cols: [string, string][]; onChange: (v: any[]) => void; blank: () => any; edit: boolean; error?: string }) {
+  return (
+    <fieldset style={{ border: 0, padding: 0 }}>
+      <legend style={{ fontWeight: 600 }}>{title}</legend>
+      {error && <span className="err">Error: {error}</span>}
+      {rows.map((r, k) => (
+        <div key={r.id} className="row" style={{ marginBottom: 8 }}>
+          {cols.map(([key, name]) => <input key={key} aria-label={`${name} ${k + 1}`} value={r[key]} onChange={(e) => onChange(rows.map((x, j) => (j === k ? { ...x, [key]: e.target.value } : x)))} style={{ flex: 1 }} />)}
+          {edit && <><Button variant="ghost" disabled={k === 0} aria-label={`Move ${k + 1} up`} onClick={() => onChange(move(rows, k, -1))}>↑</Button>
+            <Button variant="ghost" aria-label={`Remove ${k + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== k))}>Remove</Button></>}
+        </div>))}
+      {edit && rows.length < 10 && <Button variant="ghost" onClick={() => onChange([...rows, blank()])}>Add</Button>}
+    </fieldset>
+  );
+}
 
 export function CourseEditor() {
   const { id } = useParams();
@@ -168,9 +303,10 @@ export function CourseEditor() {
   const [preview, setPreview] = useState(false);
   useEffect(() => { if (d.data) setC(d.data.course); }, [d.data]);
   const save = useSubmit(async () => {
-    await patch(`/courses/${id}`, { title: c.title, summary: c.summary || null, lessons: c.lessons, questions: c.questions, draw_count: c.draw_count || null, pass_mark: c.pass_mark || null, attempt_limit: c.attempt_limit || null, time_limit_minutes: c.time_limit_minutes || null,
+    await patch(`/courses/${id}`, { title: c.title, summary: c.summary || null, lessons: c.lessons, questions: c.questions.map((x: any) => (x.accepted ? { ...x, accepted: x.accepted.map((t: string) => t.trim()).filter(Boolean) } : x)), draw_count: c.draw_count || null, pass_mark: c.pass_mark || null, attempt_limit: c.attempt_limit || null, time_limit_minutes: c.time_limit_minutes || null,
       category: c.category || null, difficulty: c.difficulty || null, duration_minutes: c.duration_minutes || null, audience: c.audience || null, roles: c.roles ?? [],
-      objectives: (c.objectives ?? []).filter(Boolean), source_refs: c.source_refs ?? [], certificate_eligible: c.certificate_eligible ?? true, content_owner: c.content_owner || null, review_on: c.review_on || null });
+      objectives: (c.objectives ?? []).filter(Boolean), source_refs: c.source_refs ?? [], certificate_eligible: c.certificate_eligible ?? true, content_owner: c.content_owner || null, review_on: c.review_on || null,
+      shuffle_questions: !!c.shuffle_questions, shuffle_options: !!c.shuffle_options, show_feedback: c.show_feedback ?? 'result', approval_required: !!c.approval_required });
     toast('Draft saved.'); d.reload();
   });
   const publish = useSubmit(async () => { await save.run(); await post(`/courses/${id}/publish`); toast('Published. Earlier attempts stay linked to the version they used.'); d.reload(); });
@@ -222,7 +358,12 @@ export function CourseEditor() {
             <Field label="Attempt limit" optional><input name="attempt_limit" type="number" min={1} max={20} value={c.attempt_limit ?? ''} onChange={(e) => setC({ ...c, attempt_limit: e.target.value ? Number(e.target.value) : null })} /></Field>
             <Field label="Time limit (minutes)" optional hint="Leave blank for no timer."><input name="time_limit_minutes" type="number" min={1} max={240} value={c.time_limit_minutes ?? ''} onChange={(e) => setC({ ...c, time_limit_minutes: e.target.value ? Number(e.target.value) : null })} /></Field>
             <Field label="Questions drawn per attempt" optional hint="Use the questions as a bank: each attempt gets this many at random." error={err?.fields.draw_count}><input name="draw_count" type="number" min={1} value={c.draw_count ?? ''} onChange={(e) => setC({ ...c, draw_count: e.target.value ? Number(e.target.value) : null })} /></Field>
+            <Field label="After submitting, learners see"><select name="show_feedback" value={c.show_feedback ?? 'result'} onChange={(e) => setC({ ...c, show_feedback: e.target.value })}>
+              <option value="none">Their score only</option><option value="result">Score, what was wrong, explanations and lessons to revisit</option><option value="answers">All of that plus the right answers</option></select></Field>
           </div>
+          <label className="check"><input type="checkbox" checked={!!c.shuffle_questions} onChange={(e) => setC({ ...c, shuffle_questions: e.target.checked })} /> Shuffle question order for each attempt</label>
+          <label className="check"><input type="checkbox" checked={!!c.shuffle_options} onChange={(e) => setC({ ...c, shuffle_options: e.target.checked })} /> Shuffle answer options</label>
+          <label className="check"><input type="checkbox" checked={!!c.approval_required} onChange={(e) => setC({ ...c, approval_required: e.target.checked })} /> A manager must approve a pass before the course counts as complete</label>
         </section>
 
         <section className="card" aria-labelledby="les-h">
@@ -254,7 +395,7 @@ export function CourseEditor() {
 
         <section className="card" aria-labelledby="q-h">
           <div className="row between"><h2 id="q-h">Quiz questions ({c.questions.length})</h2>
-            {edit && <div className="row">{[['single', 'Single choice'], ['multiple', 'Multiple choice'], ['true_false', 'True/false'], ['written', 'Written']].map(([t, n]) => <Button key={t} variant="secondary" onClick={() => setC({ ...c, questions: [...c.questions, blankQuestion(t)] })}>Add {n.toLowerCase()}</Button>)}</div>}</div>
+            {edit && <AddQuestion onAdd={(t) => setC({ ...c, questions: [...c.questions, blankQuestion(t)] })} />}</div>
           {c.questions.length === 0 && <p className="muted">No quiz. Learners complete the course by confirming they have read it after the last lesson.</p>}
           {c.questions.map((qn: any, i: number) => (
             <details key={qn.id} className="card" open>
@@ -263,7 +404,8 @@ export function CourseEditor() {
               <Field label="Marks"><input name={`q-${i}-marks`} type="number" min={1} max={20} value={qn.marks} onChange={(e) => setQ(i, 'marks', Number(e.target.value))} style={{ maxWidth: 120 }} /></Field>
               <FilePicker label="Image" accept="image/jpeg,image/png,image/webp" instant compact busy={img.busy} buttonText={qn.image_file_id ? 'Replace image' : undefined} onChange={(fs) => img.run('questions', i, fs[0])} />
               {qn.image_file_id && <Field label="Describe the image (alternative text)" error={err?.fields[`questions.${i}.image_alt`]}><input name={`q-${i}-alt`} value={qn.image_alt ?? ''} onChange={(e) => setQ(i, 'image_alt', e.target.value)} /></Field>}
-              {qn.type !== 'written' && (
+              <Field label="Scenario" optional hint="A workplace situation shown above the question."><textarea name={`q-${i}-scenario`} rows={2} value={qn.scenario ?? ''} onChange={(e) => setQ(i, 'scenario', e.target.value || null)} /></Field>
+              {CHOICE_TYPES.includes(qn.type) && (
                 <fieldset style={{ border: 0, padding: 0 }} aria-describedby={err?.fields[`questions.${i}.options`] ? `q-${i}-opt-err` : undefined}>
                   <legend style={{ fontWeight: 600 }}>Answers (tick the correct {qn.type === 'multiple' ? 'ones' : 'one'})</legend>
                   {err?.fields[`questions.${i}.options`] && <span className="err" id={`q-${i}-opt-err`}>Error: {err.fields[`questions.${i}.options`]}</span>}
@@ -277,7 +419,19 @@ export function CourseEditor() {
                   {qn.type !== 'true_false' && edit && <Button variant="ghost" onClick={() => setQ(i, 'options', [...qn.options, { id: Math.random().toString(36).slice(2, 6), text: '', correct: false }])}>Add an answer</Button>}
                 </fieldset>
               )}
-              {qn.type === 'written' && <p className="muted small">A trainer marks written answers. The result waits until they do.</p>}
+              {qn.type === 'matching' && <ListEditor title="Pairs (left matches right)" error={err?.fields[`questions.${i}.pairs`]} rows={qn.pairs ?? []} edit={edit}
+                cols={[['left', 'Left'], ['right', 'Matches']]} onChange={(v) => setQ(i, 'pairs', v)} blank={() => ({ id: rid(), left: '', right: '' })} />}
+              {qn.type === 'ordering' && <ListEditor title="Steps, in the right order (learners see them shuffled)" error={err?.fields[`questions.${i}.items`]} rows={qn.items ?? []} edit={edit}
+                cols={[['text', 'Step']]} onChange={(v) => setQ(i, 'items', v)} blank={() => ({ id: rid(), text: '' })} />}
+              {qn.type === 'fill_blank' && <Field label="Accepted answers" hint="One per line. Capitals and extra spaces are ignored." error={err?.fields[`questions.${i}.accepted`]}>
+                <textarea name={`q-${i}-accepted`} rows={2} value={(qn.accepted ?? []).join('\n')} onChange={(e) => setQ(i, 'accepted', e.target.value.split('\n'))} /></Field>}
+              {qn.type === 'written' && <Field label="Answer length"><select name={`q-${i}-length`} value={qn.length ?? 'short'} onChange={(e) => setQ(i, 'length', e.target.value)}><option value="short">Short</option><option value="long">Long (case study or reflection)</option></select></Field>}
+              {MANUAL_NOTE[qn.type] && <p className="muted small">{MANUAL_NOTE[qn.type]}</p>}
+              <div className="form-grid">
+                <Field label="Explanation" optional hint="Shown after submitting, when feedback is on."><textarea name={`q-${i}-explanation`} rows={2} value={qn.explanation ?? ''} onChange={(e) => setQ(i, 'explanation', e.target.value || null)} /></Field>
+                <Field label="Lesson to revisit if wrong" optional><select name={`q-${i}-lesson`} value={qn.lesson_ref ?? ''} onChange={(e) => setQ(i, 'lesson_ref', e.target.value === '' ? null : Number(e.target.value))}>
+                  <option value="">None</option>{c.lessons.map((l: any, k: number) => <option key={k} value={k}>{k + 1}. {l.title}</option>)}</select></Field>
+              </div>
               {edit && <div className="row">
                 <Button variant="ghost" disabled={i === 0} onClick={() => setC({ ...c, questions: move(c.questions, i, -1) })}>Move up</Button>
                 <Button variant="ghost" disabled={i === c.questions.length - 1} onClick={() => setC({ ...c, questions: move(c.questions, i, 1) })}>Move down</Button>
@@ -317,8 +471,14 @@ function Manage() {
   const retire = useSubmit(async (rid: string) => { await post(`/training/requirements/${rid}/retire`); done('Requirement removed. Past records are kept.'); });
   const assign = useSubmit(async () => { await post('/training/assignments', f); done('Training assigned.'); });
   const equiv = useSubmit(async () => { await post('/training/equivalences', f); done('Equivalent course accepted.'); });
-  const openMark = useSubmit(async (aid: string) => { setMark({ ...(await api('GET', `/attempts/${aid}`)), marks: {} }); });
-  const saveMark = useSubmit(async () => { const r = await post(`/attempts/${mark.id}/mark`, { marks: mark.marks }); setMark(null); toast(r.passed ? 'Marked: passed.' : 'Marked: not passed.'); marking.reload(); matrix.reload(); });
+  const openMark = useSubmit(async (m: any) => { setMark({ ...(await api('GET', `/attempts/${m.id}`)), person_name: m.person_name, marks: {} }); });
+  const saveMark = useSubmit(async () => {
+    if (mark.status === 'awaiting_approval') {
+      if (!mark.note?.trim()) throw new ApiError(400, 'validation', 'Say what you checked before approving or declining.');
+      await post(`/attempts/${mark.id}/approve`, { approve: mark.approve, note: mark.note }); toast(mark.approve ? 'Approved: the course is complete.' : 'Not approved. The learner has been told.');
+    } else { const r = await post(`/attempts/${mark.id}/mark`, { marks: mark.marks, feedback: mark.feedback ?? {} }); toast(r.status === 'awaiting_approval' ? 'Marked: passed, waiting for approval.' : r.passed ? 'Marked: passed.' : 'Marked: not passed.'); }
+    setMark(null); marking.reload(); matrix.reload();
+  });
   const decide = useSubmit(async (rid: string, approve: boolean) => { await post(`/training/records/${rid}/verify`, { approve }); toast(approve ? 'Certificate verified.' : 'Certificate rejected.'); verify.reload(); matrix.reload(); });
   const rows = matrix.data ?? [];
   const coursesIn = [...new Map(rows.map((r) => [r.course_root_id, r.course_title])).entries()];
@@ -330,7 +490,7 @@ function Manage() {
         <section className="card" aria-labelledby="todo-h">
           <h2 id="todo-h">Waiting for you</h2>
           <ul className="list">
-            {marking.data?.map((m) => <li key={m.id}><span>Written answers from <strong>{m.person_name}</strong> — {m.title}<br /><span className="muted small">Submitted {fmtDate(m.submitted_at)}</span></span><Button variant="secondary" busy={openMark.busy} onClick={() => openMark.run(m.id)}>Mark</Button></li>)}
+            {marking.data?.map((m) => <li key={m.id}><span>{m.status === 'awaiting_approval' ? 'Pass to approve' : 'Answers to mark'} from <strong>{m.person_name}</strong> — {m.title}<br /><span className="muted small">Submitted {fmtDate(m.submitted_at)}{m.status === 'awaiting_approval' ? ` · scored ${m.score} of ${m.max_score}` : ''}</span></span><Button variant="secondary" busy={openMark.busy} onClick={() => openMark.run(m)}>{m.status === 'awaiting_approval' ? 'Review' : 'Mark'}</Button></li>)}
             {verify.data?.map((r) => <li key={r.id}><span>Certificate from <strong>{r.person_name}</strong> — {r.title}<br /><span className="muted small">{r.provider ?? 'Provider not given'} · completed {fmtDate(r.completed_on)}</span></span>
               <span className="row">{r.certificate_file_id ? <Button variant="ghost" onClick={() => download(`/files/${r.certificate_file_id}`, `${r.title}.pdf`)}>View certificate</Button> : <span className="small muted">No file</span>}<Button variant="go" disabled={decide.busy} onClick={() => decide.run(r.id, true)}>Verify</Button><Button variant="secondary" disabled={decide.busy} onClick={() => decide.run(r.id, false)}>Reject</Button></span></li>)}
           </ul>
@@ -382,16 +542,28 @@ function Manage() {
         <Field label="Required course"><select name="course_root_id" value={f.course_root_id} onChange={(e) => setF({ ...f, course_root_id: e.target.value })}><option value="">Choose…</option>{published.map((c) => <option key={c.root_id} value={c.root_id}>{c.title}</option>)}</select></Field>
         <Field label="Accept this course as equivalent"><select name="equivalent_root_id" value={f.equivalent_root_id} onChange={(e) => setF({ ...f, equivalent_root_id: e.target.value })}><option value="">Choose…</option>{(courses.data ?? []).filter((c) => c.status === 'published').map((c) => <option key={c.root_id} value={c.root_id}>{c.title}{c.company_code ? ` (${c.company_code})` : ' (shared)'}</option>)}</select></Field>
       </Dialog>
-      <Dialog open={!!mark} onClose={() => setMark(null)} title="Mark written answers" footer={<Button busy={saveMark.busy} onClick={() => saveMark.run()}>Save marks</Button>}>
+      <Dialog open={!!mark} onClose={() => setMark(null)} title={mark?.status === 'awaiting_approval' ? 'Approve completion' : 'Mark answers'}
+        footer={<Button busy={saveMark.busy} onClick={() => saveMark.run()}>{mark?.status === 'awaiting_approval' ? 'Save decision' : 'Save marks'}</Button>}>
         {mark && <>
           <ErrorSummary error={saveMark.error} />
-          {mark.questions.filter((x: any) => x.type === 'written').map((qn: any) => (
-            <section key={qn.id} style={{ marginBottom: 16 }}><h3 style={{ fontSize: '1rem' }}>{qn.prompt}</h3>
-              <blockquote className="notice" style={{ whiteSpace: 'pre-wrap' }}>{mark.answers[qn.id] || <em>No answer given</em>}</blockquote>
-              <Field label={`Marks (0 to ${qn.marks})`}><input name={`mark-${qn.id}`} type="number" min={0} max={qn.marks} value={mark.marks[qn.id] ?? ''} onChange={(e) => setMark({ ...mark, marks: { ...mark.marks, [qn.id]: e.target.value === '' ? undefined : Number(e.target.value) } })} style={{ maxWidth: 120 }} /></Field>
-            </section>
-          ))}
-          <p className="small muted">Choice questions were marked automatically: {mark.auto_marks} mark(s).</p>
+          {mark.status === 'awaiting_approval' ? <>
+            <p>{mark.person_name ?? 'The learner'} reached the pass mark ({mark.score} of {mark.max_score}). This course needs a manager's approval before it counts as complete, for example after watching them in practice.</p>
+            <fieldset style={{ border: 0, padding: 0 }}><legend style={{ fontWeight: 600 }}>Decision</legend>
+              <label className="check"><input type="radio" name="approve" checked={mark.approve !== false} onChange={() => setMark({ ...mark, approve: true })} /> Approve: the course is complete</label>
+              <label className="check"><input type="radio" name="approve" checked={mark.approve === false} onChange={() => setMark({ ...mark, approve: false })} /> Do not approve yet</label></fieldset>
+            <Field label="What you checked"><textarea name="note" value={mark.note ?? ''} onChange={(e) => setMark({ ...mark, note: e.target.value, approve: mark.approve ?? true })} /></Field>
+          </> : <>
+            {mark.questions.filter((x: any) => MANUAL_NOTE[x.type]).map((qn: any) => (
+              <section key={qn.id} style={{ marginBottom: 16 }}><h3 style={{ fontSize: '1rem' }}>{qn.prompt}</h3>
+                {qn.type === 'written' && <blockquote className="notice" style={{ whiteSpace: 'pre-wrap' }}>{mark.answers[qn.id] || <em>No answer given</em>}</blockquote>}
+                {qn.type === 'file' && (mark.answers[qn.id] ? <Button variant="secondary" onClick={() => download(`/files/${mark.answers[qn.id]}`, 'evidence')}>Open the evidence</Button> : <p className="notice"><em>No file uploaded</em></p>)}
+                {qn.type === 'observation' && <p className="muted small">Mark from what you observed in practice.</p>}
+                <Field label={`Marks (0 to ${qn.marks})`}><input name={`mark-${qn.id}`} type="number" min={0} max={qn.marks} value={mark.marks[qn.id] ?? ''} onChange={(e) => setMark({ ...mark, marks: { ...mark.marks, [qn.id]: e.target.value === '' ? undefined : Number(e.target.value) } })} style={{ maxWidth: 120 }} /></Field>
+                <Field label="Feedback for the learner" optional><textarea name={`fb-${qn.id}`} rows={2} value={mark.feedback?.[qn.id] ?? ''} onChange={(e) => setMark({ ...mark, feedback: { ...mark.feedback, [qn.id]: e.target.value } })} /></Field>
+              </section>
+            ))}
+            <p className="small muted">Other questions were marked automatically: {mark.auto_marks} mark(s).</p>
+          </>}
         </>}
       </Dialog>
     </div>

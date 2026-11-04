@@ -8,10 +8,11 @@ import { Avatar, Button, Chips, CompanyBadge, Dialog, Empty, ErrorSummary, Field
 import { StartVisitDialog } from './Visits.tsx';
 import { ReportRepair } from './Estates.tsx';
 import { ComplianceTab } from './Compliance.tsx';
+import { InspectionsList, RisksAndActions } from './Safety.tsx';
 import { ASPECTS, blankExtras, CATEGORIES, CHANNEL_TEXT, ComplaintFields, ConditionBar, SOURCES, StarInput, Stars, suggestions, tone } from '../condition.tsx';
 import { MapEmbed } from '../geo.tsx';
 
-function Photo({ id, has, name }: { id: string; has: boolean; name: string }) {
+export function Photo({ id, has, name }: { id: string; has: boolean; name: string }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => { let u: string | null = null; if (has) blobUrl(`/properties/${id}/photo`).then((x) => { u = x; setSrc(x); }); return () => { if (u) URL.revokeObjectURL(u); }; }, [id, has]);
   // The whole photo is shown (no cropping), over a blurred copy that fills the frame, so every house is recognisable.
@@ -128,7 +129,7 @@ function PropertyForm({ existing, onClose, onSaved }: { existing?: any; onClose:
   );
 }
 
-type PTab = 'overview' | 'condition' | 'repairs' | 'visits' | 'tasks' | 'people' | 'compliance';
+type PTab = 'overview' | 'condition' | 'repairs' | 'safety' | 'risks' | 'visits' | 'tasks' | 'people' | 'compliance';
 
 export function PropertyPage() {
   const { id } = useParams();
@@ -169,7 +170,7 @@ export function PropertyPage() {
   const current = allocations.filter((a: any) => !a.to_date);
   const canPlan = hub.can('visits.approve', p.company_id);
 
-  const tabs: [PTab, string][] = [['overview', 'Overview'], ['condition', `House mood & complaints${openComplaints.length ? ` (${openComplaints.length})` : ''}`], ['repairs', `Repairs${repairs.length ? ` (${repairs.length})` : ''}`],
+  const tabs: [PTab, string][] = [['overview', 'Overview'], ['condition', `House mood & complaints${openComplaints.length ? ` (${openComplaints.length})` : ''}`], ['repairs', `Repairs${repairs.length ? ` (${repairs.length})` : ''}`], ['safety', 'Safety inspections'], ['risks', 'Risks & actions'],
     ['visits', 'Visits & photos'], ['tasks', `Tasks${tasks.filter((t: any) => t.status !== 'completed').length ? ` (${tasks.filter((t: any) => t.status !== 'completed').length})` : ''}`], ['people', 'Staff & keys'],
     // Only where an administrator has turned compliance monitoring on, and only for people allowed to see it.
     ...(p.compliance_enabled && ['compliance.view', 'compliance.record', 'compliance.manage'].some((x) => hub.can(x, p.company_id)) ? [['compliance', 'Compliance'] as [PTab, string]] : [])];
@@ -261,6 +262,8 @@ export function PropertyPage() {
       </div>}
 
       {tab === 'compliance' && p.compliance_enabled && <ComplianceTab propertyId={p.id} />}
+      {tab === 'safety' && <InspectionsList propertyId={p.id} />}
+      {tab === 'risks' && <RisksAndActions propertyId={p.id} />}
       {tab === 'repairs' && <section className="card" aria-labelledby="pr-h">
           <div className="row between"><h2 id="pr-h">Repairs</h2><Button variant="secondary" onClick={() => setDlg('repair')}><Icon name="plus" size={18} />Report a repair</Button></div>
           {repairs.length === 0 ? <p className="muted">No open repairs.</p> : <details open><summary>{repairs.length} open repair{repairs.length === 1 ? '' : 's'}</summary><ul className="list">{repairs.map((r: any) => <li key={r.id}><Link to={`/estates/repairs/${r.id}`}>{r.title}</Link><span className="small muted">{label(r.urgency)} · due {fmtDate(r.due_on)}</span></li>)}</ul></details>}

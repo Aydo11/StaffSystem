@@ -4,6 +4,7 @@ import { api, blobUrl, download, patch, post, serverNow, upload, useApi, useSubm
 import { fmtDate, fmtElapsed, label, londonToday } from '../format.ts';
 import { useHub } from '../hub.tsx';
 import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
+import { CATEGORY, CourseLibrary, LearningHome } from './Learning.tsx';
 
 const MATRIX_STATUS: Record<string, [string, string]> = { current: ['verified', 'Up to date'], expiring: ['submitted', 'Renew soon'], due: ['info', 'Due'], overdue: ['action', 'Overdue'] };
 
@@ -16,19 +17,24 @@ export function FileImage({ id, alt }: { id: string; alt: string }) {
   return src ? <img src={src} alt={alt} style={{ maxHeight: 360, borderRadius: 8, margin: '8px 0' }} /> : <div className="skeleton" style={{ height: 120 }} aria-label={alt} />;
 }
 
-type Tab = 'mine' | 'courses' | 'manage';
+type Tab = 'mine' | 'courses' | 'record' | 'manage';
 export function Training() {
   const hub = useHub();
   const [params, setParams] = useSearchParams();
   const manager = hub.can('training.manage') || hub.can('training.view_all');
   const tab = (params.get('tab') as Tab) ?? 'mine';
-  const tabs: [Tab, string][] = [['mine', 'My training'], ['courses', 'Courses'], ...(manager ? [['manage', 'Manage training'] as [Tab, string]] : [])];
+  const nav = useNavigate();
+  const [creating, setCreating] = useState(false);
+  const canCreate = hub.me.companies.some((c) => c.perms.includes('training.manage')) || hub.me.superAdmin;
+  const tabs: [Tab, string][] = [['mine', 'Dashboard'], ['courses', 'Course library'], ['record', 'My record'], ...(manager ? [['manage', 'Manage training'] as [Tab, string]] : [])];
   return (
     <>
-      <PageHead title="Training centre" intro="Required training, courses and quizzes. Completing training shows learning, not competence; competence is assessed separately." />
+      <PageHead title="Training & coaching" intro="Courses, assessments and your training record. Completing training shows learning, not competence; competence is assessed separately." />
       <Tabs label="Training sections" tabs={tabs} value={tab} onChange={(t) => setParams({ tab: t })} />
-      {tab === 'mine' && <MyTraining />}
-      {tab === 'courses' && <Catalogue />}
+      {tab === 'mine' && <LearningHome onTab={(t) => setParams({ tab: t })} />}
+      {tab === 'courses' && <CourseLibrary onBuild={canCreate ? () => setCreating(true) : undefined} />}
+      {tab === 'record' && <MyTraining />}
+      {creating && <NewCourse onClose={() => setCreating(false)} onSaved={(id) => nav(`/training/courses/${id}/edit`)} />}
       {tab === 'manage' && manager && <Manage />}
     </>
   );
@@ -79,36 +85,6 @@ function MyTraining() {
   );
 }
 
-function Catalogue() {
-  const hub = useHub();
-  const nav = useNavigate();
-  const list = useApi<any[]>(`/courses${hub.q()}`);
-  const [creating, setCreating] = useState(false);
-  const canCreate = hub.me.companies.some((c) => c.perms.includes('training.manage')) || hub.me.superAdmin;
-  const rows = list.data ?? [];
-  const latest = rows.filter((c, i) => rows.findIndex((x) => x.root_id === c.root_id && x.status === c.status) === i);
-  return (
-    <>
-      {canCreate && <p><Button onClick={() => setCreating(true)}>Build a course</Button></p>}
-      {list.loading && !list.data ? <Skeleton /> : latest.length === 0 ? <Empty>No courses yet.</Empty> : (
-        <ul className="grid" style={{ listStyle: 'none', padding: 0 }}>{latest.map((c) => (
-          <li key={c.id} className="card">
-            <div className="row between"><h3 style={{ margin: 0 }}>{c.title}</h3>{c.company_code ? <CompanyBadge code={c.company_code} name={c.company_name} /> : <span className="badge co">Shared</span>}</div>
-            <p className="muted small">{c.summary}</p>
-            <p className="small">{c.lesson_count} lessons{c.question_count > 0 && ` · quiz (pass mark ${c.pass_mark}%${c.time_limit_minutes ? `, ${c.time_limit_minutes} min` : ''})`} · version {c.version}</p>
-            <div className="row">
-              {c.status === 'draft' ? <Status s="planned" text="Draft" /> : c.my_completed_on ? <Status s="verified" text={`Completed ${fmtDate(c.my_completed_on)}`} /> : null}
-              {c.status === 'published' && <Link className="btn secondary" to={`/training/courses/${c.id}`}>{c.my_lesson ? 'Resume' : 'Start'}<span className="sr-only"> {c.title}</span></Link>}
-              {c.can_manage && <Link className="btn ghost" to={`/training/courses/${c.id}/edit`}>{c.status === 'draft' ? 'Edit' : 'Manage'}<span className="sr-only"> {c.title}</span></Link>}
-            </div>
-          </li>
-        ))}</ul>
-      )}
-      {creating && <NewCourse onClose={() => setCreating(false)} onSaved={(id) => nav(`/training/courses/${id}/edit`)} />}
-    </>
-  );
-}
-
 function NewCourse({ onClose, onSaved }: { onClose: () => void; onSaved: (id: string) => void }) {
   const hub = useHub();
   const cos = hub.me.companies.filter((c) => c.perms.includes('training.manage'));
@@ -123,59 +99,7 @@ function NewCourse({ onClose, onSaved }: { onClose: () => void; onSaved: (id: st
   );
 }
 
-// ── Course player: lessons with Previous / Next / Save and exit, then quiz or declaration ──
-export function CoursePlayer() {
-  const { id } = useParams();
-  const nav = useNavigate();
-  const d = useApi<any>(`/courses/${id}`);
-  const [i, setI] = useState<number | null>(null);
-  const [mode, setMode] = useState<'lessons' | 'quiz' | 'done'>('lessons');
-  const [declared, setDeclared] = useState(false);
-  const toast = useToast();
-  const c = d.data?.course;
-  useEffect(() => { if (d.data && i === null) setI(Math.min(d.data.progress, d.data.course.lessons.length - 1)); }, [d.data, i]);
-  const go = async (n: number) => { setI(n); document.getElementById('page-title')?.focus(); try { await api('PUT', `/courses/${id}/progress`, { lesson_index: n }); } catch { /* progress is a convenience; navigation still works */ } };
-  const complete = useSubmit(async () => { await post(`/courses/${id}/complete`, { declaration: declared }); toast('Course completed.'); setMode('done'); });
-  if (d.error) return <LoadError error={d.error} />;
-  if (!c || i === null) return <Skeleton lines={8} />;
-  if (c.status !== 'published') return <><PageHead title={c.title} /><div className="notice warn">This version is not published. <Link to={`/training/courses/${id}/edit`}>Open the editor</Link></div></>;
-  const lesson = c.lessons[i];
-  const last = i === c.lessons.length - 1;
-  if (mode === 'quiz') return <Quiz course={c} onDone={() => { setMode('done'); d.reload(); }} />;
-  if (mode === 'done') return (
-    <div className="card" style={{ maxWidth: 560, margin: '0 auto', textAlign: 'center' }}>
-      <h1 id="page-title" tabIndex={-1}>{c.title}</h1><p>Your result is saved in your training record.</p><Link className="btn" to="/training">Back to the Training centre</Link>
-    </div>
-  );
-  return (
-    <>
-      <PageHead title={c.title} crumbs={[['Training centre', '/training'], [c.title]]} intro={`Lesson ${i + 1} of ${c.lessons.length}`} />
-      <article className="card" style={{ maxWidth: 820 }} aria-labelledby="lesson-h">
-        <div className="bar" aria-hidden="true" style={{ marginBottom: 16 }}><span style={{ width: `${((i + 1) / c.lessons.length) * 100}%` }} /></div>
-        <h2 id="lesson-h">{lesson.title}</h2>
-        <Paragraphs text={lesson.body} />
-        {lesson.image_file_id && <FileImage id={lesson.image_file_id} alt={lesson.image_alt} />}
-        {lesson.video_url && <div className="notice"><a href={lesson.video_url} target="_blank" rel="noopener noreferrer">Watch the video (opens in a new tab)</a><details style={{ marginTop: 8 }}><summary>Read the transcript</summary><Paragraphs text={lesson.transcript} /></details></div>}
-        {lesson.scenario && <div className="notice warn"><strong>Think about it:</strong> {lesson.scenario}</div>}
-        {lesson.resources?.length > 0 && <><h3>Resources</h3><ul>{lesson.resources.map((r: any) => <li key={r.url}><a href={r.url} target="_blank" rel="noopener noreferrer">{r.label}</a></li>)}</ul></>}
-        <div className="row between" style={{ marginTop: 24 }}>
-          <Button variant="secondary" disabled={i === 0} onClick={() => go(i - 1)}>‹ Previous</Button>
-          <Button variant="ghost" onClick={() => nav('/training')}>Save and exit</Button>
-          {!last ? <Button onClick={() => go(i + 1)}>Next ›</Button> : c.questions.length ? <Button variant="go" onClick={() => setMode('quiz')}>Start the quiz</Button> : null}
-        </div>
-        {last && !c.questions.length && (
-          <div style={{ marginTop: 24 }}>
-            <ErrorSummary error={complete.error} />
-            <label className="check"><input type="checkbox" checked={declared} onChange={(e) => setDeclared(e.target.checked)} /> I have read and understood this course</label>
-            <Button variant="go" busy={complete.busy} disabled={!declared} onClick={() => complete.run()}>Complete course</Button>
-          </div>
-        )}
-      </article>
-    </>
-  );
-}
-
-function Quiz({ course, onDone }: { course: any; onDone: () => void }) {
+export function Quiz({ course, onDone }: { course: any; onDone: () => void }) {
   const [at, setAt] = useState<any>(null);
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [result, setResult] = useState<any>(null);
@@ -191,7 +115,7 @@ function Quiz({ course, onDone }: { course: any; onDone: () => void }) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => { api('PUT', `/attempts/${at.id}/answers`, { answers: next }).catch(() => {}); }, 800); // autosave; submit sends everything anyway
   };
-  if (start.error) return <><PageHead title={`${course.title}: quiz`} /><ErrorSummary error={start.error} /><Link className="btn" to="/training">Back to the Training centre</Link></>;
+  if (start.error) return <><PageHead title={`${course.title}: quiz`} /><ErrorSummary error={start.error} /><Link className="btn" to="/training">Back to Training & coaching</Link></>;
   if (!at) return <Skeleton lines={6} />;
   if (result) return (
     <div className="card" style={{ maxWidth: 560, margin: '0 auto' }}>
@@ -244,10 +168,14 @@ export function CourseEditor() {
   const [preview, setPreview] = useState(false);
   useEffect(() => { if (d.data) setC(d.data.course); }, [d.data]);
   const save = useSubmit(async () => {
-    await patch(`/courses/${id}`, { title: c.title, summary: c.summary || null, lessons: c.lessons, questions: c.questions, draw_count: c.draw_count || null, pass_mark: c.pass_mark || null, attempt_limit: c.attempt_limit || null, time_limit_minutes: c.time_limit_minutes || null });
+    await patch(`/courses/${id}`, { title: c.title, summary: c.summary || null, lessons: c.lessons, questions: c.questions, draw_count: c.draw_count || null, pass_mark: c.pass_mark || null, attempt_limit: c.attempt_limit || null, time_limit_minutes: c.time_limit_minutes || null,
+      category: c.category || null, difficulty: c.difficulty || null, duration_minutes: c.duration_minutes || null, audience: c.audience || null, roles: c.roles ?? [],
+      objectives: (c.objectives ?? []).filter(Boolean), source_refs: c.source_refs ?? [], certificate_eligible: c.certificate_eligible ?? true, content_owner: c.content_owner || null, review_on: c.review_on || null });
     toast('Draft saved.'); d.reload();
   });
   const publish = useSubmit(async () => { await save.run(); await post(`/courses/${id}/publish`); toast('Published. Earlier attempts stay linked to the version they used.'); d.reload(); });
+  const approve = useSubmit(async () => { const note = window.prompt('Who reviewed the content, and what did they check?'); if (!note) return; await post(`/courses/${id}/approve-content`, { note }); toast('Content approved. You can publish it now.'); d.reload(); });
+  const roles = useApi<any[]>('/job-roles');
   const newVersion = useSubmit(async () => { const r = await post(`/courses/${id}/new-version`); nav(`/training/courses/${r.id}/edit`); });
   const img = useSubmit(async (kind: 'lessons' | 'questions', idx: number, file: File) => {
     const r = await upload(`/courses/${id}/images`, file, file.name);
@@ -267,6 +195,7 @@ export function CourseEditor() {
           {edit && <><Button variant="secondary" onClick={() => setPreview(true)}>Preview</Button><Button busy={save.busy} onClick={() => save.run()}>Save Changes</Button><Button variant="go" busy={publish.busy} onClick={() => publish.run()}>Publish</Button></>}
           {!edit && <><Link className="btn secondary" to={`/training/courses/${id}`}>Open as learner</Link>{d.data.can.manage && <Button busy={newVersion.busy} onClick={() => newVersion.run()}>Create a new version</Button>}</>}
         </>} />
+      {c.review_status === 'pending_review' && <div className="notice warn row between"><span>This content is waiting for a specialist review. It cannot be published until someone who manages training approves it.</span>{d.data.can.manage && <Button variant="secondary" busy={approve.busy} onClick={() => approve.run()}>Approve content</Button>}</div>}
       {!edit && <div className="notice">Published versions cannot change, so results stay tied to what people actually saw. Create a new version to make changes.</div>}
       <ErrorSummary error={err ?? img.error} />
       <fieldset disabled={!edit} style={{ border: 0, padding: 0, margin: 0 }}>
@@ -274,6 +203,20 @@ export function CourseEditor() {
           <h2 id="set-h">Course settings</h2>
           <Field label="Title" error={err?.fields.title}><input name="title" value={c.title} onChange={(e) => setC({ ...c, title: e.target.value })} /></Field>
           <Field label="Summary" optional><textarea name="summary" value={c.summary ?? ''} onChange={(e) => setC({ ...c, summary: e.target.value })} /></Field>
+          <div className="form-grid">
+            <Field label="Category" optional><select name="category" value={c.category ?? ''} onChange={(e) => setC({ ...c, category: e.target.value || null })}><option value="">Choose…</option>{Object.entries(CATEGORY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></Field>
+            <Field label="Level" optional><select name="difficulty" value={c.difficulty ?? ''} onChange={(e) => setC({ ...c, difficulty: e.target.value || null })}><option value="">Choose…</option><option value="foundation">Foundation</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></Field>
+            <Field label="Estimated time (minutes)" optional><input name="duration_minutes" type="number" min={1} max={1200} value={c.duration_minutes ?? ''} onChange={(e) => setC({ ...c, duration_minutes: e.target.value ? Number(e.target.value) : null })} /></Field>
+            <Field label="Content owner" optional><input name="content_owner" value={c.content_owner ?? ''} onChange={(e) => setC({ ...c, content_owner: e.target.value })} /></Field>
+            <Field label="Next review" optional><input name="review_on" type="date" value={c.review_on ?? ''} onChange={(e) => setC({ ...c, review_on: e.target.value || null })} /></Field>
+          </div>
+          <Field label="Who it is for" optional><textarea name="audience" rows={2} value={c.audience ?? ''} onChange={(e) => setC({ ...c, audience: e.target.value })} /></Field>
+          <Field label="Learning objectives" optional hint="One per line."><textarea name="objectives" rows={4} value={(c.objectives ?? []).join('\n')} onChange={(e) => setC({ ...c, objectives: e.target.value.split('\n') })} /></Field>
+          <Field label="Sources and guidance" optional hint="One per line: title | https link (the link is optional)." error={err?.fields.source_refs}><textarea name="source_refs" rows={3} value={(c.source_refs ?? []).map((r: any) => r.url ? `${r.label} | ${r.url}` : r.label).join('\n')}
+            onChange={(e) => setC({ ...c, source_refs: e.target.value.split('\n').filter((l) => l.trim()).map((l) => { const [lab, url] = l.split('|').map((x) => x.trim()); return { label: lab, url: url || null }; }) })} /></Field>
+          <fieldset style={{ border: 0, padding: 0 }}><legend style={{ fontWeight: 600 }}>Suits these roles (used for recommendations)</legend>
+            <div className="row" style={{ flexWrap: 'wrap' }}>{(roles.data ?? []).map((r) => <label key={r.key} className="check"><input type="checkbox" checked={(c.roles ?? []).includes(r.key)} onChange={(e) => setC({ ...c, roles: e.target.checked ? [...(c.roles ?? []), r.key] : (c.roles ?? []).filter((x: string) => x !== r.key) })} /> {r.label}</label>)}</div></fieldset>
+          <label className="check"><input type="checkbox" checked={c.certificate_eligible ?? true} onChange={(e) => setC({ ...c, certificate_eligible: e.target.checked })} /> Certificate on completion</label>
           <div className="form-grid">
             <Field label="Pass mark (%)" optional error={err?.fields.pass_mark}><input name="pass_mark" type="number" min={1} max={100} value={c.pass_mark ?? ''} onChange={(e) => setC({ ...c, pass_mark: e.target.value ? Number(e.target.value) : null })} /></Field>
             <Field label="Attempt limit" optional><input name="attempt_limit" type="number" min={1} max={20} value={c.attempt_limit ?? ''} onChange={(e) => setC({ ...c, attempt_limit: e.target.value ? Number(e.target.value) : null })} /></Field>
@@ -287,13 +230,18 @@ export function CourseEditor() {
           {c.lessons.map((l: any, i: number) => (
             <details key={i} className="card" open={c.lessons.length < 3}>
               <summary><strong>{i + 1}. {l.title}</strong></summary>
-              <Field label="Lesson title" error={err?.fields[`lessons.${i}.title`]}><input name={`lesson-${i}-title`} value={l.title} onChange={(e) => setL(i, 'title', e.target.value)} /></Field>
-              <Field label="Text" hint="Leave a blank line between paragraphs."><textarea name={`lesson-${i}-body`} rows={6} value={l.body ?? ''} onChange={(e) => setL(i, 'body', e.target.value)} /></Field>
+              <div className="form-grid">
+                <Field label="Lesson title" error={err?.fields[`lessons.${i}.title`]}><input name={`lesson-${i}-title`} value={l.title} onChange={(e) => setL(i, 'title', e.target.value)} /></Field>
+                <Field label="Module" optional hint="Lessons with the same module name are grouped."><input name={`lesson-${i}-module`} value={l.module ?? ''} onChange={(e) => setL(i, 'module', e.target.value || null)} /></Field>
+              </div>
+              <Field label="Text" hint="Leave a blank line between paragraphs. Start a line with ## for a heading, or - for a list."><textarea name={`lesson-${i}-body`} rows={6} value={l.body ?? ''} onChange={(e) => setL(i, 'body', e.target.value)} /></Field>
               <FilePicker label="Image" accept="image/jpeg,image/png,image/webp" instant compact busy={img.busy} buttonText={l.image_file_id ? 'Replace image' : undefined} onChange={(fs) => img.run('lessons', i, fs[0])} />
               {l.image_file_id && <><FileImage id={l.image_file_id} alt={l.image_alt || 'Lesson image'} /><Field label="Describe the image (alternative text)" error={err?.fields[`lessons.${i}.image_alt`]}><input name={`lesson-${i}-alt`} value={l.image_alt ?? ''} onChange={(e) => setL(i, 'image_alt', e.target.value)} /></Field></>}
               <Field label="Video link" optional hint="https link. A transcript or captions text is required."><input name={`lesson-${i}-video`} value={l.video_url ?? ''} onChange={(e) => setL(i, 'video_url', e.target.value || null)} /></Field>
               {l.video_url && <Field label="Transcript" error={err?.fields[`lessons.${i}.transcript`]}><textarea name={`lesson-${i}-transcript`} value={l.transcript ?? ''} onChange={(e) => setL(i, 'transcript', e.target.value)} /></Field>}
               <Field label="Scenario to think about" optional><textarea name={`lesson-${i}-scenario`} value={l.scenario ?? ''} onChange={(e) => setL(i, 'scenario', e.target.value || null)} /></Field>
+              <Field label="Key points" optional hint="One per line."><textarea name={`lesson-${i}-points`} rows={3} value={(l.key_points ?? []).join('\n')} onChange={(e) => setL(i, 'key_points', e.target.value ? e.target.value.split('\n') : undefined)} /></Field>
+              {l.checks?.length > 0 && <p className="small muted">{l.checks.length} practice question{l.checks.length === 1 ? '' : 's'} in this lesson.</p>}
               {edit && <div className="row">
                 <Button variant="ghost" disabled={i === 0} onClick={() => setC({ ...c, lessons: move(c.lessons, i, -1) })}>Move up</Button>
                 <Button variant="ghost" disabled={i === c.lessons.length - 1} onClick={() => setC({ ...c, lessons: move(c.lessons, i, 1) })}>Move down</Button>

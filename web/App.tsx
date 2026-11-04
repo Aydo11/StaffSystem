@@ -21,6 +21,7 @@ import { ComplaintPage, Complaints } from './pages/Complaints.tsx';
 import { AgentPage, AgentPortal, Estates, RepairPage } from './pages/Estates.tsx';
 import { Compliance } from './pages/Compliance.tsx';
 import { InspectionPage, RiskPage } from './pages/Safety.tsx';
+import { PrintReport } from './pages/Reports.tsx';
 import { ActionPage, Governance } from './pages/Governance.tsx';
 import { Finance, FinanceDocument } from './pages/Finance.tsx';
 import { Conversation, Messages } from './pages/Messages.tsx';
@@ -232,6 +233,7 @@ function Shell() {
             <Route path="/estates" element={<Estates />} />
             <Route path="/compliance" element={<Compliance />} />
             <Route path="/estates/inspections/:id" element={<InspectionPage />} />
+            <Route path="/estates/report" element={<PrintReport />} />
             <Route path="/estates/risks/:id" element={<RiskPage />} />
             <Route path="/estates/repairs/:id" element={<RepairPage />} />
             <Route path="/estates/agents/:id" element={<AgentPage />} />

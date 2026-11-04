@@ -22,7 +22,7 @@ const URGENCY = { low: 'planned', medium: 'routine', high: 'urgent', critical: '
 const clean = (t: string | null | undefined) => { if (!noResidents(t)) throw bad(residentMsg); return t || null; };
 
 // Properties this person may see safety records for (staff by visibility, managers by permission, agents by link).
-const visible = async (a: Access, al = 'p') => ({
+export const visible = async (a: Access, al = 'p') => ({
   where: `(${al}.id = any($1::uuid[]) or (${propertyVisible(al, 2, 3)}))`,
   args: [await agentPropertyIds(a), a.personId, companiesWith(a, 'properties.view').concat(companiesWith(a, 'safety.manage'))] as unknown[],
 });
@@ -171,12 +171,15 @@ safety.get('/safety/overview', async (req, res) => {
       from compliance_requirements cr left join lateral (select outcome, next_due_on from compliance_records r where r.requirement_id = cr.id order by completed_on desc, created_at desc limit 1) last on true
      where cr.retired_at is null and cr.property_id = any($1::uuid[]) group by cr.property_id`, [ids]) : [];
   const byId = new Map(scores.map((s) => [s.property_id, s.applicable ? Math.round((100 * s.compliant) / s.applicable) : null]));
-  res.json(rows.map(({ show_compliance, ...r }) => ({ ...r, compliance_score: show_compliance ? byId.get(r.id) ?? null : undefined })));
+  // Health (open problems today) is separate from compliance and shown for every property.
+  const { propertyFacts, health } = await import('./reports.ts');
+  const facts = new Map((await propertyFacts(a, { company: req.query.company as string || null, property: req.query.property as string || null, from: '2000-01-01', to: '2000-01-01' })).map((f) => [f.id, health(f)]));
+  res.json(rows.map(({ show_compliance, ...r }) => ({ ...r, health: facts.get(r.id) ?? null, compliance_score: show_compliance ? byId.get(r.id) ?? null : undefined })));
 });
 
 // ── Property risk register (stored in the shared risks table with a property) ──
 async function loadRisk(a: Access, id: string) {
-  const r = await one(`select r.*, r.likelihood * r.impact as score, p.name as property_name, p.ref as property_ref, ${name('o')} as owner_name, ${name('cb')} as closed_by_name
+  const r = await one(`select r.*, r.likelihood * r.impact as score, p.name as property_name, p.ref as property_ref, p.manager_person_id, ${name('o')} as owner_name, ${name('cb')} as closed_by_name
                          from risks r join properties p on p.id = r.property_id left join people o on o.id = r.owner_id left join people cb on cb.id = r.closed_by where r.id = $1`, [id]);
   if (!r) throw notFound();
   const { manage } = await propertyAccess(a, r.property_id, 'safety.manage');
@@ -194,6 +197,11 @@ safety.get('/property-risks', async (req, res) => {
 });
 const riskBody = z.object({ location: text(120).nullable(), category: text(80).nullable(), title: text(200).min(3), description: text(4000).nullable(), likelihood: z.coerce.number().int().min(1).max(5),
   impact: z.coerce.number().int().min(1).max(5), controls: text(4000).nullable(), owner_id: uuid.nullable(), target_on: isoDate.nullable(), review_on: isoDate.nullable() }).partial();
+// A high risk (score 15 or more) is flagged to the property manager when it is added or rated up to high.
+const HIGH = 15;
+async function highRisk(db: any, actor: string, p: { id: string; company_id: string; name: string; manager_person_id: string | null }, r: { id: string; ref: string; title: string }) {
+  if (p.manager_person_id && p.manager_person_id !== actor) await notify(db, p.manager_person_id, p.company_id, `High risk at ${p.name}: ${r.ref} ${r.title}`, `/estates/risks/${r.id}`);
+}
 safety.post('/property-risks', async (req, res) => {
   const b = parse(riskBody.extend({ property_id: uuid, title: text(200).min(3), likelihood: z.coerce.number().int().min(1).max(5), impact: z.coerce.number().int().min(1).max(5) }), req.body);
   const { p, manage } = await propertyAccess(req.access, b.property_id, 'safety.manage');
@@ -209,6 +217,7 @@ safety.post('/property-risks', async (req, res) => {
     await q('insert into risk_assessments (risk_id, likelihood, impact, note, assessed_by) values ($1,$2,$3,$4,$5)', [row.id, b.likelihood, b.impact, 'Initial assessment', req.person.id], db);
     await audit(db, req.person.id, p.company_id, 'risk', row.id, 'create', { property_id: p.id, ref, score: b.likelihood * b.impact });
     if (row.owner_id && row.owner_id !== req.person.id) await notify(db, row.owner_id, p.company_id, `Risk for you: ${ref} ${b.title} at ${p.name}`, `/estates/risks/${row.id}`);
+    if (b.likelihood * b.impact >= HIGH) await highRisk(db, req.person.id, p, row);
     return row;
   });
   res.status(201).json(r);
@@ -234,6 +243,8 @@ safety.patch('/property-risks/:id', async (req, res) => {
   if (!keys.length) throw bad('Nothing to save.');
   await tx(async (db) => {
     await q(`update risks set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1`, [r.id, ...keys.map((k) => (f as any)[k])], db);
+    const before = r.likelihood * r.impact, after = (f.likelihood ?? r.likelihood) * (f.impact ?? r.impact);
+    if (rescored && before < HIGH && after >= HIGH) await highRisk(db, req.person.id, { id: r.property_id, company_id: r.company_id, name: r.property_name, manager_person_id: r.manager_person_id }, { ...r, ...f });
     if (rescored) await q('insert into risk_assessments (risk_id, likelihood, impact, note, assessed_by) values ($1,$2,$3,$4,$5)', [r.id, f.likelihood ?? r.likelihood, f.impact ?? r.impact, assessment_note, req.person.id], db);
     await audit(db, req.person.id, r.company_id, 'risk', r.id, 'update', Object.fromEntries(keys.map((k) => [k, { from: r[k] ?? null, to: (f as any)[k] }])));
   });

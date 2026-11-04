@@ -9,6 +9,7 @@ import { Button, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, Page
 import { uploadPhotos } from './Visits.tsx';
 import { NewAction, PersonSelect } from './Governance.tsx';
 import { Photo } from './Properties.tsx';
+import { CustomiseTiles, Insights, useTiles } from './Reports.tsx';
 
 const KIND: Record<string, string> = { weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', communal: 'Communal areas', fire: 'Fire safety', damp: 'Damp & mould', room: 'Room', health_safety: 'Health & safety' };
 const SEVERITY: Record<string, [string, string]> = { low: ['normal', 'Low'], medium: ['review', 'Medium'], high: ['high', 'High'], critical: ['urgent', 'Critical'] };
@@ -16,6 +17,8 @@ const ACTION_STATUS: Record<string, [string, string]> = { open: ['info', 'Open']
 export const riskBand = (s: number): [string, string] => (s >= 15 ? ['action', `High · ${s}`] : s >= 8 ? ['review', `Medium · ${s}`] : ['verified', `Low · ${s}`]);
 const SOURCE: Record<string, string> = { inspection: 'Inspection', risk: 'Risk', safety_check: 'Scheduled check' };
 
+const SF_TILES: Record<string, string> = { properties: 'Properties', failed: 'Failed inspections', risks: 'Open risks', actions: 'Outstanding actions', checks: 'Scheduled checks overdue', health: 'Average property health' };
+const healthTone = (n: number) => (n >= 80 ? 'verified' : n >= 60 ? 'review' : 'action');
 function Tile({ icon: I, value, label: text, sub, tone }: { icon: LucideIcon; value: React.ReactNode; label: string; sub?: string; tone?: string }) {
   return <li><div className={`rp-kpi ${tone ?? ''}`} style={{ cursor: 'default' }}><span className="rp-kpi-icon"><I size={20} aria-hidden="true" /></span><span className="rp-kpi-value">{value}</span><span className="rp-kpi-label">{text}</span>{sub && <span className="rp-kpi-sub">{sub}</span>}</div></li>;
 }
@@ -30,18 +33,22 @@ export function SafetyOverview() {
   const rows = (d.data ?? []).filter((p) => !text || `${p.name} ${p.ref} ${p.address_line1} ${p.postcode} ${p.agent}`.toLowerCase().includes(text.toLowerCase()));
   const sum = (k: string) => (d.data ?? []).reduce((n, p) => n + (p[k] ?? 0), 0);
   const today = londonToday();
+  const tiles = useTiles('safety.tiles', Object.keys(SF_TILES));
+  const scored = (d.data ?? []).filter((p) => p.health);
   return (
     <div className="rp">
       <div className="rp-head"><div><h2>Property safety</h2><p className="muted small">Every property. Figures come only from inspections, risks and actions recorded here.</p></div>
-        <div className="rp-head-actions">{hub.can('safety.manage') && <Button variant="secondary" onClick={() => setRisk(true)}>Add a risk</Button>}<Button onClick={() => setInspect(true)}><ClipboardCheck size={18} aria-hidden="true" />Start inspection</Button></div></div>
+        <div className="rp-head-actions"><CustomiseTiles tiles={tiles} labels={SF_TILES} />{hub.can('safety.manage') && <Button variant="secondary" onClick={() => setRisk(true)}>Add a risk</Button>}<Button onClick={() => setInspect(true)}><ClipboardCheck size={18} aria-hidden="true" />Start inspection</Button></div></div>
       {d.error ? <LoadError error={d.error} retry={d.reload} /> : !d.data ? <Skeleton lines={4} /> : <>
         <ul className="rp-kpis" aria-label="Safety figures">
-          <Tile icon={Building2} value={d.data.length} label="Properties" sub={`${d.data.filter((p) => !p.last_inspection).length} never inspected`} />
-          <Tile icon={ClipboardList} value={d.data.filter((p) => p.failed_30).length} label="Failed inspections" sub="properties, last 30 days" tone={d.data.some((p) => p.failed_30) ? 'warn' : ''} />
-          <Tile icon={ShieldAlert} value={sum('open_risks')} label="Open risks" sub={`${sum('high_risks')} scoring 15 or more`} tone={sum('high_risks') ? 'bad' : ''} />
-          <Tile icon={AlertTriangle} value={sum('open_actions')} label="Outstanding actions" sub="from inspections and risks" />
-          <Tile icon={ShieldCheck} value={d.data.filter((p) => p.next_due && p.next_due < today).length} label="Scheduled checks overdue" sub="properties" tone={d.data.some((p) => p.next_due && p.next_due < today) ? 'bad' : ''} />
+          {tiles.shown('properties') && <Tile icon={Building2} value={d.data.length} label="Properties" sub={`${d.data.filter((p) => !p.last_inspection).length} never inspected`} />}
+          {tiles.shown('failed') && <Tile icon={ClipboardList} value={d.data.filter((p) => p.failed_30).length} label="Failed inspections" sub="properties, last 30 days" tone={d.data.some((p) => p.failed_30) ? 'warn' : ''} />}
+          {tiles.shown('risks') && <Tile icon={ShieldAlert} value={sum('open_risks')} label="Open risks" sub={`${sum('high_risks')} scoring 15 or more`} tone={sum('high_risks') ? 'bad' : ''} />}
+          {tiles.shown('actions') && <Tile icon={AlertTriangle} value={sum('open_actions')} label="Outstanding actions" sub="from inspections and risks" />}
+          {tiles.shown('checks') && <Tile icon={ShieldCheck} value={d.data.filter((p) => p.next_due && p.next_due < today).length} label="Scheduled checks overdue" sub="properties" tone={d.data.some((p) => p.next_due && p.next_due < today) ? 'bad' : ''} />}
+          {tiles.shown('health') && <Tile icon={Building2} value={scored.length ? Math.round(scored.reduce((n, p) => n + p.health.score, 0) / scored.length) : '—'} label="Average property health" sub={`${scored.filter((p) => p.health.score < 60).length} below 60 · ${scored.filter((p) => p.health.missing.length).length} not inspected in 45 days · not compliance`} />}
         </ul>
+        <Insights />
         <div className="rp-toolbar"><label className="rp-search"><input type="search" placeholder="Search properties, postcodes, agents…" aria-label="Search properties" value={text} onChange={(e) => setText(e.target.value)} /></label></div>
         {rows.length === 0 ? <Empty>No properties match.</Empty> : <ul className="grid" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {rows.map((p) => <li key={p.id} className="card prop-card">
@@ -50,6 +57,8 @@ export function SafetyOverview() {
               <div className="row between"><h3 style={{ margin: 0 }}>{p.name}</h3><span className="badge co">{p.company_code}</span></div>
               <div className="muted small">{p.ref} · {p.address_line1}, {p.postcode}<br />{p.agent}</div>
               <dl className="sf-facts">
+                {p.health && <><dt>Health</dt><dd title={[...p.health.reasons.map((r: any) => `${r.label} (−${r.points})`), ...p.health.missing].join('\n') || 'No open problems recorded'}><Status s={healthTone(p.health.score)} text={`${p.health.score}/100`} /></dd>
+                  {(p.health.reasons.length > 0 || p.health.missing.length > 0) && <dd className="sf-why muted small">{[...p.health.reasons.map((r: any) => r.label), ...p.health.missing].join(' · ')}</dd>}</>}
                 <dt>Last inspection</dt><dd>{p.last_inspection ? fmtDate(p.last_inspection) : <span className="muted">None yet</span>}{p.failed_30 > 0 && <> <Status s="action" text="Failed" /></>}</dd>
                 <dt>Open risks</dt><dd>{p.open_risks}{p.high_risks > 0 && <> <Status s="action" text={`${p.high_risks} high`} /></>}</dd>
                 <dt>Next check due</dt><dd>{p.next_due ? <>{fmtDate(p.next_due)}{p.next_due < today && <> <Status s="action" text="Overdue" /></>}</> : <span className="muted">None scheduled</span>}</dd>

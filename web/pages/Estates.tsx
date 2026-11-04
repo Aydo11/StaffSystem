@@ -7,12 +7,13 @@ import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, L
 import { NewAction } from './Governance.tsx';
 import { REPAIR_STATUS, ReportRepair, Repairs } from './Repairs.tsx';
 import { InspectionsList, RisksAndActions, SafetyOverview } from './Safety.tsx';
+import { MonthlyReports, Scorecards } from './Reports.tsx';
 
 export { RepairPage, ReportRepair } from './Repairs.tsx';
 
 const SAFETY_STATE: Record<string, [string, string]> = { never_done: ['action', 'Never recorded'], failed: ['action', 'Failed'], overdue: ['action', 'Overdue'], due_soon: ['review', 'Due soon'], in_date: ['verified', 'In date'] };
 
-type Tab = 'repairs' | 'safety' | 'inspections' | 'risks' | 'schedule' | 'agents';
+type Tab = 'repairs' | 'safety' | 'inspections' | 'risks' | 'schedule' | 'scorecards' | 'reports' | 'agents';
 export function Estates() {
   const hub = useHub();
   const [params, setParams] = useSearchParams();
@@ -21,12 +22,14 @@ export function Estates() {
   return (
     <>
       <PageHead title="Repairs and property safety" intro="Repairs, safety schedules and managing agents. Record property matters only — never resident names or details." />
-      <Tabs label="Sections" tabs={[['repairs', 'Repairs'], ['safety', 'Property safety'], ['inspections', 'Inspections'], ['risks', 'Risks & actions'], ['schedule', 'Safety schedule'], ...(showAgents ? [['agents', 'Managing agents'] as [Tab, string]] : [])]} value={tab} onChange={(t) => setParams({ tab: t })} />
+      <Tabs label="Sections" tabs={[['repairs', 'Repairs'], ['safety', 'Property safety'], ['inspections', 'Inspections'], ['risks', 'Risks & actions'], ['schedule', 'Safety schedule'], ['scorecards', 'Agent scorecards'], ['reports', 'Reports'], ...(showAgents ? [['agents', 'Managing agents'] as [Tab, string]] : [])]} value={tab} onChange={(t) => setParams({ tab: t })} />
       {tab === 'repairs' && <Repairs />}
       {tab === 'safety' && <SafetyOverview />}
       {tab === 'inspections' && <InspectionsList />}
       {tab === 'risks' && <RisksAndActions />}
       {tab === 'schedule' && <Safety property={params.get('property')} />}
+      {tab === 'scorecards' && <Scorecards />}
+      {tab === 'reports' && <MonthlyReports />}
       {tab === 'agents' && showAgents && <Agents />}
     </>
   );
@@ -184,6 +187,7 @@ export function AgentPortal() {
       <section className="card" aria-labelledby="pr-h"><h2 id="pr-h">Open repairs</h2>
         {d.data.repairs.length === 0 ? <Empty>No open repairs.</Empty> : <ul className="list">{d.data.repairs.map((r: any) => <li key={r.id}><span><Link to={`/estates/repairs/${r.id}`}>{r.title}</Link><br /><span className="small muted">{r.property_name} · due {fmtDate(r.due_on)}{r.assigned_to_you && ' · assigned to you'}</span></span><Status s={REPAIR_STATUS[r.status][0]} text={REPAIR_STATUS[r.status][1]} /></li>)}</ul>}
       </section>
+      <section className="card"><Scorecards /></section>
       <section className="card" aria-labelledby="ps-h"><h2 id="ps-h">Safety schedule</h2><SafetyTable rows={d.data.safety} onCheck={setCheck} /></section>
       <section className="card" aria-labelledby="pp-h"><h2 id="pp-h">Properties</h2><ul className="list">{d.data.properties.map((p: any) => <li key={p.id}><span>{p.name} ({p.ref})<br /><span className="small muted">{p.address_line1}, {p.postcode}</span></span><span className="badge co">{p.company_code}</span></li>)}</ul></section>
       {reporting && <ReportRepair properties={d.data.properties} onClose={() => setReporting(false)} onSaved={() => { setReporting(false); d.reload(); }} />}

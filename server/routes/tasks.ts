@@ -9,6 +9,7 @@ import { caseRoleForFile } from './cases.ts';
 import { complaintRoleForFile } from './complaints.ts';
 import { loadRepair } from './estates.ts';
 import { canReadStory, upload } from './people.ts';
+import { canMark } from './training.ts';
 
 export const tasks = Router();
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
@@ -173,6 +174,9 @@ tasks.get('/files/:id', async (req, res) => {
     const r = await one('select person_id from training_records where id = $1', [f.entity_id]);
     const cos = r ? (await q<{ company_id: string }>('select distinct company_id from appointments where person_id = $1', [r.person_id])).map((x) => x.company_id) : [];
     if (!r || (r.person_id !== a.personId && !cos.some((c) => can(a, 'training.manage', c)))) throw notFound();
+  } else if (f.entity_type === 'quiz_attempt') {
+    const at = await one('select qa.person_id, c.company_id as course_company_id from quiz_attempts qa join courses c on c.id = qa.course_id where qa.id = $1', [f.entity_id]);
+    if (!at || (at.person_id !== a.personId && !(await canMark(a, at)))) throw notFound();
   } else if (f.entity_type === 'case') {
     if (!(await caseRoleForFile(a, f.entity_id))) throw notFound();
   } else if (f.entity_type === 'finance_txn') {

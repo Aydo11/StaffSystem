@@ -30,7 +30,8 @@ import { Assistant } from './pages/Assistant.tsx';
 import { InstallPage } from './pages/DataTools.tsx';
 import { JobDescriptionPage } from './pages/Development.tsx';
 import { LeavePage } from './pages/Leave.tsx';
-import { CourseEditor, CoursePlayer, Training } from './pages/Training.tsx';
+import { CourseEditor, Training } from './pages/Training.tsx';
+import { CourseDetail, LessonPlayer } from './pages/Learning.tsx';
 import { Properties, PropertyPage } from './pages/Properties.tsx';
 import { TaskPage, Tasks } from './pages/Tasks.tsx';
 import { Timesheets, Workload } from './pages/Timesheets.tsx';
@@ -92,7 +93,7 @@ const NAV: { to: string; label: string; icon: string; group: string; show?: (h: 
   { to: '/activity', label: 'Calendar & activity', icon: 'calendar', group: 'Time & leave' },
   { to: '/timesheets', label: 'Timesheets', icon: 'clock', group: 'Time & leave' },
   { to: '/leave', label: 'Leave', icon: 'calendar', group: 'Time & leave' },
-  { to: '/training', label: 'Training', icon: 'check', group: 'Learning & policies' },
+  { to: '/training', label: 'Training & coaching', icon: 'check', group: 'Learning & policies' },
   { to: '/policies', label: 'Policies & handbooks', icon: 'file', group: 'Learning & policies' },
   { to: '/governance', label: 'Governance', icon: 'shield', group: 'Organisation', show: (h) => h.can('governance.view') },
   { to: '/complaints', label: 'Complaints', icon: 'inbox', group: 'Organisation' }, // everyone: staff see the complaints they logged or help with
@@ -211,7 +212,8 @@ function Shell() {
             <Route path="/handover" element={<Handover />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/training" element={<Training />} />
-            <Route path="/training/courses/:id" element={<CoursePlayer />} />
+            <Route path="/training/courses/:id" element={<CourseDetail />} />
+            <Route path="/training/courses/:id/learn" element={<LessonPlayer />} />
             <Route path="/training/courses/:id/edit" element={<CourseEditor />} />
             <Route path="/policies" element={<Policies />} />
             <Route path="/policies/:id" element={<PolicyPage />} />

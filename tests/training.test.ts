@@ -76,6 +76,10 @@ describe('11 · quizzes', () => {
     expect((await morgan.post(`/api/courses/${c.id}/publish`)).status).toBe(200);
     expect((await sam.post(`/api/courses/${c.id}/complete`).send({ declaration: true })).status).toBe(400);
     await sam.put(`/api/courses/${c.id}/progress`).send({ lesson_index: 1 });
+    expect((await sam.post(`/api/courses/${c.id}/complete`).send({ declaration: true })).status).toBe(400); // reaching the last lesson is not enough
+    for (const i of [0, 1]) await sam.put(`/api/courses/${c.id}/lessons/${i}`).send({ action: 'open' });
+    await pool.query(`update lesson_progress set opened_at = now() - interval '1 minute' where course_id = $1`, [c.id]);
+    for (const i of [0, 1]) expect((await sam.put(`/api/courses/${c.id}/lessons/${i}`).send({ action: 'complete' })).status).toBe(200);
     expect((await sam.post(`/api/courses/${c.id}/complete`).send({ declaration: true })).status).toBe(201);
   });
 });

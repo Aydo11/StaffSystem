@@ -23,6 +23,7 @@ async function loadCourse(a: Access, id: string, db: Db = pool) {
 // Learners never receive which answers are correct.
 const publicQuestions = (qs: any[]) => qs.map(({ options, ...rest }) => ({ ...rest, options: (options ?? []).map(({ correct: _c, ...o }: any) => o) }));
 
+export const CATEGORIES = ['fundamentals', 'safeguarding', 'health_safety', 'practice', 'leadership', 'other'] as const;
 const httpsUrl = z.url({ protocol: /^https$/ });
 const lessonSchema = z.object({
   title: text(160).min(1), body: text(20000).default(''),
@@ -30,6 +31,11 @@ const lessonSchema = z.object({
   video_url: httpsUrl.nullable().optional(), transcript: text(20000).nullable().optional(),
   resources: z.array(z.object({ label: text(120).min(1), url: httpsUrl })).max(20).optional(),
   scenario: text(4000).nullable().optional(),
+  module: text(120).nullable().optional(),                       // lessons with the same module are grouped in the curriculum
+  key_points: z.array(text(300).min(1)).max(12).optional(),
+  // Knowledge checks are for practice: the learner sees the feedback straight away and nothing is scored.
+  checks: z.array(z.object({ prompt: text(1000).min(3), options: z.array(z.object({ text: text(400).min(1), correct: z.boolean(), feedback: text(1000).optional() })).min(2).max(6) })
+    .refine((c) => c.options.some((o) => o.correct), 'Mark at least one good answer')).max(6).optional(),
 }).refine((l) => !l.image_file_id || !!l.image_alt, { message: 'Every image needs a text description (alternative text)', path: ['image_alt'] })
   .refine((l) => !l.video_url || !!l.transcript, { message: 'Every video needs a transcript or captions text', path: ['transcript'] });
 const questionSchema = z.object({
@@ -46,13 +52,29 @@ const courseFields = z.object({
     .refine((qs) => new Set(qs.map((x) => x.id)).size === qs.length, 'Question ids must be unique'),
   draw_count: z.coerce.number().int().min(1).nullable(), pass_mark: z.coerce.number().int().min(1).max(100).nullable(),
   attempt_limit: z.coerce.number().int().min(1).max(20).nullable(), time_limit_minutes: z.coerce.number().int().min(1).max(240).nullable(),
+  category: z.enum(CATEGORIES).nullable(), difficulty: z.enum(['foundation', 'intermediate', 'advanced']).nullable(),
+  duration_minutes: z.coerce.number().int().min(1).max(1200).nullable(), audience: text(1000).nullable(),
+  roles: z.array(text(40)).max(30), objectives: z.array(text(300).min(1)).max(20),
+  source_refs: z.array(z.object({ label: text(300).min(1), url: httpsUrl.nullable().optional() })).max(40),
+  certificate_eligible: z.boolean(), content_owner: text(200).nullable(), review_on: isoDate.nullable(),
 }).partial();
+const JSON_FIELDS = ['lessons', 'questions', 'objectives', 'source_refs'];
+// Minimum time on a lesson before it can be marked done: a quarter of its reading time at 250 words a minute, 5 s to 2 min.
+// shortcut: counts words only, so a lesson that is mostly a video gets the 5 s floor; add the video length when videos are hosted here.
+export const minSeconds = (l: any) => {
+  const words = [l.body, l.scenario, ...(l.key_points ?? []), ...(l.checks ?? []).map((c: any) => c.prompt)].join(' ').split(/\s+/).filter(Boolean).length;
+  return Math.min(120, Math.max(5, Math.round(words * 0.06)));
+};
 
 training.get('/courses', async (req, res) => {
   const a = req.access;
   const rows = await q(`
     select c.id, c.root_id, c.version, c.company_id, co.code as company_code, co.name as company_name, c.title, c.summary, c.status, c.pass_mark, c.time_limit_minutes, c.attempt_limit,
            jsonb_array_length(c.lessons) as lesson_count, jsonb_array_length(c.questions) as question_count, c.published_at,
+           c.category, c.difficulty, c.duration_minutes, c.roles, c.certificate_eligible, c.review_status,
+           (select count(distinct coalesce(l->>'module', ''))::int from jsonb_array_elements(c.lessons) l) as module_count,
+           (select count(*)::int from lesson_progress lp where lp.course_id = c.id and lp.person_id = $1 and lp.completed_at is not null) as my_lessons_done,
+           exists (select 1 from training_matrix(${LONDON_TODAY}) m where m.person_id = $1 and m.course_root_id = c.root_id) as mandatory,
            (select lesson_index from course_progress p where p.course_id = c.id and p.person_id = $1) as my_lesson,
            (select max(completed_on) from training_records r where r.course_root_id = c.root_id and r.person_id = $1) as my_completed_on
       from courses c left join companies co on co.id = c.company_id
@@ -65,9 +87,15 @@ training.get('/courses', async (req, res) => {
 training.get('/courses/:id', async (req, res) => {
   const { c, manage } = await loadCourse(req.access, idParam(req.params.id));
   const progress = await one('select lesson_index from course_progress where person_id = $1 and course_id = $2', [req.person.id, c.id]);
+  const lessons = await q('select lesson_index, seconds, completed_at from lesson_progress where person_id = $1 and course_id = $2 order by lesson_index', [req.person.id, c.id]);
+  const notes = await q('select id, lesson_index, body, updated_at from learning_notes where person_id = $1 and course_root_id = $2 order by lesson_index, created_at', [req.person.id, c.root_id]);
+  const bookmarks = (await q<{ lesson_index: number }>('select lesson_index from learning_bookmarks where person_id = $1 and course_root_id = $2', [req.person.id, c.root_id])).map((b) => b.lesson_index);
+  const completed = await one(`select max(completed_on) as on from training_records where person_id = $1 and course_root_id = $2 and (source = 'course' or verified_at is not null)`, [req.person.id, c.root_id]);
   const attempts = await q('select id, status, score, max_score, passed, started_at, submitted_at from quiz_attempts where person_id = $1 and course_id = $2 order by started_at desc', [req.person.id, c.id]);
   const versions = await q('select id, version, status, published_at from courses where root_id = $1 order by version desc', [c.root_id]);
-  res.json({ course: manage ? c : { ...c, questions: publicQuestions(c.questions) }, progress: progress?.lesson_index ?? 0, attempts, versions, can: { manage, edit: manage && c.status === 'draft' } });
+  res.json({ course: manage ? c : { ...c, questions: publicQuestions(c.questions) }, progress: progress?.lesson_index ?? 0, attempts, versions,
+    lessons, notes, bookmarks, completed_on: completed?.on ?? null, min_seconds: c.lessons.map(minSeconds),
+    can: { manage, edit: manage && c.status === 'draft' } });
 });
 
 training.post('/courses', async (req, res) => {
@@ -86,7 +114,7 @@ training.patch('/courses/:id', async (req, res) => {
   const keys = Object.keys(b);
   if (!keys.length) throw bad('Nothing to save.');
   const row = await one(`update courses set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1 returning *`,
-    [c.id, ...keys.map((k) => (['lessons', 'questions'].includes(k) ? JSON.stringify((b as any)[k]) : (b as any)[k]))]);
+    [c.id, ...keys.map((k) => (JSON_FIELDS.includes(k) ? JSON.stringify((b as any)[k]) : (b as any)[k]))]);
   res.json(row);
 });
 
@@ -102,6 +130,7 @@ training.post('/courses/:id/publish', async (req, res) => {
   const { c, manage } = await loadCourse(req.access, idParam(req.params.id));
   if (!manage || c.status !== 'draft') throw forbidden();
   if (!c.lessons.length) throw bad('Add at least one lesson before publishing.');
+  if (c.review_status === 'pending_review') throw conflict('This content is waiting for a specialist review. Approve the content before publishing.');
   if (c.questions.length && !c.pass_mark) throw bad('Set a pass mark for the quiz.', { fields: { pass_mark: 'Required' } });
   if (c.draw_count && c.draw_count > c.questions.length) throw bad('The number of questions to draw is larger than the question bank.', { fields: { draw_count: 'Too many' } });
   // Validate the stored content once more with the same rules as editing.
@@ -114,16 +143,30 @@ training.post('/courses/:id/publish', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Content marked pending review (for example legal or safeguarding detail) is approved by someone who manages training.
+training.post('/courses/:id/approve-content', async (req, res) => {
+  const { c, manage } = await loadCourse(req.access, idParam(req.params.id));
+  if (!manage) throw forbidden();
+  const { note } = parse(z.object({ note: text(1000).min(5, 'Say who reviewed the content and what was checked') }), req.body);
+  await tx(async (db) => {
+    await q(`update courses set review_status = 'approved', updated_at = now() where id = $1`, [c.id], db);
+    await audit(db, req.person.id, c.company_id, 'course', c.id, 'approve_content', { version: c.version, note });
+  });
+  res.json({ ok: true });
+});
 training.post('/courses/:id/new-version', async (req, res) => {
   const { c, manage } = await loadCourse(req.access, idParam(req.params.id));
   if (!manage || c.status === 'draft') throw forbidden();
   const draft = await one('select id from courses where root_id = $1 and status = $2', [c.root_id, 'draft']);
   if (draft) return res.json(draft); // one draft at a time: reopen it
   const v = (await one<{ v: number }>('select max(version) + 1 v from courses where root_id = $1', [c.root_id]))!.v;
-  const row = await one(`insert into courses (root_id, version, company_id, title, summary, lessons, questions, draw_count, pass_mark, attempt_limit, time_limit_minutes, created_by)
-                         select root_id, $2, company_id, title, summary, lessons, questions, draw_count, pass_mark, attempt_limit, time_limit_minutes, $3 from courses where id = $1 returning id`, [c.id, v, req.person.id]);
+  // A new version starts approved only if the content it copies was approved; it is re-checked before publishing either way.
+  const row = await one(`insert into courses (root_id, version, company_id, title, summary, lessons, questions, draw_count, pass_mark, attempt_limit, time_limit_minutes, created_by, ${COPY})
+                         select root_id, $2, company_id, title, summary, lessons, questions, draw_count, pass_mark, attempt_limit, time_limit_minutes, $3, ${COPY} from courses where id = $1 returning id`, [c.id, v, req.person.id]);
   res.status(201).json(row);
 });
+
+const COPY = 'category, difficulty, duration_minutes, audience, roles, objectives, source_refs, certificate_eligible, content_owner, review_on, review_status';
 
 // ── Learning: progress, declaration, quiz attempts ──
 training.put('/courses/:id/progress', async (req, res) => {
@@ -141,10 +184,104 @@ training.post('/courses/:id/complete', async (req, res) => {
   const { c } = await loadCourse(req.access, idParam(req.params.id));
   parse(z.object({ declaration: z.literal(true, { message: 'Confirm that you have read and understood the course' }) }), req.body);
   if (c.status !== 'published' || c.questions.length) throw bad('This course is completed by passing its quiz.');
-  const p = await one('select lesson_index from course_progress where person_id = $1 and course_id = $2', [req.person.id, c.id]);
-  if (!p || p.lesson_index < c.lessons.length - 1) throw bad('Work through every lesson before completing the course.');
+  const done = (await one<{ n: number }>('select count(*)::int n from lesson_progress where person_id = $1 and course_id = $2 and completed_at is not null', [req.person.id, c.id]))!.n;
+  if (done < c.lessons.length) throw bad('Work through and complete every lesson before completing the course.');
   const r = await one(`insert into training_records (person_id, course_root_id, course_id, title, source, completed_on, created_by) values ($1,$2,$3,$4,'course', ${LONDON_TODAY}, $1) returning *`, [req.person.id, c.root_id, c.id, c.title]);
   res.status(201).json(r);
+});
+
+// Opening, time spent and completing one lesson. Time counts only while the lesson is open and visible (the page sends a
+// beat every 30 s; beats closer than 25 s apart are ignored, and each adds at most 30 s).
+training.put('/courses/:id/lessons/:index', async (req, res) => {
+  const { c } = await loadCourse(req.access, idParam(req.params.id));
+  if (c.status !== 'published') throw bad('Only published courses record progress.');
+  const i = parse(z.coerce.number().int().min(0).max(c.lessons.length - 1), req.params.index);
+  const { action } = parse(z.object({ action: z.enum(['open', 'beat', 'complete']) }), req.body);
+  const out = await tx(async (db) => {
+    await q(`insert into lesson_progress (person_id, course_id, lesson_index) values ($1,$2,$3) on conflict do nothing`, [req.person.id, c.id, i], db);
+    if (action === 'open') {
+      await q(`insert into course_progress (person_id, course_id, lesson_index, last_opened_at) values ($1,$2,$3, now())
+               on conflict (person_id, course_id) do update set lesson_index = excluded.lesson_index, last_opened_at = now(), updated_at = now()`, [req.person.id, c.id, i], db);
+      await q(`update lesson_progress set last_beat_at = now() where person_id = $1 and course_id = $2 and lesson_index = $3`, [req.person.id, c.id, i], db);
+    }
+    if (action === 'beat')
+      await q(`update lesson_progress set seconds = seconds + least(30, extract(epoch from now() - last_beat_at)::int), last_beat_at = now()
+                where person_id = $1 and course_id = $2 and lesson_index = $3 and last_beat_at < now() - interval '25 seconds'`, [req.person.id, c.id, i], db);
+    const lp = (await one(`select * from lesson_progress where person_id = $1 and course_id = $2 and lesson_index = $3 for update`, [req.person.id, c.id, i], db))!;
+    if (action === 'complete' && !lp.completed_at) {
+      const need = minSeconds(c.lessons[i]);
+      const spent = Math.max(lp.seconds, Math.floor((Date.now() - Date.parse(lp.opened_at)) / 1000));
+      if (spent < need) throw conflict(`Take a little longer with this lesson before marking it done (about ${need - spent} more seconds).`);
+      await q(`update lesson_progress set completed_at = now(), seconds = greatest(seconds, $4) where person_id = $1 and course_id = $2 and lesson_index = $3`, [req.person.id, c.id, i, Math.min(spent, 3600)], db);
+    }
+    return one(`select lesson_index, seconds, completed_at from lesson_progress where person_id = $1 and course_id = $2 and lesson_index = $3`, [req.person.id, c.id, i], db);
+  });
+  res.json(out);
+});
+
+// Personal notes and bookmarks: only ever seen by the learner.
+training.post('/courses/:id/notes', async (req, res) => {
+  const { c } = await loadCourse(req.access, idParam(req.params.id));
+  const b = parse(z.object({ lesson_index: z.coerce.number().int().min(0).max(Math.max(0, c.lessons.length - 1)), body: text(4000).min(1) }), req.body);
+  res.status(201).json(await one('insert into learning_notes (person_id, course_root_id, lesson_index, body) values ($1,$2,$3,$4) returning id, lesson_index, body, updated_at', [req.person.id, c.root_id, b.lesson_index, b.body]));
+});
+training.delete('/learning-notes/:id', async (req, res) => {
+  const r = await one('delete from learning_notes where id = $1 and person_id = $2 returning id', [idParam(req.params.id), req.person.id]);
+  if (!r) throw notFound();
+  res.json({ ok: true });
+});
+training.put('/courses/:id/bookmarks/:index', async (req, res) => {
+  const { c } = await loadCourse(req.access, idParam(req.params.id));
+  const i = parse(z.coerce.number().int().min(0).max(Math.max(0, c.lessons.length - 1)), req.params.index);
+  const { on } = parse(z.object({ on: z.boolean() }), req.body);
+  if (on) await q('insert into learning_bookmarks (person_id, course_root_id, lesson_index) values ($1,$2,$3) on conflict do nothing', [req.person.id, c.root_id, i]);
+  else await q('delete from learning_bookmarks where person_id = $1 and course_root_id = $2 and lesson_index = $3', [req.person.id, c.root_id, i]);
+  res.json({ on });
+});
+
+// The learner's own dashboard. Every figure is from their records; nothing is estimated except time left in a course.
+training.get('/learning/me', async (req, res) => {
+  const me = req.person.id;
+  const cs = [...req.access.perms.keys()];
+  const matrix = await q(`select m.*, co.code as company_code,
+        (select c.id from courses c where c.root_id = m.course_root_id and c.status = 'published' order by version desc limit 1) as course_id,
+        (select c.title from courses c where c.root_id = m.course_root_id and c.status = 'published' order by version desc limit 1) as course_title
+      from training_matrix(${LONDON_TODAY}) m join companies co on co.id = m.company_id where m.person_id = $1 and m.company_id = any($2::uuid[]) order by m.due_on`, [me, cs]);
+  const k = await one(`select
+        (select count(distinct course_root_id) from training_records where person_id = $1 and (source = 'course' or verified_at is not null))::int as completed,
+        (select coalesce(sum(seconds), 0) from lesson_progress where person_id = $1)::int as seconds,
+        (select count(*) from training_records where person_id = $1 and certificate_file_id is not null and verified_at is not null)::int as certificates,
+        (select count(*) from quiz_attempts where person_id = $1 and status in ('in_progress','awaiting_marking'))::int as assessments,
+        (select count(*) from training_records where person_id = $1 and source = 'external' and verified_at is null)::int as awaiting_verification,
+        (select min(s.next_due) from supervisions s where s.person_id = $1 and s.status = 'completed'
+           and s.held_on = (select max(held_on) from supervisions x where x.person_id = s.person_id and x.company_id = s.company_id and x.status = 'completed')) as next_supervision`, [me]);
+  // In progress: a lesson opened in the latest published version and no completion since it was first opened.
+  const continuing = await q(`select c.id, c.root_id, c.title, c.category, c.duration_minutes, jsonb_array_length(c.lessons) as lessons, cp.last_opened_at,
+        (select count(*)::int from lesson_progress lp where lp.course_id = c.id and lp.person_id = $1 and lp.completed_at is not null) as done,
+        (select jsonb_agg(coalesce(l->>'module', '')) from jsonb_array_elements(c.lessons) l) as lesson_modules,
+        (select array_agg(lp.lesson_index) from lesson_progress lp where lp.course_id = c.id and lp.person_id = $1 and lp.completed_at is not null) as done_idx
+      from course_progress cp join courses c on c.id = cp.course_id
+     where cp.person_id = $1 and c.status = 'published' and cp.last_opened_at is not null
+       and not exists (select 1 from training_records r where r.person_id = $1 and r.course_root_id = c.root_id
+                         and r.created_at >= (select min(opened_at) from lesson_progress lp where lp.course_id = c.id and lp.person_id = $1))
+     order by cp.last_opened_at desc limit 12`, [me]);
+  const roles = (await q<{ k: string }>(`select distinct job_role_key k from appointments where person_id = $1 and status = 'active' and job_role_key is not null`, [me])).map((r) => r.k);
+  const recommended = await q(`select c.id, c.root_id, c.title, c.summary, c.category, c.difficulty, c.duration_minutes, jsonb_array_length(c.lessons) as lessons,
+        exists (select 1 from training_matrix(${LONDON_TODAY}) m where m.person_id = $1 and m.course_root_id = c.root_id and m.status <> 'current') as required
+      from courses c
+     where c.status = 'published' and (c.company_id is null or c.company_id = any($2::uuid[]))
+       and not exists (select 1 from training_records r where r.person_id = $1 and r.course_root_id = c.root_id)
+       and not exists (select 1 from course_progress cp where cp.person_id = $1 and cp.course_id = c.id and cp.last_opened_at is not null)
+       and (c.roles && $3::text[] or exists (select 1 from training_matrix(${LONDON_TODAY}) m where m.person_id = $1 and m.course_root_id = c.root_id))
+     order by required desc, c.title limit 8`, [me, cs, roles]);
+  res.json({ matrix, kpis: { ...k, assigned: matrix.length, mandatory_done: matrix.filter((m) => ['current', 'expiring'].includes(m.status)).length,
+    renewal: matrix.filter((m) => m.completed_on && ['expiring', 'overdue'].includes(m.status)).length, in_progress: continuing.length },
+    continuing: continuing.map(({ lesson_modules, done_idx, ...c }) => {
+      const mods = [...new Set<string>(lesson_modules ?? [])];
+      const done = new Set<number>(done_idx ?? []);
+      // A module is done when every lesson in it is done.
+      return { ...c, modules: mods.length, modules_done: mods.filter((m) => (lesson_modules as string[]).every((x, i) => x !== m || done.has(i))).length };
+    }), recommended, roles });
 });
 
 function drawQuestions(c: any) {

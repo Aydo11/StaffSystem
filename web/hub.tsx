@@ -9,6 +9,7 @@ export type Me = {
   unread: number;
   unreadMessages: number;
   agents: { id: string; name: string; company_name: string; company_code: string }[];
+  team: Record<string, string[]>; // companyId → people assigned to me to manage
 };
 
 export type Hub = {
@@ -17,9 +18,13 @@ export type Hub = {
   company: string; // 'all' or a company id
   setCompany: (c: string) => void;
   can: (perm: string, companyId?: string | null) => boolean; // with no company: in the selected company, or any company in combined view
+  canFor: (perm: string, companyId: string | null | undefined, personId: string | null | undefined) => boolean; // also true for staff assigned to me
+  hasTeam: boolean;
   co: (id?: string | null) => Company | undefined;
   q: (extra?: Record<string, string | undefined | null>) => string; // query string including the selected company
 };
+// Mirrors TEAM_PERMS in server/perm.ts: what managing an assigned person allows.
+const TEAM_PERMS = ['visits.view_all', 'visits.approve', 'timesheets.view_all', 'timesheets.approve', 'leave.approve', 'tasks.view_all'];
 export const HubCtx = createContext<Hub>(null as any);
 export const useHub = () => useContext(HubCtx);
 
@@ -36,7 +41,10 @@ export function makeHub(me: Me, company: string, setCompany: (c: string) => void
     const s = p.toString();
     return s ? `?${s}` : '';
   };
-  return { me, reloadMe, company, setCompany, can, co, q };
+  const team = me.team ?? {};
+  const canFor = (perm: string, companyId: string | null | undefined, personId: string | null | undefined) =>
+    can(perm, companyId) || (TEAM_PERMS.includes(perm) && !!companyId && !!personId && !!team[companyId]?.includes(personId));
+  return { me, reloadMe, company, setCompany, can, canFor, hasTeam: Object.values(team).some((x) => x.length > 0), co, q };
 }
 // Admin Centre is shown to anyone holding at least one administrative permission.
 export const ADMIN_PERMS = ['company.manage', 'access.manage', 'audit.view', 'staff.create', 'properties.manage', 'appointments.manage', 'training.manage', 'policies.manage', 'performance.manage', 'governance.manage', 'agents.manage', 'finance.manage', 'messaging.configure', 'ai.configure', 'jobs.manage'];

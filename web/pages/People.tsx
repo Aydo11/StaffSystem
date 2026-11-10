@@ -194,8 +194,7 @@ function ProfileTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: () => 
     setPropose(false); toast('Change proposed. HR will verify it.'); reload();
   });
   const decide = useSubmit(async (rid: string, approve: boolean) => { await post(`/change-requests/${rid}/decide`, { approve }); toast(approve ? 'Change applied.' : 'Change rejected.'); reload(); });
-  const addQual = useSubmit(async () => { await post(`/people/${p.id}/qualifications`, { title: f.title, issuer: f.issuer || null, awarded_on: f.awarded_on || null }); setQual(false); toast('Qualification added. It will show as unverified until checked.'); reload(); });
-  const verify = useSubmit(async (qid: string) => { await post(`/qualifications/${qid}/verify`); toast('Qualification verified.'); reload(); });
+  const addQual = useSubmit(async () => { await post(`/people/${p.id}/qualifications`, { title: f.title, issuer: f.issuer || null, awarded_on: f.awarded_on || null }); setQual(false); toast('Qualification added.'); reload(); });
   const removePhoto = useSubmit(async () => { await api('DELETE', `/people/${p.id}/photo`); toast('Photo removed.'); reload(); if (isMe) reloadMe(); });
   const pending = changeRequests.filter((r: any) => r.status === 'pending');
 
@@ -223,10 +222,9 @@ function ProfileTab({ d, isMe, reload }: { d: any; isMe: boolean; reload: () => 
       <section className="card" aria-labelledby="q-h">
         <div className="row between"><h2 id="q-h">Qualifications and certificates</h2>{(isMe || can.edit) && <Button variant="secondary" onClick={() => { setF({ title: '', issuer: '', awarded_on: '' }); setQual(true); }}>Add</Button>}</div>
         {qualifications.length === 0 ? <Empty>None recorded.</Empty> : <ul className="list">{qualifications.map((q: any) => (
-          <li key={q.id}><span><strong>{q.title}</strong><br /><span className="muted small">{q.issuer ?? 'Issuer not given'} · {fmtDate(q.awarded_on)}</span></span>
-            {q.verified_at ? <Status s="verified" text={`Verified by ${q.verified_by_name}`} /> : can.verify ? <Button variant="secondary" busy={verify.busy} onClick={() => verify.run(q.id)}>Verify</Button> : <Status s="awaiting_verification" />}</li>
+          <li key={q.id}><span><strong>{q.title}</strong><br /><span className="muted small">{q.issuer ?? 'Issuer not given'} · {fmtDate(q.awarded_on)}</span></span></li>
         ))}</ul>}
-        <ErrorSummary error={verify.error ?? decide.error} />
+        <ErrorSummary error={decide.error} />
       </section>
       {d.documents && <DocumentsCard personId={p.id} docs={d.documents} isMe={isMe} canManage={can.edit} reload={reload} />}
       <Dialog open={edit} onClose={() => setEdit(false)} title="Edit professional profile" footer={<Button busy={save.busy} onClick={() => save.run()}>Save Changes</Button>}>
@@ -564,7 +562,7 @@ export function Resume() {
         {p.professional_summary && <><h3 style={{ marginTop: 24 }}>Summary</h3><p>{p.professional_summary}</p></>}
         <h3 style={{ marginTop: 24 }}>Roles</h3>
         <ul className="list">{appointments.map((a: any, i: number) => <li key={i}><span><CompanyBadge code={a.company_code} name={a.company_name} /> <strong>{a.job_title}</strong>, {a.company_name}<br /><span className="muted small">{label(a.relationship)} · {fmtDate(a.start_date)} – {a.end_date ? fmtDate(a.end_date) : 'present'}</span></span></li>)}</ul>
-        {qualifications.length > 0 && <><h3 style={{ marginTop: 24 }}>Qualifications</h3><ul className="list">{qualifications.map((q: any, i: number) => <li key={i}><span>{q.title}{q.issuer && `, ${q.issuer}`} ({fmtDate(q.awarded_on)})</span>{q.verified ? <Status s="verified" /> : <Status s="awaiting_verification" text="Not yet verified" />}</li>)}</ul></>}
+        {qualifications.length > 0 && <><h3 style={{ marginTop: 24 }}>Qualifications</h3><ul className="list">{qualifications.map((q: any, i: number) => <li key={i}><span>{q.title}{q.issuer && `, ${q.issuer}`} ({fmtDate(q.awarded_on)})</span></li>)}</ul></>}
         {(p.skills.length > 0 || p.languages.length > 0) && <><h3 style={{ marginTop: 24 }}>Skills and languages</h3><p>{[...p.skills, ...p.languages.map((l: string) => `${l} (language)`)].join(' · ')}</p></>}
         {p.development_goals && <><h3 style={{ marginTop: 24 }}>Development goals</h3><p>{p.development_goals}</p></>}
         <p className="small muted" style={{ marginTop: 24 }}>Generated from the Valor &amp; Wellbeing Hub on {fmtDate(londonToday())}.</p>

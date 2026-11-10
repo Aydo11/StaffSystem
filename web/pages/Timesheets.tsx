@@ -10,7 +10,7 @@ type Tab = 'mine' | 'time' | 'history' | 'review';
 export function Timesheets() {
   const hub = useHub();
   const [params, setParams] = useSearchParams();
-  const approver = hub.can('timesheets.approve') || hub.can('visits.approve');
+  const approver = hub.can('timesheets.approve') || hub.can('visits.approve') || hub.hasTeam;
   const tab = (params.get('tab') as Tab) ?? (params.get('log') ? 'time' : 'mine');
   const tabs: [Tab, string][] = [['mine', 'My timesheet'], ['time', 'Other working time'], ['history', 'Submitted'], ...(approver ? [['review', 'Review'] as [Tab, string]] : [])];
   return (
@@ -132,8 +132,8 @@ function Review() {
   const [note, setNote] = useState('');
   const decideTs = useSubmit(async (id: string, approve: boolean) => { await post(`/timesheets/${id}/decide`, { approve, note: note || undefined }); setRet(null); setNote(''); toast(approve ? 'Timesheet approved.' : 'Timesheet returned.'); ts.reload(); });
   const decideTe = useSubmit(async (id: string, approve: boolean) => { await post(`/time-entries/${id}/decide`, { approve }); toast(approve ? 'Time approved.' : 'Time not approved.'); te.reload(); });
-  const pendingTs = (ts.data ?? []).filter((t) => t.status === 'submitted' && t.person_id !== hub.me.person.id && hub.can('timesheets.approve', t.company_id));
-  const pendingTe = (te.data ?? []).filter((t) => t.status === 'submitted' && t.person_id !== hub.me.person.id && hub.can('visits.approve', t.company_id));
+  const pendingTs = (ts.data ?? []).filter((t) => t.status === 'submitted' && t.person_id !== hub.me.person.id && hub.canFor('timesheets.approve', t.company_id, t.person_id));
+  const pendingTe = (te.data ?? []).filter((t) => t.status === 'submitted' && t.person_id !== hub.me.person.id && hub.canFor('visits.approve', t.company_id, t.person_id));
   return (
     <div className="stack">
       <ErrorSummary error={decideTs.error ?? decideTe.error} />

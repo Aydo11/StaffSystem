@@ -35,6 +35,7 @@ import { CourseDetail, LessonPlayer } from './pages/Learning.tsx';
 import { Properties, PropertyPage } from './pages/Properties.tsx';
 import { TaskPage, Tasks } from './pages/Tasks.tsx';
 import { Timesheets, Workload } from './pages/Timesheets.tsx';
+import { Team } from './pages/Team.tsx';
 import { Avatar, Button, Icon, Skeleton, ToastProvider } from './ui.tsx';
 
 export function App() {
@@ -82,6 +83,7 @@ const NAV: { to: string; label: string; icon: string; group: string; show?: (h: 
   { to: '/messages', label: 'Chat', icon: 'send', group: '' },
   { to: '/news', label: 'News & updates', icon: 'bell', group: '' },
   { to: '/people', label: 'People', icon: 'users', group: 'People' },
+  { to: '/team', label: 'My team', icon: 'users', group: 'People', show: (h) => h.hasTeam || h.can('staff.assign') },
   { to: '/performance', label: 'Performance', icon: 'check', group: 'People' },
   { to: '/workload', label: 'Workload', icon: 'tasks', group: 'People', show: (h) => h.can('visits.view_all') },
   { to: '/properties', label: 'Properties', icon: 'building', group: 'Properties & visits' },
@@ -209,6 +211,7 @@ function Shell() {
             <Route path="/leave" element={<LeavePage />} />
             <Route path="/job-descriptions/:id" element={<JobDescriptionPage />} />
             <Route path="/workload" element={<Workload />} />
+            <Route path="/team" element={<Team />} />
             <Route path="/handover" element={<Handover />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/training" element={<Training />} />

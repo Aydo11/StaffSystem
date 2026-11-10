@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { clearanceGate } from '../clearance.ts';
 import { type Db, one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, HttpError, isoDate, LONDON_TODAY, localDateTime, notFound, notify, parse, text, uuid, idParam } from '../http.ts';
-import { ACTIVE_APPT, type Access, can, companiesWith, need, scope } from '../perm.ts';
+import { ACTIVE_APPT, type Access, can, canFor, companiesWith, need, needFor, scope, TEAM_SQL } from '../perm.ts';
 import { deleteFile, saveFile } from '../storage.ts';
 import { visitVisible } from '../visibility.ts';
 import { geoBody, geotag } from '../geo.ts';
@@ -158,7 +158,7 @@ visits.post('/visits/:id/ack-checkin', async (req, res) => {
   const { note } = parse(z.object({ note: text(300).min(3) }), req.body);
   const v = await loadVisit(req.access, id);
   const isManager = await one('select 1 from appointments where id = $1 and manager_person_id = $2', [v.appointment_id, req.person.id]);
-  if (!isManager && !can(req.access, 'visits.view_all', v.company_id)) throw forbidden();
+  if (!isManager && !canFor(req.access, 'visits.view_all', v.company_id, v.person_id)) throw forbidden();
   await q('update visits set checkin_ack_by = $2, checkin_ack_at = now() where id = $1', [id, req.person.id]);
   await audit(pool, req.person.id, v.company_id, 'visit', id, 'check_in_acknowledged', { note });
   res.json({ ok: true });
@@ -224,18 +224,18 @@ visits.get('/visits/:id', async (req, res) => {
     q(`select vc.*, ${name('r')} as requested_by_name, ${name('d')} as decided_by_name from visit_corrections vc join people r on r.id = vc.requested_by left join people d on d.id = vc.decided_by where vc.visit_id = $1 order by vc.created_at`, [v.id]),
     q(`select va.*, c.name as company_name, c.code as company_code, ap.job_title from visit_allocations va join companies c on c.id = va.company_id join appointments ap on ap.id = va.appointment_id where va.visit_id = $1`, [v.id]),
     // For splitting: the worker's other appointments in companies where the viewer may approve.
-    q(`select a.id, a.company_id, a.job_title, c.name as company_name, c.code as company_code from appointments a join companies c on c.id = a.company_id where a.person_id = $1 and a.company_id = any($2::uuid[])`, [v.person_id, companiesWith(a, 'visits.approve')]),
+    q(`select a.id, a.company_id, a.job_title, c.name as company_name, c.code as company_code from appointments a join companies c on c.id = a.company_id where a.person_id = $1 and a.company_id = any($2::uuid[])`, [v.person_id, [...companiesWith(a, 'visits.approve'), ...[...a.team].filter(([, ps]) => ps.has(v.person_id)).map(([c]) => c)]]),
     q(VISIT_PHOTOS, [v.id]),
   ]);
   const own = v.person_id === a.personId;
   res.json({
     visit: { ...v, ...detail }, corrections, allocations, splitAppointments: appts, photos,
     can: {
-      decide: !own && v.status === 'submitted' && can(a, 'visits.approve', v.company_id),
-      split: !own && v.status === 'approved' && can(a, 'visits.approve', v.company_id),
-      correct: (own || can(a, 'visits.approve', v.company_id)) && v.status !== 'cancelled' && !corrections.some((c) => c.status === 'pending'),
-      decideCorrections: !own && can(a, 'visits.approve', v.company_id),
-      addPhotos: v.status !== 'cancelled' && (own || can(a, 'visits.approve', v.company_id)),
+      decide: !own && v.status === 'submitted' && canFor(a, 'visits.approve', v.company_id, v.person_id),
+      split: !own && v.status === 'approved' && canFor(a, 'visits.approve', v.company_id, v.person_id),
+      correct: (own || canFor(a, 'visits.approve', v.company_id, v.person_id)) && v.status !== 'cancelled' && !corrections.some((c) => c.status === 'pending'),
+      decideCorrections: !own && canFor(a, 'visits.approve', v.company_id, v.person_id),
+      addPhotos: v.status !== 'cancelled' && (own || canFor(a, 'visits.approve', v.company_id, v.person_id)),
     },
   });
 });
@@ -244,7 +244,7 @@ visits.get('/visits/:id', async (req, res) => {
 visits.post('/visits/:id/photos', upload.single('file'), async (req, res) => {
   const v = await loadVisit(req.access, idParam(req.params.id));
   if (v.status === 'cancelled') throw conflict('Photos cannot be added to a cancelled visit.');
-  if (v.person_id !== req.person.id) need(req.access, 'visits.approve', v.company_id);
+  if (v.person_id !== req.person.id) needFor(req.access, 'visits.approve', v.company_id, v.person_id);
   if (!req.file) throw bad('Choose a photo to upload.');
   const f = await tx(async (db) => {
     await q('select 1 from visits where id = $1 for update', [v.id], db); // serialise the count check
@@ -273,7 +273,7 @@ visits.post('/visits/:id/decide', async (req, res) => {
   if (!b.approve && !b.note) throw bad('Say why the visit is being returned.', { fields: { note: 'Required when rejecting' } });
   await tx(async (db) => {
     const v = await loadVisit(req.access, id, db);
-    need(req.access, 'visits.approve', v.company_id);
+    needFor(req.access, 'visits.approve', v.company_id, v.person_id);
     if (v.person_id === req.person.id) throw forbidden('You cannot approve your own visits.');
     const done = await one(`update visits set status = $2, decided_by = $3, decided_at = now(), decision_note = $4 where id = $1 and status = 'submitted' returning id`, [id, b.approve ? 'approved' : 'rejected', req.person.id, b.note ?? null], db);
     if (!done) throw conflict('This visit has already been decided or is not ready for review.');
@@ -299,7 +299,7 @@ visits.post('/visits/:id/split', async (req, res) => {
     for (const x of b.allocations) {
       const ap = await one('select id, company_id, person_id from appointments where id = $1', [x.appointment_id], db);
       if (!ap || ap.person_id !== v.person_id) throw bad('Each part must use one of this worker’s appointments.');
-      need(req.access, 'visits.approve', ap.company_id);
+      needFor(req.access, 'visits.approve', ap.company_id, ap.person_id);
       rows.push({ ...x, company_id: ap.company_id });
     }
     if (new Set(rows.map((r) => r.company_id)).size !== rows.length) throw bad('Use each company once.');
@@ -315,7 +315,7 @@ visits.post('/visits/:id/corrections', async (req, res) => {
   const b = parse(z.object({ start_local: localDateTime, end_local: localDateTime, reason: text(500).min(5, 'Explain the reason (at least 5 characters)') }), req.body);
   const row = await tx(async (db) => {
     const v = await loadVisit(req.access, id, db);
-    if (v.person_id !== req.person.id) need(req.access, 'visits.approve', v.company_id);
+    if (v.person_id !== req.person.id) needFor(req.access, 'visits.approve', v.company_id, v.person_id);
     if (v.status === 'cancelled') throw conflict('Cancelled visits cannot be corrected.');
     const t = (await one<{ s: string; e: string; future: boolean }>(`select ($1::timestamp at time zone 'Europe/London') s, ($2::timestamp at time zone 'Europe/London') e, ($2::timestamp at time zone 'Europe/London') > now() future`, [b.start_local, b.end_local], db))!;
     if (new Date(t.e) <= new Date(t.s)) throw bad('The finish must be after the start.', { fields: { end_local: 'Before start' } });
@@ -338,7 +338,7 @@ visits.post('/corrections/:id/decide', async (req, res) => {
   await tx(async (db) => {
     const c = await one('select vc.*, v.company_id, v.person_id from visit_corrections vc join visits v on v.id = vc.visit_id where vc.id = $1 for update of vc', [id], db);
     if (!c || !req.access.perms.has(c.company_id)) throw notFound();
-    need(req.access, 'visits.approve', c.company_id);
+    needFor(req.access, 'visits.approve', c.company_id, c.person_id);
     if (c.requested_by === req.person.id || c.person_id === req.person.id) throw forbidden('Someone else must decide this correction.');
     if (c.status !== 'pending') throw conflict('This correction has already been decided.');
     if (b.approve) await timesheetLock(db, c.visit_id, c.proposed.started_at);
@@ -408,14 +408,14 @@ visits.get('/time-entries', async (req, res) => {
   const a = req.access;
   const from = parse(isoDate, req.query.from), to = parse(isoDate, req.query.to);
   res.json(await q(`select t.*, ${name('p')} as person_name, c.name as company_name, c.code as company_code from time_entries t join people p on p.id = t.person_id join companies c on c.id = t.company_id
-                     where (t.person_id = $1 or t.company_id = any($2::uuid[])) and t.work_date between $3 and $4 order by t.work_date desc limit 500`, [a.personId, companiesWith(a, 'visits.view_all'), from, to]));
+                     where (t.person_id = $1 or t.company_id = any($2::uuid[]) or ${TEAM_SQL(1, 't.company_id', 't.person_id')}) and t.work_date between $3 and $4 order by t.work_date desc limit 500`, [a.personId, companiesWith(a, 'visits.view_all'), from, to]));
 });
 visits.post('/time-entries/:id/decide', async (req, res) => {
   const id = idParam(req.params.id);
   const b = parse(z.object({ approve: z.boolean(), note: text(300).optional() }), req.body);
   const t = await one('select * from time_entries where id = $1', [id]);
   if (!t || !req.access.perms.has(t.company_id)) throw notFound();
-  need(req.access, 'visits.approve', t.company_id);
+  needFor(req.access, 'visits.approve', t.company_id, t.person_id);
   if (t.person_id === req.person.id) throw forbidden('You cannot approve your own time.');
   const done = await one(`update time_entries set status = $2, decided_by = $3, decided_at = now() where id = $1 and status = 'submitted' returning id`, [id, b.approve ? 'approved' : 'rejected', req.person.id]);
   if (!done) throw conflict('Already decided.');
@@ -456,7 +456,7 @@ export async function timesheetCalc(db: Db, appointmentId: string, from: string,
 
 async function timesheetAppt(a: Access, appointmentId: string, perm: string) {
   const ap = await one('select * from appointments where id = $1', [appointmentId]);
-  if (!ap || !a.perms.has(ap.company_id) || (ap.person_id !== a.personId && !can(a, perm, ap.company_id))) throw notFound();
+  if (!ap || !a.perms.has(ap.company_id) || (ap.person_id !== a.personId && !canFor(a, perm, ap.company_id, ap.person_id))) throw notFound();
   return ap;
 }
 
@@ -496,7 +496,7 @@ visits.get('/timesheets', async (req, res) => {
   const showMoney = companiesWith(a, 'rates.view');
   const rows = await q(`select t.*, ${name('p')} as person_name, c.name as company_name, c.code as company_code, ap.job_title, ${name('d')} as decided_by_name
                           from timesheets t join people p on p.id = t.person_id join companies c on c.id = t.company_id join appointments ap on ap.id = t.appointment_id left join people d on d.id = t.decided_by
-                         where (t.person_id = $1 or t.company_id = any($2::uuid[])) and ($3::uuid is null or t.company_id = $3) order by t.submitted_at desc limit 300`,
+                         where (t.person_id = $1 or t.company_id = any($2::uuid[]) or ${TEAM_SQL(1, 't.company_id', 't.person_id')}) and ($3::uuid is null or t.company_id = $3) order by t.submitted_at desc limit 300`,
     [a.personId, companiesWith(a, 'timesheets.view_all'), req.query.company ? parse(uuid, req.query.company) : null]);
   res.json(rows.map((r) => (r.person_id === a.personId || showMoney.includes(r.company_id) ? r : { ...r, cost_estimate: null, rate_snapshot: null })));
 });
@@ -508,7 +508,7 @@ visits.post('/timesheets/:id/decide', async (req, res) => {
   await tx(async (db) => {
     const t = await one('select * from timesheets where id = $1 for update', [id], db);
     if (!t || !req.access.perms.has(t.company_id)) throw notFound();
-    need(req.access, 'timesheets.approve', t.company_id);
+    needFor(req.access, 'timesheets.approve', t.company_id, t.person_id);
     if (t.person_id === req.person.id) throw forbidden('You cannot approve your own timesheet.');
     // An approved timesheet can be returned (for example so a visit can be corrected); its old figures stay in the audit log.
     if (t.status === 'rejected' || (t.status === 'approved' && b.approve)) throw conflict('Already decided.');

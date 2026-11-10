@@ -5,7 +5,7 @@ import { handOverTasks } from '../aiops.ts';
 import { clearanceGate } from '../clearance.ts';
 import { one, pool, q, tx } from '../db.ts';
 import { audit, bad, conflict, forbidden, idParam, isoDate, LONDON_TODAY, notFound, notify, parse, text, uuid } from '../http.ts';
-import { ACTIVE_APPT, can, companiesWith, need } from '../perm.ts';
+import { ACTIVE_APPT, can, companiesWith, need, canFor, needFor, TEAM_SQL } from '../perm.ts';
 
 export const leave = Router();
 const name = (al: string) => `coalesce(${al}.preferred_name, ${al}.full_name)`;
@@ -23,11 +23,11 @@ leave.get('/leave', async (req, res) => {
   const approve = companiesWith(a, 'leave.approve');
   res.json({
     mine: await q(`select ${COLS} from ${FROM} where l.person_id = $1 order by l.start_date desc limit 100`, [a.personId]),
-    toDecide: await q(`select ${COLS} from ${FROM} where l.status = 'requested' and l.company_id = any($1::uuid[]) and l.person_id <> $2 order by l.start_date`, [approve, a.personId]),
+    toDecide: await q(`select ${COLS} from ${FROM} where l.status = 'requested' and (l.company_id = any($1::uuid[]) or ${TEAM_SQL(2, 'l.company_id', 'l.person_id')}) and l.person_id <> $2 order by l.start_date`, [approve, a.personId]),
     // Team view: approved and requested leave from today, in companies whose staff list you can see.
     upcoming: await q(`select ${COLS} from ${FROM} where l.status in ('approved','requested') and l.end_date >= ${LONDON_TODAY} and l.company_id = any($1::uuid[]) order by l.start_date limit 200`,
       [[...new Set([...approve, ...companiesWith(a, 'staff.view')])]]),
-    canApprove: approve,
+    canApprove: [...new Set([...approve, ...a.team.keys()])],
   });
 });
 
@@ -45,13 +45,13 @@ leave.post('/leave', async (req, res) => {
 
 async function loadLeave(a: Express.Request['access'], id: string) {
   const l = await one(`select ${COLS} from ${FROM} where l.id = $1`, [id]);
-  if (!l || (l.person_id !== a.personId && !can(a, 'leave.approve', l.company_id) && !can(a, 'staff.view', l.company_id))) throw notFound();
+  if (!l || (l.person_id !== a.personId && !canFor(a, 'leave.approve', l.company_id, l.person_id) && !can(a, 'staff.view', l.company_id))) throw notFound();
   return l;
 }
 
 leave.post('/leave/:id/decide', async (req, res) => {
   const l = await loadLeave(req.access, idParam(req.params.id));
-  need(req.access, 'leave.approve', l.company_id);
+  needFor(req.access, 'leave.approve', l.company_id, l.person_id);
   if (l.person_id === req.person.id) throw forbidden('You cannot approve your own leave.');
   const b = parse(z.object({ decision: z.enum(['approved', 'rejected']), note: text(500).optional() }), req.body);
   if (b.decision === 'rejected' && !b.note) throw bad('Say why, so they can plan around it.', { fields: { note: 'Required when rejecting' } });
@@ -69,7 +69,7 @@ leave.post('/leave/:id/decide', async (req, res) => {
 leave.post('/leave/:id/cancel', async (req, res) => {
   const l = await loadLeave(req.access, idParam(req.params.id));
   const mine = l.person_id === req.person.id;
-  if (!mine) need(req.access, 'leave.approve', l.company_id);
+  if (!mine) needFor(req.access, 'leave.approve', l.company_id, l.person_id);
   const r = await one(`update leave_requests set status = 'cancelled' where id = $1 and status in ('requested','approved') and ($2 or end_date >= ${LONDON_TODAY}) returning id`, [l.id, !mine]);
   if (!r) throw conflict('This leave has already ended, been cancelled or been rejected.');
   if (!mine) await notify(pool, l.person_id, l.company_id, `Your leave from ${l.start_date} was cancelled by a manager`, '/leave');

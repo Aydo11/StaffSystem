@@ -10,6 +10,7 @@ import { errorHandler, HttpError } from './http.ts';
 import { admin } from './routes/admin.ts';
 import { core } from './routes/core.ts';
 import { development } from './routes/development.ts';
+import { team } from './routes/team.ts';
 import { leave } from './routes/leave.ts';
 import { account, authPublic } from './routes/account.ts';
 import { inbox } from './routes/inbox.ts';
@@ -71,7 +72,7 @@ export function createApp() {
   api.use(registrationPublic);
   api.use(authenticate);
   api.use(registrationAdmin);
-  api.use(account, core, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, complaints, estates, compliance, safety, reports, financeimport, financehub, finance, messaging, ai, dataops, leave, development, admin);
+  api.use(account, core, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, complaints, estates, compliance, safety, reports, financeimport, financehub, finance, messaging, ai, dataops, leave, development, team, admin);
   api.use(() => { throw new HttpError(404, 'not_found', 'No such API endpoint.'); });
   app.use('/api', api);
 

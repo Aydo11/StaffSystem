@@ -82,7 +82,7 @@ leave.get('/leave/:id/cover', async (req, res) => {
   const l = await loadLeave(req.access, idParam(req.params.id));
   need(req.access, 'visits.approve', l.company_id);
   const visits = await q(`select s.id, s.planned_start, s.planned_minutes, s.person_id, pr.name as property_name, ${name('w')} as person_name,
-                                 (select coalesce(json_agg(json_build_object('person_id', ap.person_id, 'name', ${name('cp')}, 'clearance', coalesce((select cc.status from current_clearance cc where cc.person_id = ap.person_id and cc.company_id = s.company_id), 'none')) order by ${name('cp')}), '[]')
+                                 (select coalesce(json_agg(json_build_object('person_id', ap.person_id, 'name', ${name('cp')}, 'clearance', coalesce(case when clearance_exempt(ap.person_id, s.company_id) then 'cleared' end, (select cc.status from current_clearance cc where cc.person_id = ap.person_id and cc.company_id = s.company_id), 'none')) order by ${name('cp')}), '[]')
                                     from appointments ap join people cp on cp.id = ap.person_id
                                    where ap.company_id = s.company_id and ${ACTIVE_APPT('ap')} and ap.person_id <> $2
                                      and not exists (select 1 from leave_requests x where x.person_id = ap.person_id and x.status = 'approved'

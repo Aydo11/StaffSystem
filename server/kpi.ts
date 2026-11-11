@@ -45,7 +45,7 @@ select
   (select count(*) from tk where (review_id is not null or supervision_id is not null) and status = 'completed' and done_on <= due_on)::int as dev_n,
   (select count(*) from appts)::int as staff_d,
   (select count(*) from appts a, w where (select cd.status from clearance_decisions cd where cd.person_id = a.person_id and cd.company_id = $1 and cd.decided_at < w.e order by cd.decided_at desc limit 1)
-                                          in ('cleared','cleared_with_restrictions'))::int as clearance_n,
+                                          in ('cleared','cleared_with_restrictions') or clearance_exempt(a.person_id, $1))::int as clearance_n,
   (select count(*) from appts a, w where exists (select 1 from supervisions sp where sp.person_id = a.person_id and sp.company_id = $1 and sp.status = 'completed'
                                                    and sp.held_on <= w.snap and sp.held_on > w.snap - 56))::int as supervision_n,
   (select count(*) from w, training_matrix(w.snap) tm where tm.company_id = $1 and ($2::uuid is null or tm.person_id = $2))::int as training_d,

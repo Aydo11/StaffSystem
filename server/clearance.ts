@@ -7,6 +7,8 @@ const LABEL: Record<string, string> = { none: 'No clearance decision recorded', 
 // Deployment clearance gate, applied when allocating a property and when starting/logging a visit.
 // Returns warnings to show; throws when the company's rule is "block" and no authorised exception is given.
 export async function clearanceGate(db: Db, a: Access, personId: string, companyId: string, context: string, overrideReason?: string): Promise<string[]> {
+  // Directors and administrators do not need deployment clearance (migration 047).
+  if ((await one<{ x: boolean }>('select clearance_exempt($1, $2) as x', [personId, companyId], db))?.x) return [];
   const cc = await one<{ status: string; restrictions: string | null }>('select status, restrictions from current_clearance where person_id = $1 and company_id = $2', [personId, companyId], db);
   const status = cc?.status ?? 'none';
   if (status === 'cleared') return [];

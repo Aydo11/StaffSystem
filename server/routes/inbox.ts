@@ -70,12 +70,12 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
               'You (HR)' owner, 'Review evidence and record a new clearance decision' next_step, '/people/' || p.id link,
               case when cc.review_date < ${LONDON_TODAY} then 'action' else 'info' end severity
          from current_clearance cc join people p on p.id = cc.person_id join companies c on c.id = cc.company_id
-        where cc.company_id = any($1::uuid[]) and p.status <> 'left' and (cc.review_date <= ${LONDON_TODAY} + 14 or cc.status = 'pending')`, [clear]),
+        where cc.company_id = any($1::uuid[]) and p.status <> 'left' and (cc.review_date <= ${LONDON_TODAY} + 14 or cc.status = 'pending') and not clearance_exempt(p.id, cc.company_id)`, [clear]),
     q(`select 'check_follow_up' kind, e.label || ' for ' || ${name('p')} || ' needs follow-up' title, ${C}, e.follow_up_on::text due,
               'You (HR)' owner, coalesce(e.actions, 'Follow up and update the check') next_step, '/people/' || p.id link,
               case when e.follow_up_on < ${LONDON_TODAY} then 'action' else 'info' end severity
          from employment_checks e join people p on p.id = e.person_id join companies c on c.id = e.company_id
-        where e.company_id = any($1::uuid[]) and e.follow_up_on <= ${LONDON_TODAY} + 3 and e.status not in ('verified','not_required')`, [checks]),
+        where e.company_id = any($1::uuid[]) and e.follow_up_on <= ${LONDON_TODAY} + 3 and e.status not in ('verified','not_required') and not clearance_exempt(p.id, e.company_id)`, [checks]),
     q(`select 'training_due' kind, coalesce(c2.title, 'Required training') || case when m.status = 'overdue' then ' is overdue' else ' is due soon' end title, ${C}, m.due_on::text due,
               'You' owner, 'Open the course in the Training centre and complete it' next_step, '/training' link, case when m.status = 'overdue' then 'action' else 'info' end severity
          from training_matrix(${LONDON_TODAY}) m join companies c on c.id = m.company_id

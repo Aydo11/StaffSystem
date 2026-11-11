@@ -53,7 +53,7 @@ function Assignments({ managers, staff, reload }: { managers: any[]; staff: any[
   return (
     <section className="card" aria-labelledby="who-h">
       <h2 id="who-h">Who manages whom</h2>
-      <p className="small muted">Managers already oversee all staff in their company; assigning staff to them builds their team list. Support managers see and approve only the staff assigned to them. Only current support staff can be assigned.</p>
+      <p className="small muted">Managers already oversee all staff in their company; assigning staff to them builds their team list. Support managers see and approve only the staff assigned to them. Support, maintenance and cleaning staff can be assigned.</p>
       <ErrorSummary error={end.error} />
       {managers.length === 0 ? <Empty>No one has a manager or support manager role yet. Give someone that job role on their profile (Roles tab) first.</Empty> : (
         <ul className="list">{managers.map((m) => (
@@ -69,8 +69,8 @@ function Assignments({ managers, staff, reload }: { managers: any[]; staff: any[
       {adding && (
         <Dialog open onClose={() => setAdding(null)} title={`Assign staff to ${adding.name}`} footer={<Button busy={save.busy} disabled={!picked.length} onClick={() => save.run()}>Assign {picked.length || ''}</Button>}>
           <ErrorSummary error={save.error} />
-          {choices.length === 0 ? <Empty>Every current support worker in {adding.company_name} is already assigned to {adding.name}.</Empty> : (
-            <fieldset style={{ border: 0, padding: 0 }}><legend className="small muted">Support staff in {adding.company_name}</legend>
+          {choices.length === 0 ? <Empty>Everyone who can be assigned in {adding.company_name} is already assigned to {adding.name}.</Empty> : (
+            <fieldset style={{ border: 0, padding: 0 }}><legend className="small muted">Support, maintenance and cleaning staff in {adding.company_name}</legend>
               {choices.map((s) => <label key={s.id} className="check"><input type="checkbox" checked={picked.includes(s.id)}
                 onChange={(e) => setPicked(e.target.checked ? [...picked, s.id] : picked.filter((x) => x !== s.id))} /> {s.name} <span className="small muted">· {s.job_title}</span></label>)}
             </fieldset>)}

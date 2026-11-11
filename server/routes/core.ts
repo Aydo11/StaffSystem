@@ -102,7 +102,7 @@ core.get('/my-day', async (req, res) => {
          from scheduled_visits s join properties p on p.id = s.property_id join companies c on c.id = s.company_id
         where s.person_id = $1 and s.status = 'scheduled' and s.planned_start >= now() - interval '7 days' and s.planned_start < now() + interval '7 days'
         order by s.planned_start`, [me]),
-    q(`select t.id, t.title, t.due_on, t.priority, t.status, t.company_id, c.name as company_name, c.code as company_code, p.name as property_name,
+    q(`select t.id, t.title, t.due_on, t.priority, t.status, t.company_id, c.name as company_name, c.code as company_code, p.name as property_name, t.property_id, t.routine_id,
               (t.due_on < ${LONDON_TODAY}) as overdue
          from tasks t join companies c on c.id = t.company_id left join properties p on p.id = t.property_id
         where t.owner_id = $1 and t.status <> 'completed' order by t.due_on nulls last, t.priority desc limit 20`, [me]),
@@ -111,7 +111,18 @@ core.get('/my-day', async (req, res) => {
         where h.company_id = any($1::uuid[]) and h.for_date = ${LONDON_TODAY} order by h.created_at desc`, [cs]),
     inboxFor(req.access),
   ]);
-  res.json({ scheduled, tasks, handover, inboxCount: inbox.length });
+  // Alerts at the houses I am allocated to: urgent and emergency repairs still open, and complaints still open.
+  const alerts = await q(`with mine as (select distinct x.property_id from appointment_properties x join appointments a on a.id = x.appointment_id
+                                          where a.person_id = $1 and x.to_date is null and ${ACTIVE_APPT('a')})
+    select 'repair' kind, r.id, r.title, r.urgency as level, p.id as property_id, p.name as property_name, r.reported_on::text as since
+      from repairs r join properties p on p.id = r.property_id where r.property_id in (select property_id from mine)
+       and r.urgency in ('emergency','urgent') and r.status not in ('verified','closed','cancelled')
+    union all
+    select 'complaint', c.id, case when c.confidential then c.ref else coalesce(c.title, c.ref) end, c.priority, p.id, p.name, (c.created_at at time zone 'Europe/London')::date::text
+      from property_complaints c join properties p on p.id = c.property_id where c.property_id in (select property_id from mine)
+       and c.stage not in ('resolved','closed')
+    order by since desc limit 12`, [me]);
+  res.json({ scheduled, tasks, handover, alerts, inboxCount: inbox.length });
 });
 
 // Activity summaries intentionally exclude audit detail payloads, personal values and sensitive record titles.

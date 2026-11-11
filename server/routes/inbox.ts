@@ -81,11 +81,6 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
          from training_matrix(${LONDON_TODAY}) m join companies c on c.id = m.company_id
          left join lateral (select title from courses x where x.root_id = m.course_root_id and x.status = 'published' order by version desc limit 1) c2 on true
         where m.person_id = $1 and m.company_id = any($2::uuid[]) and (m.status = 'overdue' or (m.status in ('due','expiring') and m.due_on <= ${LONDON_TODAY} + 14))`, [me, mine]),
-    q(`select 'policy_ack' kind, 'Please read and acknowledge: ' || p.title title, ${C}, (r.supplied_at at time zone 'Europe/London')::date::text due,
-              'You' owner, 'Read it, then press Acknowledge (this means you have read it, not that you agree)' next_step, '/policies/' || p.id || '?company=' || r.company_id link, 'info' severity
-         from policy_receipts r join policies p on p.id = r.policy_id join companies c on c.id = r.company_id
-        where r.person_id = $1 and r.acknowledged_at is null and r.company_id = any($2::uuid[]) and p.status = 'approved'
-          and not exists (select 1 from policies p2 join policy_publications pp on pp.policy_id = p2.id where p2.root_id = p.root_id and p2.version > p.version and pp.company_id = r.company_id)`, [me, mine]),
     q(`select distinct on (qa.id) 'quiz_marking' kind, 'Written answers to mark: ' || c2.title || ' (' || ${name('p')} || ')' title, ${C}, (qa.submitted_at at time zone 'Europe/London')::date::text due,
               'You (trainer)' owner, 'Mark the written answers' next_step, '/training?tab=manage' link, 'review' severity
          from quiz_attempts qa join courses c2 on c2.id = qa.course_id join people p on p.id = qa.person_id

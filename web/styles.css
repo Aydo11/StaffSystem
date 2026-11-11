@@ -1174,3 +1174,23 @@ svg.ok { color: var(--ok); }
   .lx-hero { padding: var(--s5); }
 }
 @media (prefers-reduced-motion: reduce) { .lx-progress span, .lx-actions a, .lx-actions button { transition: none; } }
+
+/* ── Certificates (A4 landscape; "Save as PDF" prints this) ── */
+.cert-wrap { max-width: 60rem; }
+.cert { --cert: #0A6B61; position: relative; aspect-ratio: 297 / 210; background: #fff; color: #1a2433; border: 10px solid var(--cert); outline: 2px solid var(--cert); outline-offset: -22px;
+  padding: 7% 9%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: .35rem; box-shadow: var(--shadow); font-family: Georgia, 'Times New Roman', serif; }
+.cert-org { font-family: inherit; font-size: clamp(.8rem, 1.6vw, 1.1rem); letter-spacing: .14em; text-transform: uppercase; color: var(--cert); margin: 0; font-weight: 700; }
+.cert-title { font-size: clamp(1.4rem, 4vw, 2.8rem); margin: .3em 0 .5em; font-weight: 400; letter-spacing: .02em; }
+.cert-small { display: block; font-size: clamp(.7rem, 1.3vw, .95rem); color: #4a5568; margin: 0; }
+.cert-name { font-size: clamp(1.3rem, 3.6vw, 2.5rem); font-style: italic; margin: .15em 0 .3em; border-bottom: 1px solid #c8d0da; padding: 0 1.5em .15em; }
+.cert-course { font-size: clamp(1rem, 2.4vw, 1.6rem); font-weight: 700; margin: .2em 0 .8em; max-width: 90%; }
+.cert-foot { display: flex; justify-content: space-between; width: 80%; gap: 2rem; margin-top: .6rem; }
+.cert-foot > div { flex: 1; display: grid; gap: 4px; }
+.cert-line { border-bottom: 1px solid #1a2433; padding-bottom: 4px; font-size: clamp(.8rem, 1.5vw, 1.05rem); }
+.cert-note { position: absolute; bottom: 5.5%; left: 0; right: 0; font-size: clamp(.55rem, 1vw, .72rem); color: #6b7685; margin: 0; font-family: system-ui, sans-serif; }
+@media print {
+  @page { size: A4 landscape; margin: 0; }
+  .cert-wrap { max-width: none; }
+  .cert { width: 297mm; height: 210mm; aspect-ratio: auto; box-shadow: none; padding: 18mm 26mm; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .cert-org { font-size: 13pt; } .cert-title { font-size: 34pt; } .cert-small { font-size: 11pt; } .cert-name { font-size: 30pt; } .cert-course { font-size: 19pt; } .cert-line { font-size: 12pt; } .cert-note { font-size: 8pt; }
+}

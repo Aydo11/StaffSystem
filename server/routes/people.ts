@@ -82,6 +82,7 @@ people.get('/people/:id', async (req, res) => {
     qualifications: await q(`select qf.*, ${name('v')} as verified_by_name from qualifications qf left join people v on v.id = qf.verified_by where qf.person_id = $1 order by awarded_on desc nulls last`, [id]),
     restricted: self || restrictedCos.length ? (await one('select * from person_restricted where person_id = $1', [id])) ?? {} : null,
     clearance: clearanceCos.length ? await currentClearance(pool, id, clearanceCos) : null,
+    clearanceExempt: clearanceCos.length ? (await q<{ c: string }>('select c from unnest($2::uuid[]) c where clearance_exempt($1, c)', [id, clearanceCos])).map((r) => r.c) : [],
     checks: checkCos.length ? await q(`select e.*, c.name as company_name, c.code as company_code, ${name('r')} as reviewer_name from employment_checks e join companies c on c.id = e.company_id left join people r on r.id = e.reviewer_id where e.person_id = $1 and e.company_id = any($2::uuid[]) order by e.check_type`, [id, checkCos]) : null,
     documents: self || editCos.length ? await q(PERSON_DOCS, [id]) : null,
     changeRequests: self || editCos.length ? await q('select * from profile_change_requests where person_id = $1 order by requested_at desc limit 20', [id]) : [],

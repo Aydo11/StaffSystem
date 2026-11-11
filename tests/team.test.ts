@@ -71,3 +71,12 @@ describe('clearance exemption', () => {
     expect(r.rows[0]).toEqual({ vh: true, whm: false });
   });
 });
+
+describe('one-click clearance', () => {
+  it('a manager marks someone cleared with no other details', async () => {
+    const r = await (await as('morgan')).post('/api/clearance').send({ person_id: P.sam, company_id: C.VH, status: 'cleared' });
+    expect(r.status).toBe(201);
+    expect(r.body.evidence_summary).toBeNull();
+    expect((await pool.query('select status from current_clearance where person_id = $1 and company_id = $2', [P.sam, C.VH])).rows[0].status).toBe('cleared');
+  });
+});

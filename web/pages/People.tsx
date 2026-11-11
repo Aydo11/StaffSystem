@@ -449,7 +449,7 @@ const CLEAR: [string, string][] = [['pending', 'Pending'], ['cleared', 'Cleared'
 const CHECK_STATUS: [string, string][] = [['evidence_missing', 'Evidence missing'], ['requested', 'Requested'], ['awaiting_verification', 'Awaiting verification'], ['verified', 'Verified'], ['adverse_finding', 'Adverse finding (details held outside the Hub)'], ['not_required', 'Not required']];
 
 function ClearanceTab({ d, reload }: { d: any; reload: () => void }) {
-  const { person: p, clearance, checks, can, appointments } = d;
+  const { person: p, clearance, clearanceExempt, checks, can, appointments } = d;
   const toast = useToast();
   const [dlg, setDlg] = useState<null | 'decide' | 'check'>(null);
   const [f, setF] = useState<any>({});
@@ -468,6 +468,12 @@ function ClearanceTab({ d, reload }: { d: any; reload: () => void }) {
         <p className="small muted">Clearance is decided separately for each company.</p>
         {companies.map((a: any) => {
           const c = clearance.find((x: any) => x.company_id === a.company_id);
+          if (clearanceExempt?.includes(a.company_id)) return (
+            <div key={a.company_id} className="card" style={{ marginTop: 12 }}>
+              <div className="row between"><strong><CompanyBadge code={a.company_code} name={a.company_name} /> {a.company_name}</strong><Status s="verified" text="Not required" /></div>
+              <p className="small muted" style={{ marginTop: 8 }}>Directors and administrators do not need deployment clearance.</p>
+            </div>
+          );
           return (
             <div key={a.company_id} className="card" style={{ marginTop: 12 }}>
               <div className="row between"><strong><CompanyBadge code={a.company_code} name={a.company_name} /> {a.company_name}</strong><Status s={c?.status ?? 'none'} /></div>

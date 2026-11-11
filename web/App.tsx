@@ -37,6 +37,7 @@ import { TaskPage, Tasks } from './pages/Tasks.tsx';
 import { Timesheets, Workload } from './pages/Timesheets.tsx';
 import { Team } from './pages/Team.tsx';
 import { Avatar, Button, Icon, Skeleton, ToastProvider } from './ui.tsx';
+import { GuidePage, Guides } from './pages/Guides.tsx';
 
 export function App() {
   const [config, setConfig] = useState<AuthConfig | null>(null);
@@ -97,6 +98,7 @@ const NAV: { to: string; label: string; icon: string; group: string; show?: (h: 
   { to: '/leave', label: 'Leave', icon: 'calendar', group: 'Time & leave' },
   { to: '/training', label: 'Training & coaching', icon: 'check', group: 'Learning & policies' },
   { to: '/policies', label: 'Policies & handbooks', icon: 'file', group: 'Learning & policies' },
+  { to: '/guides', label: 'Guides', icon: 'file', group: 'Learning & policies' },
   { to: '/governance', label: 'Governance', icon: 'shield', group: 'Organisation', show: (h) => h.can('governance.view') },
   { to: '/complaints', label: 'Complaints', icon: 'inbox', group: 'Organisation' }, // everyone: staff see the complaints they logged or help with
   { to: '/concerns', label: 'Concerns', icon: 'note', group: 'Organisation' },
@@ -219,6 +221,8 @@ function Shell() {
             <Route path="/training/courses/:id/learn" element={<LessonPlayer />} />
             <Route path="/training/courses/:id/edit" element={<CourseEditor />} />
             <Route path="/policies" element={<Policies />} />
+            <Route path="/guides" element={<Guides />} />
+            <Route path="/guides/:id" element={<GuidePage />} />
             <Route path="/policies/:id" element={<PolicyPage />} />
             <Route path="/governance" element={<Governance />} />
             <Route path="/finance" element={<Finance />} />

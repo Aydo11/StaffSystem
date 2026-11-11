@@ -82,6 +82,7 @@ people.get('/people/:id', async (req, res) => {
     qualifications: await q(`select qf.*, ${name('v')} as verified_by_name from qualifications qf left join people v on v.id = qf.verified_by where qf.person_id = $1 order by awarded_on desc nulls last`, [id]),
     restricted: self || restrictedCos.length ? (await one('select * from person_restricted where person_id = $1', [id])) ?? {} : null,
     clearance: clearanceCos.length ? await currentClearance(pool, id, clearanceCos) : null,
+    clearanceExempt: clearanceCos.length ? (await q<{ c: string }>('select c from unnest($2::uuid[]) c where clearance_exempt($1, c)', [id, clearanceCos])).map((r) => r.c) : [],
     checks: checkCos.length ? await q(`select e.*, c.name as company_name, c.code as company_code, ${name('r')} as reviewer_name from employment_checks e join companies c on c.id = e.company_id left join people r on r.id = e.reviewer_id where e.person_id = $1 and e.company_id = any($2::uuid[]) order by e.check_type`, [id, checkCos]) : null,
     documents: self || editCos.length ? await q(PERSON_DOCS, [id]) : null,
     changeRequests: self || editCos.length ? await q('select * from profile_change_requests where person_id = $1 order by requested_at desc limit 20', [id]) : [],
@@ -105,7 +106,7 @@ people.get('/people/:id/resume', async (req, res) => {
     person: { id: p.id, full_name: p.full_name, preferred_name: p.preferred_name, staff_ref: p.staff_ref, professional_summary: p.professional_summary, work_phone: p.work_phone, email: p.email, skills: p.skills, languages: p.languages, work_history: p.work_history, development_goals: p.development_goals, has_photo: !!p.photo_path },
     appointments: await q(`select c.name as company_name, c.code as company_code, ap.job_title, ap.relationship, ap.start_date, ap.end_date, (${ACTIVE_APPT('ap')}) as is_current
                              from appointments ap join companies c on c.id = ap.company_id where ap.person_id = $1 order by ap.start_date desc`, [id]),
-    qualifications: await q('select title, issuer, awarded_on, verified_at is not null as verified from qualifications where person_id = $1 order by awarded_on desc nulls last', [id]),
+    qualifications: await q('select title, issuer, awarded_on from qualifications where person_id = $1 order by awarded_on desc nulls last', [id]),
   });
 });
 
@@ -443,16 +444,6 @@ people.post('/people/:id/qualifications', async (req, res) => {
   if (id !== req.person.id) await needOnPerson(req.access, id, 'staff.edit');
   const b = parse(z.object({ title: text(200).min(2), issuer: text(200).nullable().optional(), awarded_on: isoDate.nullable().optional() }), req.body);
   res.status(201).json(await one('insert into qualifications (person_id, title, issuer, awarded_on) values ($1,$2,$3,$4) returning *', [id, b.title, b.issuer ?? null, b.awarded_on ?? null]));
-});
-people.post('/qualifications/:id/verify', async (req, res) => {
-  const id = idParam(req.params.id);
-  const qf = await one('select * from qualifications where id = $1', [id]);
-  if (!qf) throw notFound();
-  if (qf.person_id === req.person.id) throw forbidden('You cannot verify your own qualification.');
-  await needOnPerson(req.access, qf.person_id, 'staff.edit');
-  await q('update qualifications set verified_by = $2, verified_at = now() where id = $1', [id, req.person.id]);
-  await audit(pool, req.person.id, null, 'qualification', id, 'verify', {});
-  res.json({ ok: true });
 });
 
 // ── Appointments ──

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { q } from '../db.ts';
 import { LONDON_TODAY } from '../http.ts';
-import { ACTIVE_APPT, type Access, scope } from '../perm.ts';
+import { ACTIVE_APPT, type Access, scope, TEAM_SQL } from '../perm.ts';
 
 export type InboxItem = { kind: string; title: string; company_id: string; company_name: string; company_code: string; due: string | null; owner: string; next_step: string; link: string; severity: 'action' | 'review' | 'info' };
 
@@ -22,30 +22,30 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
     q(`select 'visit_review' kind, 'Visit by ' || ${name('p')} || ' at ' || pr.name || ' needs your review' title, ${C}, (v.submitted_at at time zone 'Europe/London')::date::text due,
               'You (approver)' owner, 'Approve or return it' next_step, '/visits/' || v.id link, 'review' severity
          from visits v join companies c on c.id = v.company_id join people p on p.id = v.person_id join properties pr on pr.id = v.property_id
-        where v.status = 'submitted' and v.company_id = any($1::uuid[]) and v.person_id <> $2`, [approve, me]),
+        where v.status = 'submitted' and (v.company_id = any($1::uuid[]) or (${TEAM_SQL(2, 'v.company_id', 'v.person_id')} and v.company_id = any($3::uuid[]))) and v.person_id <> $2`, [approve, me, mine]),
     q(`select 'correction_review' kind, 'Correction requested by ' || ${name('p')} title, ${C}, (vc.created_at at time zone 'Europe/London')::date::text due,
               'You (approver)' owner, 'Compare original and proposed times, then decide' next_step, '/visits/' || v.id link, 'review' severity
          from visit_corrections vc join visits v on v.id = vc.visit_id join companies c on c.id = v.company_id join people p on p.id = vc.requested_by
-        where vc.status = 'pending' and v.company_id = any($1::uuid[]) and vc.requested_by <> $2`, [approve, me]),
+        where vc.status = 'pending' and (v.company_id = any($1::uuid[]) or (${TEAM_SQL(2, 'v.company_id', 'v.person_id')} and v.company_id = any($3::uuid[]))) and vc.requested_by <> $2 and v.person_id <> $2`, [approve, me, mine]),
     q(`select 'time_review' kind, ${name('p')} || ' logged ' || t.minutes || ' min of ' || t.category title, ${C}, t.work_date::text due,
               'You (approver)' owner, 'Approve or reject the time entry' next_step, '/timesheets?tab=review' link, 'review' severity
          from time_entries t join companies c on c.id = t.company_id join people p on p.id = t.person_id
-        where t.status = 'submitted' and t.company_id = any($1::uuid[]) and t.person_id <> $2`, [approve, me]),
+        where t.status = 'submitted' and (t.company_id = any($1::uuid[]) or (${TEAM_SQL(2, 't.company_id', 't.person_id')} and t.company_id = any($3::uuid[]))) and t.person_id <> $2`, [approve, me, mine]),
     q(`select 'timesheet_review' kind, 'Timesheet from ' || ${name('p')} || ' (' || to_char(t.period_start, 'DD Mon') || '–' || to_char(t.period_end, 'DD Mon YYYY') || ')' title, ${C}, (t.submitted_at at time zone 'Europe/London')::date::text due,
               'You (approver)' owner, 'Check the hours and approve or reject' next_step, '/timesheets?tab=review' link, 'review' severity
          from timesheets t join companies c on c.id = t.company_id join people p on p.id = t.person_id
-        where t.status = 'submitted' and t.company_id = any($1::uuid[]) and t.person_id <> $2`, [ts, me]),
+        where t.status = 'submitted' and (t.company_id = any($1::uuid[]) or (${TEAM_SQL(2, 't.company_id', 't.person_id')} and t.company_id = any($3::uuid[]))) and t.person_id <> $2`, [ts, me, mine]),
     q(`select 'missing_clock_out' kind, 'No finish time: ' || ${name('p')} || ' at ' || pr.name || ' since ' || to_char(v.started_at at time zone 'Europe/London', 'DD Mon HH24:MI') title, ${C}, (v.started_at at time zone 'Europe/London')::date::text due,
               case when v.person_id = $2 then 'You' else ${name('p')} end owner, 'Finish the visit or request a correction with the real finish time' next_step, '/visits/' || v.id link, 'action' severity
          from visits v join companies c on c.id = v.company_id join people p on p.id = v.person_id join properties pr on pr.id = v.property_id
-        where v.status = 'in_progress' and v.started_at < now() - interval '12 hours' and (v.company_id = any($1::uuid[]) or v.person_id = $2)`, [viewAll, me]),
+        where v.status = 'in_progress' and v.started_at < now() - interval '12 hours' and (v.company_id = any($1::uuid[]) or v.person_id = $2 or (${TEAM_SQL(2, 'v.company_id', 'v.person_id')} and v.company_id = any($3::uuid[])))`, [viewAll, me, mine]),
     q(`select 'checkin_overdue' kind, 'Check-in overdue: ' || ${name('p')} || ' at ' || pr.name title, ${C}, v.expected_end_at::text due,
               case when v.person_id = $2 then 'You' else 'Named contact: ' || coalesce(${name('m')}, 'manager not set') end owner,
               'Contact the worker, then record that you have checked on them. This is not a monitored emergency service.' next_step, '/visits/' || v.id link, 'action' severity
          from visits v join companies c on c.id = v.company_id join people p on p.id = v.person_id join properties pr on pr.id = v.property_id
          join appointments a on a.id = v.appointment_id left join people m on m.id = a.manager_person_id
         where v.status = 'in_progress' and v.expected_end_at < now() and v.checkin_ack_at is null and v.started_at >= now() - interval '12 hours'
-          and (v.company_id = any($1::uuid[]) or v.person_id = $2)`, [viewAll, me]),
+          and (v.company_id = any($1::uuid[]) or v.person_id = $2 or (${TEAM_SQL(2, 'v.company_id', 'v.person_id')} and v.company_id = any($3::uuid[])))`, [viewAll, me, mine]),
     q(`select 'visit_returned' kind, 'Visit at ' || pr.name || ' was returned: ' || coalesce(v.decision_note, 'no note') title, ${C}, (v.decided_at at time zone 'Europe/London')::date::text due,
               'You' owner, 'Request a correction if the times were wrong' next_step, '/visits/' || v.id link, 'action' severity
          from visits v join companies c on c.id = v.company_id join properties pr on pr.id = v.property_id
@@ -70,12 +70,12 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
               'You (HR)' owner, 'Review evidence and record a new clearance decision' next_step, '/people/' || p.id link,
               case when cc.review_date < ${LONDON_TODAY} then 'action' else 'info' end severity
          from current_clearance cc join people p on p.id = cc.person_id join companies c on c.id = cc.company_id
-        where cc.company_id = any($1::uuid[]) and p.status <> 'left' and (cc.review_date <= ${LONDON_TODAY} + 14 or cc.status = 'pending')`, [clear]),
+        where cc.company_id = any($1::uuid[]) and p.status <> 'left' and (cc.review_date <= ${LONDON_TODAY} + 14 or cc.status = 'pending') and not clearance_exempt(p.id, cc.company_id)`, [clear]),
     q(`select 'check_follow_up' kind, e.label || ' for ' || ${name('p')} || ' needs follow-up' title, ${C}, e.follow_up_on::text due,
               'You (HR)' owner, coalesce(e.actions, 'Follow up and update the check') next_step, '/people/' || p.id link,
               case when e.follow_up_on < ${LONDON_TODAY} then 'action' else 'info' end severity
          from employment_checks e join people p on p.id = e.person_id join companies c on c.id = e.company_id
-        where e.company_id = any($1::uuid[]) and e.follow_up_on <= ${LONDON_TODAY} + 3 and e.status not in ('verified','not_required')`, [checks]),
+        where e.company_id = any($1::uuid[]) and e.follow_up_on <= ${LONDON_TODAY} + 3 and e.status not in ('verified','not_required') and not clearance_exempt(p.id, e.company_id)`, [checks]),
     q(`select 'training_due' kind, coalesce(c2.title, 'Required training') || case when m.status = 'overdue' then ' is overdue' else ' is due soon' end title, ${C}, m.due_on::text due,
               'You' owner, 'Open the course in the Training centre and complete it' next_step, '/training' link, case when m.status = 'overdue' then 'action' else 'info' end severity
          from training_matrix(${LONDON_TODAY}) m join companies c on c.id = m.company_id
@@ -130,7 +130,7 @@ export async function inboxFor(a: Access, company?: unknown): Promise<InboxItem[
     q(`select 'leave_review' kind, ${name('p')} || ' asked for ' || replace(l.kind, '_', ' ') || ' leave, ' || to_char(l.start_date, 'DD Mon') || '–' || to_char(l.end_date, 'DD Mon') title, ${C}, l.start_date::text due,
               'You (approver)' owner, 'Check cover for their planned visits, then approve or reject' next_step, '/leave' link, case when l.start_date <= ${LONDON_TODAY} + 7 then 'action' else 'review' end severity
          from leave_requests l join companies c on c.id = l.company_id join people p on p.id = l.person_id
-        where l.status = 'requested' and l.company_id = any($1::uuid[]) and l.person_id <> $2`, [scope(a, 'leave.approve', company), me]),
+        where l.status = 'requested' and (l.company_id = any($1::uuid[]) or (${TEAM_SQL(2, 'l.company_id', 'l.person_id')} and l.company_id = any($3::uuid[]))) and l.person_id <> $2`, [scope(a, 'leave.approve', company), me, mine]),
     q(`select 'jd_acknowledge' kind, 'Read and acknowledge your job description: ' || j.title || ' (v' || j.version || ')' title, ${C}, (j.published_at at time zone 'Europe/London')::date::text due,
               'You' owner, 'Read it, then press Acknowledge' next_step, '/job-descriptions/' || j.id link, 'action' severity
          from appointments ap join job_descriptions j on j.root_id = ap.job_description_root_id and j.status = 'published' join companies c on c.id = ap.company_id

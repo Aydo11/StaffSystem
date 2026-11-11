@@ -31,6 +31,7 @@ core.get('/me', async (req, res) => {
     activeVisit: activeVisit ?? null,
     unread,
     unreadMessages: await unreadMessages(a.personId),
+    team: Object.fromEntries([...a.team].map(([c, s]) => [c, [...s]])),
     agents: a.agentIds.length ? await q('select ag.id, ag.name, c.name as company_name, c.code as company_code from agents ag join companies c on c.id = ag.company_id where ag.id = any($1::uuid[])', [a.agentIds]) : [],
   });
 });

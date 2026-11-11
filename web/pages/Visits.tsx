@@ -446,7 +446,7 @@ export function Attendance() {
   const [params, setParams] = useSearchParams();
   const view = (params.get('view') as View) ?? 'week';
   const date = params.get('date') ?? londonToday();
-  const team = params.get('team') === '1' && hub.can('visits.view_all');
+  const team = params.get('team') === '1' && (hub.can('visits.view_all') || hub.hasTeam);
   const setP = (o: Record<string, string>) => setParams({ view, date, ...(team ? { team: '1' } : {}), ...o });
   const range = view === 'day' ? [date, date] : view === 'week' ? [weekStart(date), addDays(weekStart(date), 6)] : view === 'month' ? [`${date.slice(0, 7)}-01`, addDays(`${date.slice(0, 7)}-01`, 40).slice(0, 7) + '-01'] : [`${date.slice(0, 4)}-01-01`, `${date.slice(0, 4)}-12-31`];
   const to = view === 'month' ? addDays(range[1], -1) : range[1];
@@ -467,7 +467,7 @@ export function Attendance() {
         actions={<><Link className="btn secondary" to="/visits/new">Log Completed Visit</Link><Link className="btn go" to="/properties?mine=true">Start Visit</Link></>} />
       <div className="row between" style={{ marginBottom: 16 }}>
         <Chips label="View" value={view} onChange={(v) => setP({ view: v })} options={[['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year']]} />
-        {hub.can('visits.view_all') && <Chips label="Whose visits" value={team ? 'team' : 'me'} onChange={(v) => setParams({ view, date, ...(v === 'team' ? { team: '1' } : {}) })} options={[['me', 'Mine'], ['team', 'Everyone I manage']]} />}
+        {(hub.can('visits.view_all') || hub.hasTeam) && <Chips label="Whose visits" value={team ? 'team' : 'me'} onChange={(v) => setParams({ view, date, ...(v === 'team' ? { team: '1' } : {}) })} options={[['me', 'Mine'], ['team', 'Everyone I manage']]} />}
       </div>
       <div className="row" style={{ marginBottom: 16 }}>
         <Button variant="secondary" onClick={() => step(-1)} aria-label="Previous period">‹ Previous</Button>

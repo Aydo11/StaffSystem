@@ -362,7 +362,7 @@ async function pack(db: Db, a: Access, companyId: string, month: string): Promis
       (select count(*) from appointments a, w where a.company_id = $1 and a.start_date <= w.snap and (a.end_date is null or a.end_date >= w.snap) and a.status <> 'planned')::int staff,
       (select count(*) from appointments a, w where a.company_id = $1 and a.start_date >= w.ds and a.start_date < w.de)::int starters,
       (select count(*) from appointments a, w where a.company_id = $1 and a.end_date >= w.ds and a.end_date < w.de)::int leavers,
-      (select count(*) from current_clearance cc join people pe on pe.id = cc.person_id where cc.company_id = $1 and pe.status <> 'left' and cc.status in ('pending','not_authorised'))::int clearance_open,
+      (select count(*) from current_clearance cc join people pe on pe.id = cc.person_id where cc.company_id = $1 and pe.status <> 'left' and cc.status in ('pending','not_authorised') and not clearance_exempt(pe.id, $1))::int clearance_open,
       (select count(*) from current_clearance cc where cc.company_id = $1 and cc.review_date < ${LONDON_TODAY})::int clearance_review_overdue,
       (select count(*) from w, training_matrix(w.snap) t where t.company_id = $1)::int training_all,
       (select count(*) from w, training_matrix(w.snap) t where t.company_id = $1 and t.status = 'overdue')::int training_overdue,

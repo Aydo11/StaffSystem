@@ -49,7 +49,7 @@ properties.get('/properties', async (req, res) => {
   res.json(mine ? rows.filter((r) => r.allocated_to_me) : rows);
 });
 
-async function visibleProperty(a: Access, id: string) {
+export async function visibleProperty(a: Access, id: string) {
   const p = await one(`select p.*, c.name as company_name, c.code as company_code from properties p join companies c on c.id = p.company_id where p.id = $1 and ${propertyVisible('p', 2, 3)}`, [id, a.personId, companiesWith(a, 'properties.view')]);
   if (!p) throw notFound();
   return p;

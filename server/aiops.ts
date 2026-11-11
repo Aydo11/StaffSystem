@@ -169,6 +169,10 @@ export async function myDaySources(a: Access): Promise<Source[]> {
     { id: 'my_leave', type: 'leave', title: 'My upcoming leave', text: myLeave.map((l) => `- ${l.start_date} to ${l.end_date} (${l.status})`).join('\n') || 'None' },
     { id: 'handover', type: 'handover', title: "Today's handover notes", text: handover.map((h) => `- ${h.property ? `${h.property}: ` : ''}${h.body}`).join('\n') || 'None' },
   ];
+  // Staff guides ("How do I…?"), so questions about how to do things are answered from them.
+  const { guidesFor } = await import('./routes/guides.ts');
+  const guideText = (await guidesFor(a)).map((g) => `## ${g.title}\n${g.body}`).join('\n\n');
+  if (guideText) out.push({ id: 'guides', type: 'guides', title: 'Staff guides', text: guideText.slice(0, 20000) });
   for (const c of companiesWith(a, 'performance.view_all').slice(0, 3)) {
     const code = (await one<{ code: string }>('select code from companies where id = $1', [c]))!.code;
     out.push({ ...(await figureSources(pool, c))[0], id: `figures_${code}`, title: `Company figures for ${code}` });

@@ -6,7 +6,7 @@ import { useHub } from '../hub.tsx';
 import { Button, CompanyBadge, Dialog, Empty, ErrorSummary, Field, FilePicker, LoadError, PageHead, Skeleton, Status, Tabs, useToast } from '../ui.tsx';
 import { Paragraphs } from './Training.tsx';
 
-const receiptStatus = (r: any): [string, string] => !r ? ['not_required', 'Not supplied yet'] : r.acknowledged_at ? ['verified', 'Acknowledged'] : r.opened_at ? ['submitted', 'Opened, not acknowledged'] : ['info', 'New — please read'];
+const receiptStatus = (r: any): [string, string] => !r ? ['not_required', 'Not supplied yet'] : r.acknowledged_at ? ['verified', 'Read'] : r.opened_at ? ['verified', 'Opened'] : ['info', 'New'];
 
 export function Policies() {
   const hub = useHub();
@@ -24,7 +24,7 @@ export function Policies() {
   const published = d.data?.published ?? [];
   return (
     <>
-      <PageHead title="Policies and handbooks" intro="The versions approved by your companies. Acknowledging a policy records that you have read it; it is not a contract." actions={canDraft && <Button onClick={() => setCreating(true)}>New policy or handbook</Button>} />
+      <PageHead title="Policies and handbooks" intro="The versions approved by your companies." actions={canDraft && <Button onClick={() => setCreating(true)}>New policy or handbook</Button>} />
       <div className="field" style={{ maxWidth: 520 }}><label htmlFor="pol-q">Search policies and handbooks</label><input id="pol-q" type="search" value={term} onChange={(e) => setTerm(e.target.value)} placeholder="For example: lone working, grievance" /></div>
       {hits && (
         <section className="card" aria-live="polite" aria-labelledby="hits-h">
@@ -84,7 +84,6 @@ export function PolicyPage() {
   const nav = useNavigate();
   const d = useApi<any>(`/policies/${id}${company ? `?company=${company}` : ''}`);
   const [tab, setTab] = useState<PTab>('read');
-  const ack = useSubmit(async () => { await post(`/policies/${id}/acknowledge`, { company_id: company }); toast('Acknowledged. Thank you.'); d.reload(); hub.reloadMe(); });
   const approve = useSubmit(async (companyId: string) => { const r = await post(`/policies/${id}/approve`, { company_id: companyId }); toast(`Approved and supplied to ${r.supplied} people.`); d.reload(); });
   const newVersion = useSubmit(async () => { const r = await post(`/policies/${id}/new-version`); nav(`/policies/${r.id}`); });
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -105,7 +104,7 @@ export function PolicyPage() {
           {can.newVersion && <Button variant="secondary" busy={newVersion.busy} onClick={() => newVersion.run()}>Create a new version</Button>}
           {can.edit && <Button variant="danger" onClick={() => setConfirmDelete(true)}>Delete draft</Button>}
         </>} />
-      <ErrorSummary error={ack.error ?? approve.error ?? newVersion.error} />
+      <ErrorSummary error={approve.error ?? newVersion.error} />
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} title="Delete this draft?" variant="modal" footer={<Button variant="danger" busy={remove.busy} onClick={() => remove.run()}>Delete draft</Button>}>
         <p>“{p.title}” version {p.version} will be deleted. It cannot be undone.{p.version > 1 ? ' Earlier approved versions are kept.' : ''}</p>
         <ErrorSummary error={remove.error} />
@@ -137,10 +136,8 @@ export function PolicyPage() {
             {p.chapters.map((c: any, i: number) => <section key={i} id={`ch-${i}`} aria-labelledby={`ch-${i}-h`}><h2 id={`ch-${i}-h`} style={{ fontSize: '1.25rem' }}>{c.title}</h2><Paragraphs text={c.body} /></section>)}
             {company && receipt && (
               <div className="no-print" style={{ borderTop: '1px solid var(--line)', paddingTop: 16, marginTop: 16 }}>
-                {receipt.acknowledged_at ? <Status s="verified" text={`You acknowledged this on ${fmtDate(receipt.acknowledged_at)}`} /> : (
-                  <><p>Please confirm you have read this. It records that you have read it — it does not mean you have agreed to a contract change. If anything is unclear, use Request Help or ask your manager.</p>
-                    <Button busy={ack.busy} onClick={() => ack.run()}>Acknowledge</Button></>
-                )}
+                {receipt.acknowledged_at ? <Status s="verified" text={`Read (recorded ${fmtDate(receipt.acknowledged_at)})`} />
+                  : <p className="small muted">If anything is unclear, use Request Help or ask your manager.</p>}
                 {receipt.explained_at && <p className="small" style={{ marginTop: 8 }}>Explained to you in person on {fmtDate(receipt.explained_at)}.</p>}
               </div>
             )}

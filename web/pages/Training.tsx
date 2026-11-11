@@ -72,6 +72,7 @@ function MyTraining() {
         <div className="row between"><h2 id="rec-h">My training record</h2><Button variant="secondary" onClick={() => setExt({ title: '', provider: '', completed_on: londonToday(), file: null })}>Add an external certificate</Button></div>
         {(records.data ?? []).length === 0 ? <Empty>Nothing completed yet.</Empty> : (
           <ul className="list">{records.data!.map((r) => <li key={r.id}><span><strong>{r.title}</strong><br /><span className="muted small">{fmtDate(r.completed_on)} · {r.source === 'course' ? 'Hub course' : `External${r.provider ? `, ${r.provider}` : ''}`}</span></span>
+            {r.source === 'course' && <Link className="btn secondary" to={`/training/certificates/${r.id}`}>Certificate</Link>}
             {r.source === 'external' && (r.verified_at ? <Status s="verified" text={`Verified by ${r.verified_by_name}`} /> : <Status s="awaiting_verification" />)}</li>)}</ul>
         )}
       </section>
@@ -461,16 +462,18 @@ function Manage() {
   const courses = useApi<any[]>('/courses');
   const marking = useApi<any[]>(manage.length ? `/marking${hub.q()}` : null);
   const verify = useApi<any[]>(manage.length ? `/training/verify-queue${hub.q()}` : null);
-  const [dlg, setDlg] = useState<null | 'req' | 'assign' | 'equiv'>(null);
+  const [dlg, setDlg] = useState<null | 'req' | 'assign' | 'equiv' | 'cert'>(null);
   const [f, setF] = useState<any>({});
   const [mark, setMark] = useState<any>(null);
-  const people = useApi<any[]>(dlg === 'assign' && f.company_id ? `/people?company=${f.company_id}` : null);
+  const people = useApi<any[]>((dlg === 'assign' || dlg === 'cert') && f.company_id ? `/people?company=${f.company_id}` : null);
   const published = (courses.data ?? []).filter((c) => c.status === 'published' && (!f.company_id || !c.company_id || c.company_id === f.company_id));
   const done = (msg: string) => { setDlg(null); toast(msg); matrix.reload(); reqs.reload(); };
   const addReq = useSubmit(async () => { await post('/training/requirements', { company_id: f.company_id, course_root_id: f.course_root_id, job_title: f.job_title || null, due_within_days: Number(f.due_within_days), refresher_months: f.refresher_months ? Number(f.refresher_months) : null }); done('Requirement added.'); });
   const retire = useSubmit(async (rid: string) => { await post(`/training/requirements/${rid}/retire`); done('Requirement removed. Past records are kept.'); });
   const assign = useSubmit(async () => { await post('/training/assignments', f); done('Training assigned.'); });
   const equiv = useSubmit(async () => { await post('/training/equivalences', f); done('Equivalent course accepted.'); });
+  const nav = useNavigate();
+  const award = useSubmit(async () => { const r = await post('/training/certificates', f); done('Certificate given.'); nav(`/training/certificates/${r.id}`); });
   const openMark = useSubmit(async (m: any) => { setMark({ ...(await api('GET', `/attempts/${m.id}`)), person_name: m.person_name, marks: {} }); });
   const saveMark = useSubmit(async () => {
     if (mark.status === 'awaiting_approval') {
@@ -512,6 +515,7 @@ function Manage() {
           <div className="row between"><h2 id="rq-h">Requirements</h2><div className="row">
             <Button variant="secondary" onClick={() => { setF({ company_id: manage[0].id, course_root_id: '', job_title: '', due_within_days: 28, refresher_months: 12 }); setDlg('req'); }}>Add requirement</Button>
             <Button variant="secondary" onClick={() => { setF({ company_id: manage[0].id, person_id: '', course_root_id: '', due_on: londonToday() }); setDlg('assign'); }}>Assign to a person</Button>
+            <Button variant="secondary" onClick={() => { setF({ company_id: manage[0].id, person_id: '', course_root_id: '', completed_on: londonToday() }); setDlg('cert'); }}>Give a certificate</Button>
             <Button variant="ghost" onClick={() => { setF({ company_id: manage[0].id, course_root_id: '', equivalent_root_id: '' }); setDlg('equiv'); }}>Accept an equivalent course</Button></div></div>
           {(reqs.data ?? []).length === 0 ? <Empty>No requirements.</Empty> : <ul className="list">{reqs.data!.map((r) => <li key={r.id}><span><strong>{r.course_title}</strong> <CompanyBadge code={r.company_code} /><br /><span className="muted small">{r.job_title ? `Job title: ${r.job_title}` : 'Everyone'} · within {r.due_within_days} days of starting{r.refresher_months && ` · refresh every ${r.refresher_months} months`}</span></span>
             {hub.can('training.manage', r.company_id) && <Button variant="ghost" busy={retire.busy} onClick={() => retire.run(r.id)}>Remove</Button>}</li>)}</ul>}
@@ -534,6 +538,14 @@ function Manage() {
         <Field label="Person"><select name="person_id" value={f.person_id ?? ''} onChange={(e) => setF({ ...f, person_id: e.target.value })}><option value="">Choose…</option>{people.data?.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></Field>
         <Field label="Course"><select name="course_root_id" value={f.course_root_id} onChange={(e) => setF({ ...f, course_root_id: e.target.value })}><option value="">Choose…</option>{published.map((c) => <option key={c.root_id} value={c.root_id}>{c.title}</option>)}</select></Field>
         <Field label="Due" error={assign.error?.fields.due_on}><input name="due_on" type="date" value={f.due_on ?? ''} onChange={(e) => setF({ ...f, due_on: e.target.value })} /></Field>
+      </Dialog>
+      <Dialog open={dlg === 'cert'} onClose={() => setDlg(null)} title="Give a certificate" footer={<Button busy={award.busy} onClick={() => award.run()}>Give certificate</Button>}>
+        <p className="small muted">For training you delivered or watched, for example face to face. It counts as completing the course, and the person can open and print the certificate from their training record.</p>
+        <ErrorSummary error={award.error} />
+        <Field label="Company"><select name="company_id" value={f.company_id} onChange={(e) => setF({ ...f, company_id: e.target.value, person_id: '' })}>{manage.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+        <Field label="Person" error={award.error?.fields.person_id}><select name="person_id" value={f.person_id ?? ''} onChange={(e) => setF({ ...f, person_id: e.target.value })}><option value="">Choose…</option>{people.data?.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></Field>
+        <Field label="Course" error={award.error?.fields.course_root_id}><select name="course_root_id" value={f.course_root_id} onChange={(e) => setF({ ...f, course_root_id: e.target.value })}><option value="">Choose…</option>{published.map((c) => <option key={c.root_id} value={c.root_id}>{c.title}</option>)}</select></Field>
+        <Field label="Completed on" error={award.error?.fields.completed_on}><input name="completed_on" type="date" max={londonToday()} value={f.completed_on ?? ''} onChange={(e) => setF({ ...f, completed_on: e.target.value })} /></Field>
       </Dialog>
       <Dialog open={dlg === 'equiv'} onClose={() => setDlg(null)} title="Accept an equivalent course" footer={<Button busy={equiv.busy} onClick={() => equiv.run()}>Accept</Button>}>
         <p className="small muted">People who completed the equivalent course will count as up to date for the required one, in this company only.</p>

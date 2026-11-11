@@ -20,6 +20,9 @@ describe('staff assignments', () => {
     const board = (await priya.get('/api/team')).body;
     expect(board.managers.find((m: any) => m.id === P.casey).staff.map((s: any) => s.id)).toEqual([P.sam]);
     expect(board.staff.some((s: any) => s.id === P.priya)).toBe(false);
+    // Maintenance and cleaning staff can be assigned too.
+    await pool.query(`update appointments set job_role_key = 'maintenance_operative' where id = $1`, [A.samVH]);
+    expect((await priya.get('/api/team')).body.staff.some((s: any) => s.id === P.sam)).toBe(true);
   });
 
   it('a support manager sees and approves their assigned staff’s work, and loses it when the assignment ends', async () => {

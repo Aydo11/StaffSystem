@@ -59,3 +59,15 @@ describe('qualifications', () => {
     expect((await (await as('priya')).post(`/api/qualifications/${q.id}/verify`)).status).toBe(404);
   });
 });
+
+describe('clearance exemption', () => {
+  it('directors and administrators do not need deployment clearance', async () => {
+    const morgan = await as('morgan'); // HR in every company
+    expect((await morgan.get(`/api/people/${P.alex}`)).body.clearanceExempt).toContain(C.VH); // super administrator
+    expect((await morgan.get(`/api/people/${P.sam}`)).body.clearanceExempt).toEqual([]);
+    await pool.query(`update appointments set job_role_key = 'director' where id = $1`, [A.samVH]);
+    expect((await morgan.get(`/api/people/${P.sam}`)).body.clearanceExempt).toEqual([C.VH]); // director in VH only
+    const r = await pool.query('select clearance_exempt($1, $2) as vh, clearance_exempt($1, $3) as whm', [P.sam, C.VH, C.WHM]);
+    expect(r.rows[0]).toEqual({ vh: true, whm: false });
+  });
+});

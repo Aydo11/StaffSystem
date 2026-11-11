@@ -33,6 +33,7 @@ export function MyDay() {
       {d.error && <LoadError error={d.error} retry={d.reload} />}
       {d.loading && !d.data ? <Skeleton lines={6} /> : d.data && (
         <>
+          <ShiftToday data={d.data} today={today} />
           <div className="kpis">
             <Link to="/inbox" className="kpi card-link"><div className="value">{d.data.inboxCount}</div><div className="label">Needs Your Review</div><div className="explain">Approvals and exceptions with you as owner</div></Link>
             <Link to="/tasks?mine=true" className="kpi card-link"><div className="value">{d.data.tasks.length}</div><div className="label">Open tasks</div><div className="explain">{d.data.tasks.filter((t: any) => t.overdue).length} overdue</div></Link>
@@ -108,3 +109,31 @@ export function MyDay() {
   );
 }
 
+
+/** "Your shift today": what to do first, in order, with alerts at my houses and their info packs. */
+function ShiftToday({ data, today }: { data: any; today: string }) {
+  const visits = data.scheduled.filter((s: any) => s.planned_start.slice(0, 10) === today && !s.missed);
+  const due = data.tasks.filter((t: any) => t.overdue || t.due_on === today);
+  const houses = [...new Map([...visits.map((s: any) => [s.property_id, s.property_name]), ...due.filter((t: any) => t.property_id).map((t: any) => [t.property_id, t.property_name])]).entries()] as [string, string][];
+  const steps: [number, string, string][] = [
+    [visits.length, `visit${visits.length === 1 ? '' : 's'} planned today`, '#plan-h'],
+    [due.length, `task${due.length === 1 ? '' : 's'} due today or overdue`, '#tasks-h'],
+    [data.handover.length, `handover note${data.handover.length === 1 ? '' : 's'} for today`, '#ho-h'],
+    [data.alerts.length, `alert${data.alerts.length === 1 ? '' : 's'} at your houses`, '#alerts-h'],
+  ];
+  return (
+    <section className="card shift" aria-labelledby="shift-h">
+      <h2 id="shift-h">Your shift today</h2>
+      <ol className="shift-steps">{steps.map(([n, t, href]) => <li key={t} className={n ? 'has' : ''}><a href={href}><strong>{n}</strong> {t}</a></li>)}</ol>
+      {data.alerts.length > 0 && <>
+        <h3 id="alerts-h" className="small" style={{ margin: '12px 0 4px' }}>Alerts at your houses</h3>
+        <ul className="list">{data.alerts.map((x: any) => <li key={x.kind + x.id}>
+          <span><Link to={x.kind === 'repair' ? `/estates/repairs/${x.id}` : `/complaints/${x.id}`}><strong>{x.title}</strong></Link><br />
+            <span className="small muted">{x.property_name} · {x.kind === 'repair' ? 'repair' : 'complaint'} since {fmtDate(x.since)}</span></span>
+          <Status s={x.kind === 'repair' ? (x.level === 'emergency' ? 'action' : 'warn') : 'info'} text={x.kind === 'repair' ? (x.level === 'emergency' ? 'Emergency repair' : 'Urgent repair') : 'Open complaint'} />
+        </li>)}</ul></>}
+      {houses.length > 0 && <p className="small" style={{ marginTop: 12 }}>Info packs for today: {houses.map(([id, name], i) => <span key={id}>{i ? ' · ' : ''}<Link to={`/properties/${id}?tab=info`}>{name}</Link></span>)}</p>}
+      <p className="small muted" style={{ marginTop: 8 }}>Not sure how to do something? <Link to="/guides">Read the guides</Link>.</p>
+    </section>
+  );
+}

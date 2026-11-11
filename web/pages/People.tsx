@@ -454,6 +454,8 @@ function ClearanceTab({ d, reload }: { d: any; reload: () => void }) {
   const [dlg, setDlg] = useState<null | 'decide' | 'check'>(null);
   const [f, setF] = useState<any>({});
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
+  // One click: the manager confirms the person is cleared; the full form stays for restrictions or other outcomes.
+  const clear = useSubmit(async (company_id: string) => { await post('/clearance', { person_id: p.id, company_id, status: 'cleared' }); toast('Marked as cleared.'); reload(); });
   const decide = useSubmit(async () => { await post('/clearance', { person_id: p.id, company_id: f.company_id, status: f.status, restrictions: f.restrictions || undefined, evidence_summary: f.evidence_summary, review_date: f.review_date || null, decided_on: f.decided_on || undefined }); setDlg(null); toast('Clearance decision recorded.'); reload(); });
   const saveCheck = useSubmit(async () => {
     const body = { check_type: f.check_type, label: f.label, status: f.status, requested_on: f.requested_on || null, issued_on: f.issued_on || null, verified_on: f.verified_on || null, reference_number: f.reference_number || null, follow_up_on: f.follow_up_on || null, next_review_on: f.next_review_on || null, actions: f.actions || null };
@@ -464,8 +466,9 @@ function ClearanceTab({ d, reload }: { d: any; reload: () => void }) {
   return (
     <div className="grid-2">
       <section className="card" aria-labelledby="cl-h">
-        <div className="row between"><h2 id="cl-h">Deployment clearance</h2>{can.decideClearance.length > 0 && <Button variant="secondary" onClick={() => { setF({ company_id: can.decideClearance[0], status: 'cleared', restrictions: '', evidence_summary: '', review_date: '', decided_on: londonToday() }); setDlg('decide'); }}>Record a decision</Button>}</div>
+        <div className="row between"><h2 id="cl-h">Deployment clearance</h2>{can.decideClearance.length > 0 && <Button variant="ghost" onClick={() => { setF({ company_id: can.decideClearance[0], status: 'cleared', restrictions: '', evidence_summary: '', review_date: '', decided_on: londonToday() }); setDlg('decide'); }}>Other decision</Button>}</div>
         <p className="small muted">Clearance is decided separately for each company.</p>
+        <ErrorSummary error={clear.error} />
         {companies.map((a: any) => {
           const c = clearance.find((x: any) => x.company_id === a.company_id);
           if (clearanceExempt?.includes(a.company_id)) return (
@@ -476,13 +479,13 @@ function ClearanceTab({ d, reload }: { d: any; reload: () => void }) {
           );
           return (
             <div key={a.company_id} className="card" style={{ marginTop: 12 }}>
-              <div className="row between"><strong><CompanyBadge code={a.company_code} name={a.company_name} /> {a.company_name}</strong><Status s={c?.status ?? 'none'} /></div>
+              <div className="row between"><strong><CompanyBadge code={a.company_code} name={a.company_name} /> {a.company_name}</strong><span className="row"><Status s={c?.status ?? 'none'} />{c?.status !== 'cleared' && can.decideClearance.includes(a.company_id) && <Button busy={clear.busy} onClick={() => clear.run(a.company_id)}>Mark as cleared</Button>}</span></div>
               {c ? <dl className="facts" style={{ marginTop: 8 }}>
                 {c.restrictions && <><dt>Restrictions</dt><dd>{c.restrictions}</dd></>}
                 <dt>Evidence</dt><dd>{c.evidence_summary ?? '—'}</dd>
                 <dt>Decided by</dt><dd>{c.decided_by_name ?? '—'}, {fmtDate(c.decided_at)}{c.recorded_at && fmtDate(c.recorded_at) !== fmtDate(c.decided_at) && <span className="muted small"> (recorded {fmtDate(c.recorded_at)})</span>}</dd>
                 <dt>Review date</dt><dd>{fmtDate(c.review_date)}</dd>
-              </dl> : <p className="muted">No decision recorded. Deployment may be blocked.</p>}
+              </dl> : <p className="muted">Not marked as cleared yet.</p>}
             </div>
           );
         })}
@@ -507,7 +510,7 @@ function ClearanceTab({ d, reload }: { d: any; reload: () => void }) {
         <Field label="Company"><select name="company_id" value={f.company_id} onChange={set('company_id')}>{can.decideClearance.map((cid: string) => <option key={cid} value={cid}>{companies.find((a) => a.company_id === cid)?.company_name}</option>)}</select></Field>
         <Field label="Decision"><select name="status" value={f.status} onChange={set('status')}>{CLEAR.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></Field>
         {f.status === 'cleared_with_restrictions' && <Field label="Restrictions" error={decide.error?.fields.restrictions}><textarea name="restrictions" value={f.restrictions} onChange={set('restrictions')} /></Field>}
-        <Field label="Evidence considered" hint="Summarise what was checked. Do not record criminal-record details." error={decide.error?.fields.evidence_summary}><textarea name="evidence_summary" value={f.evidence_summary} onChange={set('evidence_summary')} /></Field>
+        <Field label="Evidence considered" optional hint="Summarise what was checked. Do not record criminal-record details." error={decide.error?.fields.evidence_summary}><textarea name="evidence_summary" value={f.evidence_summary} onChange={set('evidence_summary')} /></Field>
         <div className="form-grid">
           <Field label="Date decided" hint="Change this if the checks were completed earlier." error={decide.error?.fields.decided_on}><input name="decided_on" type="date" max={londonToday()} value={f.decided_on} onChange={set('decided_on')} /></Field>
           <Field label="Review date" optional><input name="review_date" type="date" value={f.review_date} onChange={set('review_date')} /></Field>

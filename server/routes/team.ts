@@ -14,10 +14,10 @@ const ELIGIBLE_MANAGER = (p: string, c: string) => `(exists (select 1 from appoi
      where ea.person_id = ${p} and ea.company_id = ${c} and ${ACTIVE_APPT('ea')} and ej.access_role_key in ('manager', 'support_manager'))
   or exists (select 1 from role_grants g where g.person_id = ${p} and g.company_id = ${c} and g.role_key in ('manager', 'support_manager')
      and g.revoked_at is null and g.valid_from <= now() and (g.expires_at is null or g.expires_at > now())))`;
-// Who can be assigned: support staff, meaning a current role at staff level (support workers, seniors, leads, admin) or an old free-text title,
+// Who can be assigned: support, maintenance and cleaning staff, meaning a current role at staff or maintenance level or an old free-text title,
 // and no manager or admin grant.
 const SUPPORT_STAFF = (p: string, c: string) => `exists (select 1 from appointments sa2 left join job_roles sj on sj.key = sa2.job_role_key
-     where sa2.person_id = ${p} and sa2.company_id = ${c} and ${ACTIVE_APPT('sa2')} and coalesce(sj.access_role_key, 'staff') = 'staff')
+     where sa2.person_id = ${p} and sa2.company_id = ${c} and ${ACTIVE_APPT('sa2')} and coalesce(sj.access_role_key, 'staff') in ('staff', 'maintenance'))
   and not exists (select 1 from role_grants sg where sg.person_id = ${p} and (sg.company_id = ${c} or sg.company_id is null) and sg.revoked_at is null
      and (sg.expires_at is null or sg.expires_at > now()) and sg.role_key in ('super_admin', 'company_admin', 'hr_admin', 'manager', 'support_manager'))`;
 
@@ -70,7 +70,7 @@ team.post('/staff-assignments', async (req, res) => {
     for (const pid of new Set(b.person_ids)) {
       if (pid === b.manager_id) throw bad('Someone cannot be assigned to themselves.');
       if (!(await one(`select 1 where ${SUPPORT_STAFF('$1', '$2')}`, [pid, b.company_id], db)))
-        throw bad('Only current support staff in this company can be assigned.', { fields: { person_ids: 'Includes someone who is not current support staff here' } });
+        throw bad('Only current support, maintenance and cleaning staff in this company can be assigned.', { fields: { person_ids: 'Includes someone who is not current support, maintenance or cleaning staff here' } });
       const r = await one(`insert into staff_assignments (company_id, manager_id, person_id, assigned_by) values ($1,$2,$3,$4) on conflict do nothing returning id`,
         [b.company_id, b.manager_id, pid, req.person.id], db);
       if (r) { out.push(pid); await audit(db, req.person.id, b.company_id, 'staff_assignment', r.id, 'assign', { manager_id: b.manager_id, person_id: pid }); }

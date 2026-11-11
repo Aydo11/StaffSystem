@@ -602,6 +602,40 @@ training.post('/training/records/:id/certificate', upload.single('file'), async 
   });
   res.status(201).json({ id: f.id });
 });
+// ── Certificates for Hub courses: issued by the organisation, never an external qualification ──
+// A trainer hands one out after training they delivered or watched (for example face to face); it counts as a completion.
+training.post('/training/certificates', async (req, res) => {
+  const b = parse(z.object({ company_id: uuid, person_id: uuid, course_root_id: uuid, completed_on: isoDate }), req.body);
+  need(req.access, 'training.manage', b.company_id);
+  if ((await one<{ f: boolean }>(`select $1::date > ${LONDON_TODAY} f`, [b.completed_on]))!.f) throw bad('The completion date cannot be in the future.', { fields: { completed_on: 'In the future' } });
+  const c = await one(`select id, root_id, title from courses where root_id = $1 and status = 'published' and (company_id is null or company_id = $2) order by version desc limit 1`, [b.course_root_id, b.company_id]);
+  if (!c) throw bad('Choose a published course from this company or shared learning.', { fields: { course_root_id: 'Not available here' } });
+  if (!(await one('select 1 from appointments where person_id = $1 and company_id = $2', [b.person_id, b.company_id]))) throw bad('This person has no role in this company.', { fields: { person_id: 'No role here' } });
+  const r = await tx(async (db) => {
+    const row = await one(`insert into training_records (person_id, course_root_id, course_id, title, source, completed_on, created_by, verified_by, verified_at)
+      values ($1,$2,$3,$4,'course',$5,$6,$6,now()) returning *`, [b.person_id, c.root_id, c.id, c.title, b.completed_on, req.person.id], db);
+    await audit(db, req.person.id, b.company_id, 'training_record', row.id, 'certificate', { person_id: b.person_id, course_root_id: c.root_id, completed_on: b.completed_on });
+    await notify(db, b.person_id, b.company_id, `You have been given a certificate: ${c.title}`, `/training/certificates/${row.id}`);
+    return row;
+  });
+  res.status(201).json(r);
+});
+training.get('/training/certificates/:id', async (req, res) => {
+  const a = req.access;
+  const r = await one(`select r.id, r.person_id, r.title, r.completed_on, r.created_at, coalesce(p.preferred_name, p.full_name) as display_name, p.full_name,
+      v.full_name as issued_by_name,
+      -- shortcut: a shared course taken by someone in several companies shows their earliest company; store the issuing company if that matters.
+      (select row_to_json(x) from (select co.id, co.name, co.legal_name, co.brand_primary from companies co
+         where co.id = coalesce(c.company_id, (select ap.company_id from appointments ap where ap.person_id = r.person_id order by ap.start_date limit 1))) x) as company
+    from training_records r join people p on p.id = r.person_id left join courses c on c.id = r.course_id left join people v on v.id = coalesce(r.verified_by, nullif(r.created_by, r.person_id))
+   where r.id = $1 and r.source = 'course'`, [idParam(req.params.id)]);
+  if (!r) throw notFound();
+  if (r.person_id !== a.personId) {
+    const cos = (await q<{ company_id: string }>('select distinct company_id from appointments where person_id = $1', [r.person_id])).map((x) => x.company_id);
+    if (!cos.some((co) => can(a, 'training.view_all', co))) throw notFound();
+  }
+  res.json(r);
+});
 training.post('/training/records/:id/verify', async (req, res) => {
   const r = await one('select * from training_records where id = $1', [idParam(req.params.id)]);
   if (!r || r.source !== 'external') throw notFound();

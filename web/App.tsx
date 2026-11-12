@@ -31,6 +31,7 @@ import { InstallPage } from './pages/DataTools.tsx';
 import { JobDescriptionPage } from './pages/Development.tsx';
 import { LeavePage } from './pages/Leave.tsx';
 import { CourseEditor, Training } from './pages/Training.tsx';
+import { CertificatePage } from './pages/Certificate.tsx';
 import { CourseDetail, LessonPlayer } from './pages/Learning.tsx';
 import { Properties, PropertyPage } from './pages/Properties.tsx';
 import { TaskPage, Tasks } from './pages/Tasks.tsx';
@@ -220,6 +221,7 @@ function Shell() {
             <Route path="/training/courses/:id" element={<CourseDetail />} />
             <Route path="/training/courses/:id/learn" element={<LessonPlayer />} />
             <Route path="/training/courses/:id/edit" element={<CourseEditor />} />
+            <Route path="/training/certificates/:id" element={<CertificatePage />} />
             <Route path="/policies" element={<Policies />} />
             <Route path="/guides" element={<Guides />} />
             <Route path="/guides/:id" element={<GuidePage />} />

@@ -616,7 +616,7 @@ people.get('/clearance', async (req, res) => {
 });
 
 people.post('/clearance', async (req, res) => {
-  const b = parse(z.object({ person_id: uuid, company_id: uuid, status: z.enum(['pending', 'cleared', 'cleared_with_restrictions', 'not_authorised']), restrictions: text(1000).optional(), evidence_summary: text(1000).min(3), review_date: isoDate.nullable().optional(), decided_on: isoDate.optional() }), req.body);
+  const b = parse(z.object({ person_id: uuid, company_id: uuid, status: z.enum(['pending', 'cleared', 'cleared_with_restrictions', 'not_authorised']), restrictions: text(1000).optional(), evidence_summary: text(1000).min(3).optional(), review_date: isoDate.nullable().optional(), decided_on: isoDate.optional() }), req.body);
   need(req.access, 'clearance.decide', b.company_id);
   // A decision made before it was entered (for example before the Hub existed) keeps its real date; recorded_at shows when it was entered.
   if (b.decided_on && b.decided_on > (await one<{ d: string }>(`select ${LONDON_TODAY}::text d`))!.d) throw bad('The decision date cannot be in the future.', { fields: { decided_on: 'In the future' } });
@@ -626,7 +626,7 @@ people.post('/clearance', async (req, res) => {
   if (!has) throw bad('This person has no role in this company.');
   const row = await one(`insert into clearance_decisions (person_id, company_id, status, restrictions, evidence_summary, decided_by, review_date, decided_at)
     values ($1,$2,$3,$4,$5,$6,$7, coalesce(($8::date + time '12:00') at time zone 'Europe/London', now())) returning *`,
-    [b.person_id, b.company_id, b.status, b.restrictions ?? null, b.evidence_summary, req.person.id, b.review_date ?? null, b.decided_on ?? null]);
+    [b.person_id, b.company_id, b.status, b.restrictions ?? null, b.evidence_summary ?? null, req.person.id, b.review_date ?? null, b.decided_on ?? null]);
   await audit(pool, req.person.id, b.company_id, 'clearance_decision', row.id, 'decide', { person_id: b.person_id, status: b.status, decided_on: b.decided_on ?? null });
   await notify(pool, b.person_id, b.company_id, 'Your deployment clearance was updated', '/profile');
   res.status(201).json(row);

@@ -368,7 +368,7 @@ const attemptView = (at: any, own: boolean) => ({ ...at, questions: own ? public
 // After marking: each question right or wrong (manual ones by the marks given), explanations, lessons to revisit and,
 // when the course allows it, the right answers.
 function review(at: any) {
-  const items = at.questions.map((qn: any) => {
+  const items = at.questions.filter((qn: any) => !MANUAL.includes(qn.type) || at.manual_marks).map((qn: any) => {
     const got = MANUAL.includes(qn.type) ? Number(at.manual_marks?.[qn.id] ?? 0) : isRight(qn, at.answers[qn.id]) ? qn.marks : 0;
     return { id: qn.id, marks: got, of: qn.marks, right: got === qn.marks, explanation: qn.explanation ?? null, comment: at.feedback?.[qn.id] ?? null,
       lesson: qn.lesson_ref != null ? at.lesson_titles?.[qn.lesson_ref] ?? null : null,
@@ -424,20 +424,19 @@ training.put('/attempts/:id/answers', async (req, res) => {
 });
 
 function autoMark(questions: any[], answers: Record<string, any>) {
-  let marks = 0, max = 0, written = false;
+  let marks = 0, max = 0;
   for (const qn of questions) {
+    if (MANUAL.includes(qn.type)) continue; // kept with the attempt, not scored: quizzes mark themselves
     max += qn.marks;
-    if (MANUAL.includes(qn.type)) { written = true; continue; }
     if (isRight(qn, answers[qn.id])) marks += qn.marks; // all-or-nothing per question
   }
-  return { marks, max, written };
+  return { marks, max };
 }
 async function finish(db: Db, at: any, score: number, max: number, markedBy: string | null) {
-  const passed = Math.round((score * 100) / max) >= at.pass_mark;
-  // A pass on a course that needs approval waits for someone who manages training before it counts.
-  const status = passed && at.approval_required ? 'awaiting_approval' : 'marked';
-  await q(`update quiz_attempts set status = $6, score = $2, max_score = $3, passed = $4, marked_by = $5, marked_at = now() where id = $1`, [at.id, score, max, passed, markedBy, status], db);
-  if (passed && status === 'marked') await q(`insert into training_records (person_id, course_root_id, course_id, title, source, completed_on, attempt_id, created_by) values ($1,$2,$3,$4,'course', ${LONDON_TODAY}, $5, $1)`, [at.person_id, at.root_id, at.course_id, at.title, at.id], db);
+  // Marked automatically and counted at once: no trainer marking or manager approval (owner decision, 13 Nov 2026).
+  const passed = !max || Math.round((score * 100) / max) >= at.pass_mark;
+  await q(`update quiz_attempts set status = 'marked', score = $2, max_score = $3, passed = $4, marked_by = $5, marked_at = now() where id = $1`, [at.id, score, max, passed, markedBy], db);
+  if (passed) await q(`insert into training_records (person_id, course_root_id, course_id, title, source, completed_on, attempt_id, created_by) values ($1,$2,$3,$4,'course', ${LONDON_TODAY}, $5, $1)`, [at.person_id, at.root_id, at.course_id, at.title, at.id], db);
   return passed;
 }
 training.post('/attempts/:id/submit', async (req, res) => {
@@ -448,10 +447,9 @@ training.post('/attempts/:id/submit', async (req, res) => {
     // Answers sent after the time limit are ignored; the last answers saved in time are marked.
     const answers = !late && req.body?.answers ? keepFiles(at, parse(answersSchema, req.body.answers)) : at.answers;
     const m = autoMark(at.questions, answers);
-    await q(`update quiz_attempts set answers = $2, submitted_at = now(), auto_marks = $3, status = $4 where id = $1`, [at.id, JSON.stringify(answers), m.marks, m.written ? 'awaiting_marking' : 'in_progress'], db);
-    if (m.written) return { status: 'awaiting_marking', late };
+    await q(`update quiz_attempts set answers = $2, submitted_at = now(), auto_marks = $3 where id = $1`, [at.id, JSON.stringify(answers), m.marks], db);
     const passed = await finish(db, at, m.marks, m.max, null);
-    return { status: passed && at.approval_required ? 'awaiting_approval' : 'marked', score: m.marks, max: m.max, passed, late };
+    return { status: 'marked', score: m.marks, max: m.max, passed, late };
   });
   const { at } = await loadAttempt(req.access, idParam(req.params.id));
   res.json({ ...result, review: attemptView(at, true).review });

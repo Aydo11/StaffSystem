@@ -36,7 +36,7 @@ describe('question types and marking', () => {
       expect((await morgan.patch(`/api/courses/${c.id}`).send({ questions: [q] })).status).toBe(400);
   });
 
-  it('hides answers, marks automatic types, waits for a trainer on evidence and observation, then explains the result', async () => {
+  it('hides answers, marks automatically without a trainer, then explains the result', async () => {
     const { morgan, c } = await course();
     const sam = await as('sam');
     const at = (await sam.post(`/api/courses/${c.id}/attempts`)).body;
@@ -51,34 +51,26 @@ describe('question types and marking', () => {
     const f = (await sam.post(`/api/attempts/${at.id}/files/q5`).attach('file', png, 'note.png')).body;
     expect((await sam.put(`/api/attempts/${at.id}/answers`).send({ answers: { q5: 'not-a-file' } })).status).toBe(200);
     const sub = (await sam.post(`/api/attempts/${at.id}/submit`).send({ answers: { q1: ['b'], q2: ['p1', 'p2', 'p3'], q3: ['s1', 's2', 's3'], q4: ' FIVE ', q5: 'x' } })).body;
-    expect(sub.status).toBe('awaiting_marking');
+    expect(sub).toMatchObject({ status: 'marked', score: 5, max: 6, passed: true }); // q1 wrong; matching 2 + ordering 2 + fill 1; evidence and observation not scored
     const stored = (await pool.query('select answers, auto_marks from quiz_attempts where id = $1', [at.id])).rows[0];
-    expect(stored).toMatchObject({ auto_marks: 5, answers: { q5: f.id } }); // q1 wrong; matching 2 + ordering 2 + fill 1
-    expect((await morgan.get(`/api/files/${f.id}`)).status).toBe(200); // the marker can open the evidence
+    expect(stored).toMatchObject({ auto_marks: 5, answers: { q5: f.id } });
+    expect((await morgan.get(`/api/files/${f.id}`)).status).toBe(200); // a trainer can still open the evidence
     expect((await (await as('taylor')).get(`/api/files/${f.id}`)).status).toBe(404);
-
-    expect((await morgan.post(`/api/attempts/${at.id}/mark`).send({ marks: { q5: 2 } })).status).toBe(400); // observation not marked
-    const marked = (await morgan.post(`/api/attempts/${at.id}/mark`).send({ marks: { q5: 2, q6: 1 }, feedback: { q6: 'Did not record the time of the check.' } })).body;
-    expect(marked).toMatchObject({ score: 8, max: 10, passed: true });
+    expect((await pool.query('select count(*)::int n from training_records where attempt_id = $1', [at.id])).rows[0].n).toBe(1);
+    expect((await morgan.get('/api/marking')).body).toEqual([]); // nothing waits for anyone
     const view = (await sam.get(`/api/attempts/${at.id}`)).body;
     expect(view.review.items.find((x: any) => x.id === 'q1')).toMatchObject({ right: false, explanation: 'The local authority decides under section 42.', answer: 'The local authority', lesson: 'Safeguarding' });
-    expect(view.review.items.find((x: any) => x.id === 'q6')).toMatchObject({ marks: 1, of: 2, comment: 'Did not record the time of the check.' });
+    expect(view.review.items.map((x: any) => x.id)).not.toContain('q6');
     expect(view.review.revisit).toEqual(['Safeguarding']);
   });
 
-  it('a pass on a course that needs approval counts only once someone else approves it', async () => {
-    const { morgan, c } = await course({ approval_required: true, questions: [QUESTIONS[0], QUESTIONS[3]], show_feedback: 'none' });
+  it('a pass counts at once even if the course was set to need approval', async () => {
+    const { c } = await course({ approval_required: true, questions: [QUESTIONS[0], QUESTIONS[3]], show_feedback: 'none' });
     const sam = await as('sam');
     const at = (await sam.post(`/api/courses/${c.id}/attempts`)).body;
     const sub = (await sam.post(`/api/attempts/${at.id}/submit`).send({ answers: { q1: ['a'], q4: '5' } })).body;
-    expect(sub).toMatchObject({ status: 'awaiting_approval', passed: true });
-    expect(sub.review).toBeUndefined();
-    const records = async () => (await pool.query('select count(*)::int n from training_records where attempt_id = $1', [at.id])).rows[0].n;
-    expect(await records()).toBe(0);
-    expect((await morgan.get('/api/marking')).body.map((m: any) => m.status)).toContain('awaiting_approval');
-    expect((await sam.post(`/api/attempts/${at.id}/approve`).send({ approve: true, note: 'Self' })).status).not.toBe(200);
-    expect((await morgan.post(`/api/attempts/${at.id}/approve`).send({ approve: true, note: 'Observed on shift and checked the quiz.' })).status).toBe(200);
-    expect(await records()).toBe(1);
+    expect(sub).toMatchObject({ status: 'marked', passed: true });
+    expect((await pool.query('select count(*)::int n from training_records where attempt_id = $1', [at.id])).rows[0].n).toBe(1);
   });
 });
 

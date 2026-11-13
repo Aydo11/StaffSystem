@@ -39,6 +39,7 @@ import { Timesheets, Workload } from './pages/Timesheets.tsx';
 import { Team } from './pages/Team.tsx';
 import { Avatar, Button, Icon, Skeleton, ToastProvider } from './ui.tsx';
 import { GuidePage, Guides } from './pages/Guides.tsx';
+import { VoidsPage } from './pages/Voids.tsx';
 
 export function App() {
   const [config, setConfig] = useState<AuthConfig | null>(null);
@@ -92,6 +93,7 @@ const NAV: { to: string; label: string; icon: string; group: string; show?: (h: 
   { to: '/attendance', label: 'Visits & attendance', icon: 'clock', group: 'Properties & visits' },
   { to: '/tasks', label: 'Tasks', icon: 'tasks', group: 'Properties & visits' },
   { to: '/handover', label: 'Handover', icon: 'note', group: 'Properties & visits' },
+  { to: '/voids', label: 'Voids', icon: 'building', group: 'Properties & visits', show: (h) => !!h.me.voids },
   { to: '/estates', label: 'Repairs & safety', icon: 'shield', group: 'Properties & visits' },
   { to: '/compliance', label: 'Property compliance', icon: 'check', group: 'Properties & visits', show: (h) => ['compliance.view', 'compliance.record', 'compliance.manage'].some((x) => h.can(x)) },
   { to: '/activity', label: 'Calendar & activity', icon: 'calendar', group: 'Time & leave' },
@@ -224,6 +226,7 @@ function Shell() {
             <Route path="/training/certificates/:id" element={<CertificatePage />} />
             <Route path="/policies" element={<Policies />} />
             <Route path="/guides" element={<Guides />} />
+            <Route path="/voids" element={<VoidsPage />} />
             <Route path="/guides/:id" element={<GuidePage />} />
             <Route path="/policies/:id" element={<PolicyPage />} />
             <Route path="/governance" element={<Governance />} />

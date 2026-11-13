@@ -7,6 +7,7 @@ import { ACTIVE_APPT, companiesWith, myCompanies, need } from '../perm.ts';
 import { personVisible, propertyVisible, taskVisible } from '../visibility.ts';
 import { inboxFor } from './inbox.ts';
 import { unreadMessages } from './messaging.ts';
+import { hasVoidsAccess } from './voids.ts';
 
 // ── Signed in ──
 export const core = Router();
@@ -32,6 +33,7 @@ core.get('/me', async (req, res) => {
     unread,
     unreadMessages: await unreadMessages(a.personId),
     team: Object.fromEntries([...a.team].map(([c, s]) => [c, [...s]])),
+    voids: await hasVoidsAccess(a),
     agents: a.agentIds.length ? await q('select ag.id, ag.name, c.name as company_name, c.code as company_code from agents ag join companies c on c.id = ag.company_id where ag.id = any($1::uuid[])', [a.agentIds]) : [],
   });
 });

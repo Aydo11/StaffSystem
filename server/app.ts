@@ -13,6 +13,7 @@ import { development } from './routes/development.ts';
 import { team } from './routes/team.ts';
 import { guides } from './routes/guides.ts';
 import { houseinfo } from './routes/houseinfo.ts';
+import { voids } from './routes/voids.ts';
 import { leave } from './routes/leave.ts';
 import { account, authPublic } from './routes/account.ts';
 import { inbox } from './routes/inbox.ts';
@@ -74,7 +75,7 @@ export function createApp() {
   api.use(registrationPublic);
   api.use(authenticate);
   api.use(registrationAdmin);
-  api.use(account, core, guides, houseinfo, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, complaints, estates, compliance, safety, reports, financeimport, financehub, finance, messaging, ai, dataops, leave, development, team, admin);
+  api.use(account, core, guides, houseinfo, voids, inbox, people, properties, visits, tasks, performance, training, policies, governance, cases, complaints, estates, compliance, safety, reports, financeimport, financehub, finance, messaging, ai, dataops, leave, development, team, admin);
   api.use(() => { throw new HttpError(404, 'not_found', 'No such API endpoint.'); });
   app.use('/api', api);
 

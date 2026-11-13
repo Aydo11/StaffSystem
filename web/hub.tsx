@@ -10,6 +10,7 @@ export type Me = {
   unreadMessages: number;
   agents: { id: string; name: string; company_name: string; company_code: string }[];
   team: Record<string, string[]>; // companyId → people assigned to me to manage
+  voids?: boolean; // sees rooms and voids for at least one property
 };
 
 export type Hub = {

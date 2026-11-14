@@ -166,9 +166,9 @@ function Answer({ qn, value, set, attemptId }: { qn: any; value: any; set: (v: a
   if (qn.type === 'file') return <>
     <FilePicker label="Upload your evidence (PDF or photo)" accept="application/pdf,image/jpeg,image/png,image/webp" instant busy={evidence.busy} error={evidence.error?.message}
       buttonText={value ? 'Replace file' : undefined} onChange={(fs) => fs[0] && evidence.run(fs[0])} />
-    {value && <p className="small">File uploaded. A trainer will mark it.</p>}
+    {value && <p className="small">File uploaded.</p>}
     <p className="muted small">Remove names and anything that could identify a resident before you upload.</p></>;
-  return <p className="notice">Your manager or a trainer assesses this by watching your practice. Nothing to answer here.</p>; // observation
+  return <p className="notice">This is about your day-to-day practice. Nothing to answer here and it does not affect your score.</p>; // observation
 }
 
 export function Quiz({ course, onDone }: { course: any; onDone: () => void }) {
@@ -271,7 +271,7 @@ const blankQuestion = (type = 'single') => ({ id: rid(), type, prompt: '', marks
   options: !CHOICE_TYPES.includes(type) ? [] : type === 'true_false' ? [{ id: 't', text: 'True', correct: true }, { id: 'f', text: 'False', correct: false }] : [{ id: 'a', text: '', correct: true }, { id: 'b', text: '', correct: false }],
   ...(type === 'matching' ? { pairs: [{ id: rid(), left: '', right: '' }, { id: rid(), left: '', right: '' }] } : type === 'ordering' ? { items: [{ id: rid(), text: '' }, { id: rid(), text: '' }] } : type === 'fill_blank' ? { accepted: [''] } : {}) });
 const QUESTION_KINDS: [string, string][] = [['single', 'Single choice'], ['multiple', 'Multiple choice'], ['true_false', 'True/false'], ['matching', 'Matching'], ['ordering', 'Ordering'], ['fill_blank', 'Fill in the blank'], ['written', 'Written'], ['file', 'File evidence'], ['observation', 'Observed practice']];
-const MANUAL_NOTE: Record<string, string> = { written: 'A trainer marks written answers. The result waits until they do.', file: 'The learner uploads a document or photo; a trainer marks it.', observation: 'A manager or trainer marks this after watching the learner in practice.' };
+const MANUAL_NOTE: Record<string, string> = { written: 'Saved with the attempt for reference. Not scored: quizzes are marked automatically.', file: 'The learner uploads a document or photo. Kept for reference, not scored.', observation: 'Shown to the learner for reference. Not scored.' };
 function move<T>(list: T[], i: number, by: number) { const out = [...list]; const j = i + by; if (j < 0 || j >= out.length) return out; [out[i], out[j]] = [out[j], out[i]]; return out; }
 
 function AddQuestion({ onAdd }: { onAdd: (type: string) => void }) {
@@ -364,7 +364,6 @@ export function CourseEditor() {
           </div>
           <label className="check"><input type="checkbox" checked={!!c.shuffle_questions} onChange={(e) => setC({ ...c, shuffle_questions: e.target.checked })} /> Shuffle question order for each attempt</label>
           <label className="check"><input type="checkbox" checked={!!c.shuffle_options} onChange={(e) => setC({ ...c, shuffle_options: e.target.checked })} /> Shuffle answer options</label>
-          <label className="check"><input type="checkbox" checked={!!c.approval_required} onChange={(e) => setC({ ...c, approval_required: e.target.checked })} /> A manager must approve a pass before the course counts as complete</label>
         </section>
 
         <section className="card" aria-labelledby="les-h">

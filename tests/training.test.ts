@@ -28,15 +28,12 @@ describe('11 · quizzes', () => {
     expect((await pool.query('select count(*)::int n from training_records where person_id = $1 and completed_on = current_date', [P.sam])).rows[0].n).toBe(0);
     expect((await sam.post(`/api/courses/${FIRE}/complete`).send({ declaration: true })).status).toBe(400); // this course needs its quiz
   });
-  it('auto-marks choices, waits for a trainer to mark written answers, then records completion', async () => {
+  it('marks the quiz automatically and records completion straight away (written answers are kept, not scored)', async () => {
     const sam = await as('sam');
     const at = (await sam.post(`/api/courses/${FIRE}/attempts`)).body;
     expect(JSON.stringify(at.questions)).not.toContain('correct');
     const sub = (await sam.post(`/api/attempts/${at.id}/submit`).send({ answers: RIGHT })).body;
-    expect(sub.status).toBe('awaiting_marking');
-    expect((await sam.post(`/api/attempts/${at.id}/mark`).send({ marks: { q4: 2 } })).status).toBe(403); // not your own
-    const m = (await (await as('morgan')).post(`/api/attempts/${at.id}/mark`).send({ marks: { q4: 2 } })).body;
-    expect(m).toMatchObject({ passed: true, score: 6, max: 6 });
+    expect(sub).toMatchObject({ status: 'marked', passed: true, score: 4, max: 4 });
     const rec = (await pool.query(`select count(*)::int n from training_records where person_id = $1 and attempt_id = $2`, [P.sam, at.id])).rows[0].n;
     expect(rec).toBe(1);
   });

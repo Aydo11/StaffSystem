@@ -132,6 +132,14 @@ function PropertyForm({ existing, onClose, onSaved }: { existing?: any; onClose:
   );
 }
 
+const PROPERTY_GROUPS: { key: string; label: string; tabs: PTab[] }[] = [
+  { key: 'overview', label: 'Overview', tabs: ['overview', 'activity'] },
+  { key: 'visits', label: 'Visits & photos', tabs: ['visits'] },
+  { key: 'tasks', label: 'Tasks & routines', tabs: ['tasks', 'routines'] },
+  { key: 'house', label: 'House & rooms', tabs: ['info', 'rooms', 'people'] },
+  { key: 'complaints', label: 'Complaints', tabs: ['condition'] },
+  { key: 'repairs', label: 'Repairs & safety', tabs: ['repairs', 'safety', 'risks', 'compliance'] },
+];
 type PTab = 'overview' | 'rooms' | 'info' | 'routines' | 'condition' | 'repairs' | 'safety' | 'risks' | 'activity' | 'visits' | 'tasks' | 'people' | 'compliance';
 
 export function PropertyPage() {
@@ -173,10 +181,14 @@ export function PropertyPage() {
   const current = allocations.filter((a: any) => !a.to_date);
   const canPlan = hub.can('visits.approve', p.company_id);
 
-  const tabs: [PTab, string][] = [['overview', 'Overview'], ...(hub.can('voids.view_all', p.company_id) || p.manager_person_id === hub.me.person.id ? [['rooms', 'Rooms & Voids'] as [PTab, string]] : []), ['info', 'Info pack'], ['routines', 'Routines'], ['condition', `House mood & complaints${openComplaints.length ? ` (${openComplaints.length})` : ''}`], ['repairs', `Repairs${repairs.length ? ` (${repairs.length})` : ''}`], ['safety', 'Safety inspections'], ['risks', 'Risks & actions'], ['activity', 'Activity history'],
+  const tabs: [PTab, string][] = [['overview', 'Overview'], ...(hub.can('voids.view_all', p.company_id) || p.manager_person_id === hub.me.person.id ? [['rooms', 'Rooms & Voids'] as [PTab, string]] : []), ['info', 'Info pack'], ['routines', 'Routines'], ['condition', `Complaints & house mood${openComplaints.length ? ` (${openComplaints.length})` : ''}`], ['repairs', `Repairs${repairs.length ? ` (${repairs.length})` : ''}`], ['safety', 'Safety inspections'], ['risks', 'Risks & actions'], ['activity', 'Activity history'],
     ['visits', 'Visits & photos'], ['tasks', `Tasks${tasks.filter((t: any) => t.status !== 'completed').length ? ` (${tasks.filter((t: any) => t.status !== 'completed').length})` : ''}`], ['people', 'Staff & keys'],
     // Only where an administrator has turned compliance monitoring on, and only for people allowed to see it.
     ...(p.compliance_enabled && ['compliance.view', 'compliance.record', 'compliance.manage'].some((x) => hub.can(x, p.company_id)) ? [['compliance', 'Compliance'] as [PTab, string]] : [])];
+  // Six sections instead of thirteen tabs (owner request, 16 Nov 2026): the everyday ones first, the rest grouped. `?tab=` keeps the old keys.
+  const tabLabel = Object.fromEntries(tabs) as Record<PTab, string>;
+  const groups = PROPERTY_GROUPS.map((g) => ({ ...g, tabs: g.tabs.filter((t) => t in tabLabel) })).filter((g) => g.tabs.length);
+  const group = groups.find((g) => g.tabs.includes(tab)) ?? groups[0];
   const next = scheduled[0];
   return (
     <>
@@ -207,7 +219,8 @@ export function PropertyPage() {
         </div>
       </section>
 
-      <Tabs label="Property sections" tabs={tabs} value={tab} onChange={setTab} />
+      <div className="prop-tabs"><Tabs label="Property sections" tabs={groups.map((g) => [g.key, `${g.label}${tabLabel[g.tabs[0]].match(/ \(\d+\)$/)?.[0] ?? ''}`] as [string, string])} value={group.key} onChange={(k) => setTab(groups.find((g) => g.key === k)!.tabs[0])} /></div>
+      {group.tabs.length > 1 && <div className="gov-subnav"><Chips label={`${group.label}: choose a section`} value={tab} onChange={setTab} options={group.tabs.map((t) => [t, tabLabel[t]] as [PTab, string])} /></div>}
 
       {tab === 'overview' && <div className="grid-2">
         <section className="card" aria-labelledby="pd-h">

@@ -1256,3 +1256,12 @@ svg.ok { color: var(--ok); }
 .vd-match-link > span:nth-child(2) { flex: 1; }
 .vd-block { margin: var(--s3) 0; }
 .vd-history summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
+
+/* Property sections: six, wrapping into a grid on phones so nothing is hidden off-screen. */
+@media (max-width: 700px) {
+  .prop-tabs .tabs { display: grid; grid-template-columns: repeat(2, 1fr); overflow: visible; }
+  .prop-tabs .tabs button { white-space: normal; text-align: center; line-height: 1.25; }
+}
+@media (min-width: 701px) {
+  .prop-tabs .tabs { flex-wrap: wrap; overflow: visible; }
+}

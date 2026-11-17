@@ -9,6 +9,13 @@ type Tab = 'kpis' | 'reviews' | 'supervision' | 'recognition' | 'definitions';
 const KPI_STATUS: Record<string, [string, string]> = { met: ['verified', 'Target met'], below: ['action', 'Below target'], insufficient: ['not_required', 'Not enough data'], info: ['info', 'For information'] };
 const DRILL: Record<string, string> = { approved_hours: '/attendance', on_time_starts: '/attendance', visit_coverage: '/attendance', tasks_on_time: '/tasks', development_actions: '/tasks', clearance: '/people', supervision_on_time: '/performance?tab=supervision', coaching_hours: '/performance?tab=supervision' };
 
+const KPI_EMPTY: Partial<Record<string, string>> = {
+  on_time_starts: 'No completed scheduled visits with a recorded start time this month',
+  visit_coverage: 'No uncancelled scheduled visits whose planned end time has passed this month',
+  tasks_on_time: 'No completed or overdue tasks with a due date this month',
+  development_actions: 'No completed or overdue tasks linked to a review or supervision with a due date this month',
+};
+
 export function Performance() {
   const hub = useHub();
   const [params, setParams] = useSearchParams();
@@ -89,14 +96,16 @@ function Kpis() {
           <h2 id={`k-${c.company_id}`}><CompanyBadge code={c.company_code} name={c.company_name} /> {c.company_name}</h2>
           <ul className="grid" style={{ listStyle: 'none', padding: 0 }}>
             {c.kpis.map((k: any) => {
+              const smallSample = k.unit === 'percent' && k.status === 'insufficient' && k.denominator > 0;
+              const value = smallSample ? Math.round((k.numerator * 1000) / k.denominator) / 10 : k.value;
               const [st, stText] = KPI_STATUS[k.status];
               return (
                 <li key={k.key} className="kpi">
-                  <div className="row between"><span className="label">{k.title}</span><Status s={st} text={stText} /></div>
-                  <div className="value">{k.value === null ? '—' : k.unit === 'percent' ? `${k.value}%` : `${k.value} h`}</div>
+                  <div className="row between"><span className="label">{k.title}</span><Status s={st} text={smallSample ? 'Small sample' : stText} /></div>
+                  <div className="value">{value === null ? '—' : k.unit === 'percent' ? `${value}%` : `${value} h`}</div>
                   <div className="explain">
-                    {k.unit === 'percent' && (k.denominator ? `${k.numerator} of ${k.denominator}` : 'No records yet')}
-                    {k.status === 'insufficient' && ` · needs at least ${k.definition.min_data}`}
+                    {k.unit === 'percent' && (k.denominator ? `${k.numerator} of ${k.denominator}` : (KPI_EMPTY[k.key] ?? 'No records yet'))}
+                    {k.status === 'insufficient' && ` · at least ${k.definition.min_data} records needed to judge the target`}
                     {k.target !== null && ` · target ${k.target}%`}
                   </div>
                   {k.hours && <div className="hours" style={{ gridTemplateColumns: 'repeat(2, 1fr)', marginTop: 8 }}>

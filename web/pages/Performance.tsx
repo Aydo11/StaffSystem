@@ -25,7 +25,7 @@ export function Performance() {
     <>
       <PageHead title="Performance" intro="Measures, reviews, supervision and recognition. Figures support conversations; they never trigger decisions about pay, conduct or contracts on their own." />
       <Tabs label="Performance sections" tabs={tabs} value={tab} onChange={(t) => setParams({ tab: t })} />
-      {tab === 'kpis' && <Kpis />}
+      {tab === 'kpis' && (hub.me.superAdmin && params.get('demo') === '1' ? <DemoKpis /> : <Kpis />)}
       {tab === 'reviews' && <Reviews />}
       {tab === 'supervision' && <Supervision />}
       {tab === 'recognition' && <Recognition />}
@@ -60,6 +60,51 @@ function TeamKpis({ companyId, month, onPick }: { companyId: string; month: stri
 }
 
 // ── KPIs ──
+const DEMO_PERCENTAGES = [
+  { title: 'On-time starts', count: 53, total: 62, target: 85 },
+  { title: 'Planned visits completed', count: 62, total: 64, target: 95 },
+  { title: 'Tasks completed on time', count: 15, total: 18, target: 80 },
+  { title: 'Development actions completed', count: 3, total: 4, target: 80 },
+  { title: 'Supervision up to date', count: 17, total: 19, target: 90 },
+  { title: 'Staff cleared for deployment', count: 19, total: 19, target: 100 },
+  { title: 'Required training up to date', count: 18, total: 19, target: 90 },
+  { title: 'Repairs fixed on time', count: 16, total: 17, target: 90 },
+  { title: 'Complaints resolved on time', count: 3, total: 4, target: 90 },
+];
+
+function DemoKpis() {
+  return (
+    <section className="card" aria-labelledby="demo-heading">
+      <h2 id="demo-heading">Valor Housing demonstration</h2>
+      <p className="notice"><strong>Demo only. All figures are fictional.</strong> October 2026 example for a regulator walkthrough. These figures are separate from live records and are not compliance evidence.</p>
+      <p><Link className="btn secondary" to="/performance">Return to live performance</Link></p>
+      <ul className="grid" style={{ listStyle: 'none', padding: 0 }}>
+        <li className="kpi">
+          <div className="row between"><span className="label">Approved visit hours</span><Status s="info" text="Demo" /></div>
+          <div className="value">60 h</div>
+          <div className="explain">64 h planned · 62 h recorded · 2 h submitted · 60 h approved</div>
+        </li>
+        {DEMO_PERCENTAGES.map(({ title, count, total, target }) => {
+          const percent = Math.round(count * 1000 / total) / 10;
+          const met = percent >= target;
+          return (
+            <li className="kpi" key={title}>
+              <div className="row between"><span className="label">{title}</span><Status s={met ? 'verified' : 'action'} text={met ? 'Demo · target met' : 'Demo · below target'} /></div>
+              <div className="value">{percent}%</div>
+              <div className="explain">{count} of {total} · target {target}%</div>
+            </li>
+          );
+        })}
+        <li className="kpi">
+          <div className="row between"><span className="label">Coaching and mentoring hours</span><Status s="info" text="Demo" /></div>
+          <div className="value">6 h</div>
+          <div className="explain">Four example sessions of 90 minutes</div>
+        </li>
+      </ul>
+    </section>
+  );
+}
+
 function Kpis() {
   const hub = useHub();
   const toast = useToast();

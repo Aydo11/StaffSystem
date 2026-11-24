@@ -41,7 +41,6 @@ describe('repairs workflow', () => {
     const sam = await as('sam'), priya = await as('priya');
     const r = (await sam.post('/api/repairs').send({ property_id: prop(1), title: 'Wardrobe handle loose', urgency: 'routine', category: 'furniture' })).body;
     const move = (who: any, status: string, extra: object = {}) => who.post(`/api/repairs/${r.id}/status`).send({ status, note: 'Moving it on', ...extra });
-    expect((await move(sam, 'under_review')).status).toBe(403);
     expect((await move(priya, 'under_review')).status).toBe(200);
     expect((await move(priya, 'assigned')).status).toBe(400); // nobody assigned yet
     await priya.patch(`/api/repairs/${r.id}`).send({ assignee_id: P.sam });
@@ -56,8 +55,7 @@ describe('repairs workflow', () => {
 
     expect((await priya.patch(`/api/repairs/${r.id}`).send({ cost: 1 })).status).toBe(409);
     expect((await sam.post(`/api/repairs/${r.id}/updates`).field('body', 'Later note')).status).toBe(409);
-    expect((await sam.post(`/api/repairs/${r.id}/status`).send({ status: 'reopened', note: 'Handle loose again' })).status).toBe(403);
-    expect((await priya.post(`/api/repairs/${r.id}/status`).send({ status: 'reopened', note: 'no' })).status).toBe(400);
+    expect((await sam.post(`/api/repairs/${r.id}/status`).send({ status: 'reopened', note: 'no' })).status).toBe(400); // any staff, with a reason
     expect((await priya.post(`/api/repairs/${r.id}/status`).send({ status: 'reopened', note: 'Handle loose again' })).status).toBe(200);
 
     const row = (await pool.query('select status, completed_on, verified_at, closed_at, cost from repairs where id = $1', [r.id])).rows[0];
@@ -69,11 +67,11 @@ describe('repairs workflow', () => {
     const a = (await pool.query(`select detail from audit_log where entity = 'repair' and entity_id = $1 and action = 'update'`, [r.id])).rows[0].detail;
     expect(a.assignee_id).toEqual({ from: null, to: P.sam });
   });
-  it('cancelling needs a repairs manager and a reason, and completes the task', async () => {
-    const sam = await as('sam'), priya = await as('priya');
+  it('cancelling needs a reason (any staff who can see the property), and completes the task', async () => {
+    const sam = await as('sam');
     const r = (await sam.post('/api/repairs').send({ property_id: prop(1), title: 'Wardrobe handle loose', urgency: 'routine' })).body;
-    expect((await sam.post(`/api/repairs/${r.id}/status`).send({ status: 'cancelled', note: 'Duplicate report' })).status).toBe(403);
-    expect((await priya.post(`/api/repairs/${r.id}/status`).send({ status: 'cancelled', note: 'Duplicate report of the same handle' })).status).toBe(200);
+    expect((await sam.post(`/api/repairs/${r.id}/status`).send({ status: 'cancelled', note: 'no' })).status).toBe(400);
+    expect((await sam.post(`/api/repairs/${r.id}/status`).send({ status: 'cancelled', note: 'Duplicate report of the same handle' })).status).toBe(200);
     expect((await pool.query('select status from tasks where id = $1', [r.task_id])).rows[0].status).toBe('completed');
   });
 });

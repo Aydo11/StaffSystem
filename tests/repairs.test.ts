@@ -1,12 +1,25 @@
 // Repairs: photos, a task for the repairs manager, closing completes it, the property's history and the KPI.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { computeKpis } from '../server/kpi.ts';
-import { as, C, P, pool, prop, resetDb } from './helpers.ts';
+import { A, as, C, P, pool, prop, resetDb } from './helpers.ts';
 
 const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c6360000000020001e221bc330000000049454e44ae426082', 'hex');
 beforeEach(resetDb);
 
 describe('repairs workflow', () => {
+  it('any member of staff who can see the property can run a repair, but not verify their own work (owner request, 24 Nov 2026)', async () => {
+    const sam = await as('sam'), casey = await as('casey');
+    await pool.query('insert into appointment_properties (appointment_id, property_id) values ($1, $2)', [A.casey, prop(1)]); // Casey, staff, works at this house too
+    const r = (await sam.post('/api/repairs').send({ property_id: prop(1), title: 'Bedroom door handle loose', urgency: 'routine' })).body;
+    for (const [status, extra] of [['under_review', {}], ['assigned', {}], ['in_progress', {}], ['completed', { work_description: 'Screws tightened' }]] as const) {
+      if (status === 'assigned') expect((await sam.patch(`/api/repairs/${r.id}`).send({ assignee_id: P.sam })).status).toBe(200);
+      expect((await sam.post(`/api/repairs/${r.id}/status`).send({ status, note: 'Done by staff', ...extra })).status).toBe(200);
+    }
+    expect((await sam.post(`/api/repairs/${r.id}/status`).send({ status: 'verified', note: 'Mine' })).status).toBe(403); // a second pair of eyes
+    expect((await casey.post(`/api/repairs/${r.id}/status`).send({ status: 'verified', note: 'Checked' })).status).toBe(200);
+    expect((await sam.post(`/api/repairs/${r.id}/status`).send({ status: 'closed', note: 'Closed' })).status).toBe(200);
+  });
+
   it('goes to the repairs manager as a task with photos, and closing it completes the task and logs it on the property', async () => {
     const alex = await as('alex'), sam = await as('sam');
     expect((await alex.post('/api/governance/leads').send({ company_id: C.VH, area: 'repairs', person_id: P.priya, role: 'lead' })).status).toBe(201);

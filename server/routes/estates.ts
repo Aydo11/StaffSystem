@@ -189,9 +189,11 @@ export async function loadRepair(a: Access, id: string) {
                          left join agents ag on ag.id = r.agent_id join people rb on rb.id = r.reported_by left join tasks t on t.id = r.task_id left join people tm on tm.id = t.owner_id
                          left join people vb on vb.id = r.verified_by where r.id = $1`, [id]);
   if (!r) throw notFound();
-  // The repairs manager holding this repair's task runs it, even without repairs.manage or sight of the property otherwise.
+  // The repairs manager holding this repair's task runs it, even without sight of the property otherwise.
+  // Every member of staff who can see the property may also run it: review, assign, complete, verify, close (owner request, 24 Nov 2026).
   const mine = r.manager_id === a.personId && a.perms.has(r.company_id);
-  const { manage, agent } = mine ? { manage: true, agent: false } : await propertyAccess(a, r.property_id, 'repairs.manage');
+  const { agent } = mine ? { agent: false } : await propertyAccess(a, r.property_id);
+  const manage = !agent;
   return { r, manage, agentWork: agent && r.agent_id && a.agentIds.includes(r.agent_id), assignee: r.assignee_id === a.personId };
 }
 estates.get('/repairs/:id', async (req, res) => {

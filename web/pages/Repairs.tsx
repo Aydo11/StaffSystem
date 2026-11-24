@@ -307,7 +307,7 @@ export function RepairPage() {
       </div>
       <Dialog open={!!move} onClose={() => setMove(null)} title={move ? MOVE_TEXT[move] : ''} variant={move === 'completed' ? 'panel' : 'modal'} footer={<Button busy={status.busy} disabled={mv.note.trim().length < 2} onClick={() => status.run()}>Confirm</Button>}>
         {move === 'verified' && <p>Check the work is done. Someone other than the person who marked it completed must verify it.</p>}
-        {move === 'closed' && <p>Once closed, the record is locked. It can only be reopened by a repairs manager, with a reason.</p>}
+        {move === 'closed' && <p>Once closed, the record is locked. It can only be reopened with a reason.</p>}
         <ErrorSummary error={status.error} />
         {move === 'completed' && <>
           <Field label="Work done" error={status.error?.fields.work_description}><textarea name="work_description" value={mv.work_description} onChange={(e) => setMv({ ...mv, work_description: e.target.value })} /></Field>
